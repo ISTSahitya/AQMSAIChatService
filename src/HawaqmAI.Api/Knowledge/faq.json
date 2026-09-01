@@ -1,0 +1,77 @@
+{
+  "description": "Frequently asked questions about the HAWAQM air quality monitoring system. These are answered directly by the AI without querying the database.",
+  "faqs": [
+    {
+      "question": "What does a Data Success Rate of 72% mean?",
+      "answer": "A Data Success Rate of 72% means HAWAQM received 72% of the data it expected from the deployed devices for the measured period. This is below the minimum target of 75%."
+    },
+    {
+      "question": "How often do HAWAQM devices record data?",
+      "answer": "HAWAQM devices record and transmit measured data at 5-minute intervals."
+    },
+    {
+      "question": "When is a device considered offline or inactive?",
+      "answer": "A device is considered offline or inactive when it has not sent any measured data during the last 24 hours. It becomes active again as soon as it sends new measured data."
+    },
+    {
+      "question": "When is a site shown as inactive?",
+      "answer": "A site is shown as inactive when one or both of its installed devices are inactive. A site used only for mold testing may have no device."
+    },
+    {
+      "question": "How is the site AQI calculated when a site has more than one device?",
+      "answer": "The site's air-quality value is calculated as the average of the devices installed at that site, rather than using a single device reading."
+    },
+    {
+      "question": "Which air-quality parameters are monitored by HAWAQM?",
+      "answer": "HAWAQM monitors CO2, PM10, PM2.5, formaldehyde (CH2O), CO, O3, TVOC, NO2 and benzene, together with ambient noise, temperature and humidity."
+    },
+    {
+      "question": "Does HAWAQM monitor temperature, humidity and noise as well as pollutants?",
+      "answer": "Yes. In addition to gas and particulate measurements, HAWAQM records temperature, humidity and ambient noise."
+    },
+    {
+      "question": "What AQI range is considered Good?",
+      "answer": "An AQI from 0 to 50 is classified as Good."
+    },
+    {
+      "question": "What AQI range is considered Moderate?",
+      "answer": "An AQI from 51 to 100 is classified as Moderate."
+    },
+    {
+      "question": "What AQI range is Unhealthy for Sensitive Groups?",
+      "answer": "An AQI from 101 to 150 is classified as Unhealthy for Sensitive Groups."
+    },
+    {
+      "question": "What AQI range is Unhealthy?",
+      "answer": "An AQI from 151 to 200 is classified as Unhealthy."
+    },
+    {
+      "question": "What AQI range is Very Unhealthy?",
+      "answer": "An AQI from 201 to 300 is classified as Very Unhealthy."
+    },
+    {
+      "question": "What AQI value is considered Hazardous?",
+      "answer": "An AQI above 300 is classified as Hazardous."
+    },
+    {
+      "question": "Can I export HAWAQM data for a selected date range?",
+      "answer": "Yes. Raw data can be exported for the selected region, sector, sub-sector, site, device, parameters, date range and interval in CSV or Excel format. Large exports can be generated in the background and delivered through a download link by email."
+    },
+    {
+      "question": "Can I view both indoor and ambient air-quality locations on the map?",
+      "answer": "Yes. The geographical view can show indoor HAWAQM sites and ambient air-quality stations as separate selectable layers, with the current AQI shown for available locations."
+    },
+    {
+      "question": "What happens if a site has no geographic coordinates?",
+      "answer": "A site without configured geographic coordinates does not appear on the geographical map until coordinates are added."
+    },
+    {
+      "question": "What is MOCCAE?",
+      "answer": "MOCCAE stands for the Ministry of Climate Change and Environment of the United Arab Emirates. HAWAQM uses the MOCCAE AQI standard to classify air quality into six categories: Good (0–50), Moderate (51–100), Unhealthy for Sensitive Groups (101–150), Unhealthy (151–200), Very Unhealthy (201–300), and Hazardous (above 300)."
+    },
+    {
+      "question": "What are the total regions?",
+      "answer": "There are 3 regions. Abu Dhabi, Al Ain, and Al Dhafra."
+    }
+  ]
+}

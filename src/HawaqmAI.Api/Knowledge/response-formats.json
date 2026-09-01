@@ -1,0 +1,114 @@
+{
+  "formats": [
+    {
+      "intent": "current_aqi_at_site",
+      "pattern": "current AQI at site",
+      "template": "The current AQI at {StationName} is {AQI}, which is classified as {AQICategory}. The latest reading was recorded at {LastUpdated}."
+    },
+    {
+      "intent": "aqi_category_at_site",
+      "pattern": "air quality category at site",
+      "template": "{StationName} is currently in the {AQICategory} category with an AQI of {AQI} as of {LastUpdated}."
+    },
+    {
+      "intent": "single_pollutant_at_site",
+      "pattern": "PM2.5 / CO2 / NO2 / O3 / CO reading at site",
+      "template": "The latest {ParameterName} reading at {StationName} is {ParameterValue} {UnitName} at {LastUpdated}."
+    },
+    {
+      "intent": "temperature_humidity_at_site",
+      "pattern": "temperature and humidity at site",
+      "template": "At {LastUpdated}, {StationName} recorded a temperature of {Temperature} {TempUnit} and relative humidity of {Humidity}%."
+    },
+    {
+      "intent": "multiple_pollutants_at_site",
+      "pattern": "PM10 and PM2.5 / NO2 O3 CO at site",
+      "template": "At {LastUpdated}, {StationName} recorded {Param1} at {Value1} {Unit1} and {Param2} at {Value2} {Unit2}."
+    },
+    {
+      "intent": "device_status",
+      "pattern": "is device active or inactive",
+      "template": "Device {DeviceName} is currently {Status}. Its last measured data was received at {LastMeasured}."
+    },
+    {
+      "intent": "device_last_sent",
+      "pattern": "when did device last send data",
+      "template": "Device {DeviceName} last sent measured data at {LastMeasured}."
+    },
+    {
+      "intent": "offline_devices",
+      "pattern": "which devices are offline",
+      "template": "There are {OfflineCount} offline device(s). The offline devices are: {DeviceName} at {StationName} (last active: {LastActive}), ..."
+    },
+    {
+      "intent": "devices_at_site",
+      "pattern": "which devices are installed at site",
+      "template": "{StationName} has {DeviceCount} registered device(s): {DeviceList}."
+    },
+    {
+      "intent": "total_device_count",
+      "pattern": "how many devices are registered",
+      "template": "HAWAQM currently has {TotalDeviceCount} registered devices."
+    },
+    {
+      "intent": "active_device_count",
+      "pattern": "how many devices are active",
+      "template": "{ActiveDeviceCount} devices are currently active out of {TotalDeviceCount} registered devices."
+    },
+    {
+      "intent": "total_site_count",
+      "pattern": "how many sites are registered",
+      "template": "HAWAQM currently has {TotalSiteCount} registered sites."
+    },
+    {
+      "intent": "sites_by_region_count",
+      "pattern": "how many sites in Abudhabi AL Ain AlDhafra",
+      "template": "The current site distribution is Abudhabi: {AbuDhabiCount}, AL Ain: {AlAinCount}, and AlDhafra: {AlDhafraCount}."
+    },
+    {
+      "intent": "sites_by_sector_count",
+      "pattern": "how many sites in each sector",
+      "template": "The current sector distribution is Public & Government School: {SchoolCount}, Residential: {ResidentialCount}, Commercial: {CommercialCount}, and Industrial: {IndustrialCount}."
+    },
+    {
+      "intent": "region_aqi_single",
+      "pattern": "current AQI for Abudhabi / AL Ain / AlDhafra region",
+      "template": "The current overall AQI for the {RegionName} region is {AQI}, classified as {AQICategory} as of {LastUpdated}."
+    },
+    {
+      "intent": "region_aqi_all",
+      "pattern": "current AQI values for all regions",
+      "template": "The current regional AQI values are Abudhabi: {AbuDhabiAQI} ({AbuDhabiLevel}), AL Ain: {AlAinAQI} ({AlAinLevel}), and AlDhafra: {AlDhafraAQI} ({AlDhafraLevel})."
+    },
+    {
+      "intent": "highest_aqi_today",
+      "pattern": "which site has highest AQI today",
+      "template": "The highest site AQI recorded today is {MaxAQI} at {StationName}, {RegionName}, at {LastUpdated}. The AQI category is {AQICategory}."
+    },
+    {
+      "intent": "lowest_aqi_today",
+      "pattern": "which site has lowest AQI today",
+      "template": "The lowest site AQI recorded today is {MinAQI} at {StationName}, {RegionName}, at {LastUpdated}. The AQI category is {AQICategory}."
+    },
+    {
+      "intent": "sites_in_sector_and_region",
+      "pattern": "show all sites in sector X in region Y",
+      "template": "There are {SiteCount} {SectorName} sites in {RegionName}. The sites are {SiteList}."
+    },
+    {
+      "intent": "device_live_reading_single_param",
+      "pattern": "AQI / PM2.5 / CO2 for device",
+      "template": "{DeviceName} — {ParameterName}: {ParameterValue} {UnitName} (Last measured: {LastMeasured}). AQI category if AQI: append category."
+    },
+    {
+      "intent": "device_live_reading_all",
+      "pattern": "reading / readings for device",
+      "template": "{DeviceName} — Last measured: {LastMeasured}\n{ParameterName}: {ParameterValue} {UnitName}\n..."
+    },
+    {
+      "intent": "schools_pollutant_table",
+      "pattern": "schools with CO2 / AQI / PM2.5",
+      "template": "There are {Count} school site(s) with {ParameterName} data. {StationName} in {RegionName} has {ParameterName} at {ParameterValue} {UnitName} (last updated: {LastUpdated})."
+    }
+  ]
+}

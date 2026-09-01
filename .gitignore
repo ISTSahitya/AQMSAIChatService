@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Logs
+logs/
+*.log
+
+# Secrets - never commit these
+appsettings.Development.json
+appsettings.Production.json
+
+# NuGet
+.nuget/
+*.nupkg
+
+# OS
+Thumbs.db
+.DS_Store

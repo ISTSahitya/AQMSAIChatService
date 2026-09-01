@@ -1,0 +1,47 @@
+{
+  "rbac": {
+    "roles": {
+      "admin": {
+        "permitted_categories": ["air_quality", "device_health", "admin"],
+        "max_row_limit": 5000,
+        "all_sites_access": true,
+        "description": "Full access to all sites and all query categories"
+      },
+      "regulator": {
+        "permitted_categories": ["air_quality"],
+        "max_row_limit": 5000,
+        "all_sites_access": false,
+        "description": "Air quality data access for assigned sites only"
+      },
+      "viewer": {
+        "permitted_categories": ["air_quality"],
+        "max_row_limit": 50,
+        "all_sites_access": false,
+        "description": "Read-only air quality viewing for assigned sites"
+      }
+    }
+  },
+  "query_limits": {
+    "statistical_reports_max_days": 7,
+    "exceedance_reports_max_days": 90,
+    "data_analysis_max_days": 30,
+    "default_row_limit": 50,
+    "max_row_limit": 5000
+  },
+  "exceedance_intervals": {
+    "no2": "1/24hr",
+    "o3": "1/8hr",
+    "co": "1/8hr",
+    "pm10": "24hr",
+    "pm25": "24hr"
+  },
+  "data_retention": {
+    "chat_history_days": 30,
+    "session_timeout_minutes": 1440
+  },
+  "sql_allowlist": {
+    "allowed_tables": ["live_data", "history_data", "average_data"],
+    "allowed_operations": ["SELECT"],
+    "forbidden_keywords": ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "EXEC", "EXECUTE", "TRUNCATE", "MERGE", "GRANT", "REVOKE", "XP_", "SP_"]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "aqi_levels": [
+    {
+      "level": "Good",
+      "range": [0, 50],
+      "color": "#00E400",
+      "description": "Air quality is satisfactory; little or no risk"
+    },
+    {
+      "level": "Moderate",
+      "range": [51, 100],
+      "color": "#FFFF00",
+      "description": "Risk for those unusually sensitive to air pollution"
+    },
+    {
+      "level": "Unhealthy for Sensitive Groups",
+      "range": [101, 150],
+      "color": "#FF7E00",
+      "description": "Members of sensitive groups may experience health effects"
+    },
+    {
+      "level": "Unhealthy",
+      "range": [151, 200],
+      "color": "#FF0000",
+      "description": "Members of the general public may experience health effects"
+    },
+    {
+      "level": "Very Unhealthy",
+      "range": [201, 300],
+      "color": "#8F3F97",
+      "description": "Health alert: increased risk for everyone"
+    },
+    {
+      "level": "Hazardous",
+      "range": [301, 500],
+      "color": "#7E0023",
+      "description": "Health warning of emergency conditions"
+    }
+  ]
+}

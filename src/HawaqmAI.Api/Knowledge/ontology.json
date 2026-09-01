@@ -1,0 +1,321 @@
+{
+  "description": "Real schema of AQMSADPHCINDOOR database. Used by the LLM to understand table/column semantics without direct schema access.",
+  "rbac_note": "Every query is automatically restricted to the sites the user is permitted to access. The system injects a StationID/site_id filter based on the user's assigned sites — the LLM does NOT need to add site filtering manually. When a user asks 'show me my sites' or 'which devices can I see', query DMN_Stations and DMN_Devices — the RBAC layer will automatically scope results to their permitted sites only. Admin users see all sites.",
+  "allowed_tables": [
+    "ParameterReadings",
+    "ParameterAverages",
+    "ParameterAveragesMonth",
+    "ParameterAveragesYear",
+    "DMN_Stations",
+    "DMN_Devices",
+    "DMN_Parameters"
+  ],
+  "tables": {
+    "ParameterReadings": {
+      "description": "Live/current 5-minute sensor readings per device parameter. Main real-time data table. One row per parameter per device per reading interval.",
+      "key_join": "ParameterReadings.ParameterID = DMN_Parameters.ID  AND  ParameterReadings.StationID = DMN_Stations.ID",
+      "columns": {
+        "ID": "Primary key (int)",
+        "StationID": "Foreign key to DMN_Stations.ID — the monitoring location",
+        "DeviceID": "Foreign key to DMN_Devices.ID — the physical sensor device",
+        "ParameterID": "Foreign key to DMN_Parameters.ID — which pollutant/parameter",
+        "ParameterIDRef": "Foreign key to DMN_Parameters.ParameterID — which pollutant/parameter",
+        "Parametervalue": "The measured value (float) in the unit defined by DMN_Parameters.UnitID",
+        "ParametervalueOrginal": "Original unscaled value before conversion",
+        "CreatedTime": "Timestamp of the reading (datetime) — use for time filtering",
+        "LoggerFlags": "Data quality flag (0 = good data)",
+        "Status": "Row status (1 = active)",
+        "Alarm": "Alarm state at time of reading",
+        "SubIndex": "AQI sub-index calculated for this parameter reading"
+      }
+    },
+    "ParameterAverages": {
+      "description": "Hourly averages of sensor readings per device/parameter. Use for trend analysis and historical queries. Same structure as ParameterReadings but aggregated.",
+      "key_join": "ParameterAverages.ParameterID = DMN_Parameters.ID  AND  ParameterAverages.StationID = DMN_Stations.ID",
+      "columns": {
+        "ID": "Primary key (int)",
+        "StationID": "Foreign key to DMN_Stations.ID",
+        "DeviceID": "Foreign key to DMN_Devices.ID",
+        "ParameterID": "Foreign key to DMN_Parameters.ID",
+        "ParameterIDRef": "Foreign key to DMN_Parameters.ParameterID — which pollutant/parameter",
+        "Parametervalue": "Average parameter value for the interval (float)",
+        "Type": "Aggregation type label",
+        "Interval": "Start datetime of the averaging interval — use for date filtering",
+        "CreatedTime": "When the average was calculated",
+        "SubIndex": "AQI sub-index for this averaged reading",
+        "Status": "Row status (1 = active)",
+        "Alarm": "Alarm state"
+      }
+    },
+    "ParameterAveragesMonth": {
+      "description": "Monthly averages of sensor readings. Use for month-over-month and long-term trend queries.",
+      "key_join": "ParameterAveragesMonth.ParameterID = DMN_Parameters.ID  AND  ParameterAveragesMonth.StationID = DMN_Stations.ID",
+      "columns": {
+        "ID": "Primary key",
+        "StationID": "Foreign key to DMN_Stations.ID",
+        "DeviceID": "Foreign key to DMN_Devices.ID",
+        "ParameterID": "Foreign key to DMN_Parameters.ID",
+        "Parametervalue": "Monthly average value (float)",
+        "Interval": "Month start datetime — use for date filtering",
+        "SubIndex": "AQI sub-index",
+        "Status": "Row status"
+      }
+    },
+    "ParameterAveragesYear": {
+      "description": "Annual averages of sensor readings. Use for year-over-year comparisons.",
+      "key_join": "ParameterAveragesYear.ParameterID = DMN_Parameters.ID",
+      "columns": {
+        "ID": "Primary key",
+        "StationID": "Foreign key to DMN_Stations.ID",
+        "ParameterID": "Foreign key to DMN_Parameters.ID",
+        "Parametervalue": "Annual average value (float)",
+        "Interval": "Year start datetime",
+        "SubIndex": "AQI sub-index"
+      }
+    },
+    "DMN_Stations": {
+      "description": "Master sites/stations table. Each row is a monitoring location (building, facility, or outdoor site) created by Admin. Stores site identity, sector classification, geographic coordinates for map display, and operational flags. Use this table to answer 'which sites can I access?', 'show me my stations', 'list active sites', 'show sites in a region/sector' — RBAC automatically filters results to only the sites the user is permitted to see.",
+      "key_join": "DMN_Stations.SectorID = Sectors.Id | DMN_Stations.SubSectorID = SubSectors.Id | DMN_Stations.RegionID = Regions.Id",
+      "admin_note": "Sites are created by Admin only. Fields: SiteName (required), SectorID (required), SubSectorID (optional), RegionID (required), CoordinateX/Y (optional, for map), Status (Active/Inactive), moldtest (Yes/No), Description (optional).",
+      "columns": {
+        "ID": "Primary key — use as StationID in all joins to data tables",
+        "StationName": "Human-readable site name assigned by Admin (e.g. 'Al Ain Industrial Site', 'Abudhabi Residential site')",
+        "Description": "Free-text description of the site entered by Admin",
+        "StationCode": "Short code identifier for the station (may be NULL)",
+        "StationGuid": "Unique GUID identifier for the station",
+        "OrganizationName": "Organisation that owns or operates the station",
+        "SectorID": "Foreign key to Sectors.Id — required at site creation. Values: 1=Commercial, 2=Public & Govt-School, 3=Industrial, 4=Residential",
+        "SubSectorID": "Foreign key to SubSectors.Id — optional. Values depend on SectorID (e.g. SectorID=2: 1=Gov, 2=Private; SectorID=1: 5=Institutional, 6=Commercial)",
+        "RegionID": "Foreign key to Regions.Id — required. Values: 1=Abudhabi, 2=AL Ain, 3=AlDhafra",
+        "CoordinateX": "Longitude coordinate for map display (decimal degrees, e.g. 24.19)",
+        "CoordinateY": "Latitude coordinate for map display (decimal degrees, e.g. 54.64)",
+        "Location": "Free-text location description (may be NULL)",
+        "Status": "Site active status: 1 = Active, 0 = Inactive",
+        "SortOrder": "Display order for UI listing",
+        "IsConfigChange": "Flag indicating a configuration change is pending",
+        "moldtest": "Mold test flag: 1 = Yes (mold test enabled), 0 = No",
+        "CreatedBy": "UserID of the admin who created the site",
+        "CreatedOn": "Timestamp when the site was created",
+        "ModifiedBy": "UserID of the last admin who modified the site",
+        "ModifiedOn": "Timestamp of the last modification"
+      }
+    },
+    "DMN_Devices": {
+      "description": "Physical sensor devices installed at stations. Each device measures one or more parameters. Use this table to answer 'which devices can I see?', 'show my devices', or 'list devices at my sites' — RBAC automatically filters to the user's permitted stations via the StationID join.",
+      "columns": {
+        "ID": "Primary key — use as DeviceID in joins",
+        "DeviceId": "Device serial/hardware ID",
+        "StationID": "Foreign key to DMN_Stations.ID",
+        "DeviceName": "Human-readable device name",
+        "DeviceModel": "Foreign key to MST_Devices_Model.ID",
+        "Type": "Device type (e.g. 'Indoor', 'Outdoor')",
+        "Status": "1 = active, 0 = inactive",
+        "ServiceMode": "true = device in service/maintenance mode",
+        "IsEnable": "true = device is enabled"
+      }
+    },
+    "DMN_Parameters": {
+      "description": "Dual-purpose table: (1) parameter/pollutant configuration per device, and (2) live current readings. Each device has a fixed set of parameters (e.g. 11 per device) and their ParameterValue + SubIndex are overwritten every 5 minutes with the latest sensor reading. Use this table for the CURRENT/LATEST value of any parameter. For historical data use ParameterReadings or ParameterAverages.",
+      "live_data_note": "ParameterValue is NOT historical — it always holds only the most recent reading for that parameter. One row per parameter per device, updated in-place every 5 minutes.",
+      "columns": {
+        "ID": "Primary key — use as ParameterID in joins",
+        "ParameterID": "Logical parameter type ID (same ParameterID across devices means same pollutant type)",
+        "StationID": "Foreign key to DMN_Stations.ID",
+        "DeviceID": "Foreign key to DMN_Devices.ID",
+        "DriverID": "Foreign key to the driver/protocol used by the device",
+        "ParameterName": "Pollutant name (e.g. 'PM2.5', 'CO2', 'Temperature', 'Humidity', 'TVOC', 'CO', 'NO2', 'O3', 'CH2O')",
+        "UnitID": "Foreign key to ReportedUnits.ID — measurement unit",
+        "ScaleFactor": "Scaling factor applied to raw sensor value",
+        "PollingInterval": "How often the device is polled for data (seconds)",
+        "AvgInterval": "Averaging interval for this parameter",
+        "ServerAvgInterval": "Server-side averaging interval",
+        "Status": "1 = active parameter",
+        "Alarm": "Current alarm state of the parameter",
+        "ParameterValue": "LIVE current value — overwritten every 5 minutes with the latest sensor reading",
+        "IsEnable": "true = parameter is enabled",
+        "Flag": "Current data quality flag",
+        "CoefA": "Calibration coefficient A",
+        "CoefB": "Calibration coefficient B",
+        "IsCalculated": "true = value is derived/calculated rather than directly measured",
+        "DataSyncFrequency": "Frequency of data sync to server",
+        "ParameterReadingUpdateTime": "Timestamp of the last ParameterValue update — indicates freshness of live data",
+        "aeron_parameter_id": "External Aeron system parameter reference ID",
+        "shouldUseForAqi": "true = this parameter contributes to AQI calculation",
+        "PollutantType": "Category of pollutant",
+        "Offset": "Calibration offset applied to raw value",
+        "IsConfigChange": "Flag indicating a configuration change is pending",
+        "SubIndex": "Current AQI sub-index for this parameter — updated every 5 minutes alongside ParameterValue",
+        "LastCommunicationTime": "Timestamp of last successful communication from the device"
+      }
+    },
+    "DMN_Flags": {
+      "description": "Data quality flags used in LoggerFlags column of readings.",
+      "columns": {
+        "ID": "Flag ID",
+        "Code": "Short flag code",
+        "Name": "Flag name",
+        "Description": "What the flag means",
+        "Type": "Flag type",
+        "ColorCode": "Display colour",
+        "Priority": "Severity priority"
+      }
+    },
+    "DeviceCompliance": {
+      "description": "Daily device compliance/uptime tracking. Records whether each device was active on a given date.",
+      "columns": {
+        "Id": "Primary key",
+        "DeviceId": "Foreign key to DMN_Devices.ID",
+        "RecordedDate": "Date of the compliance record (datetime)",
+        "IsActive": "true = device was active/reporting on this date"
+      }
+    },
+    "Parameters_Excedence_Values": {
+      "description": "MOCCAE standard exceedance threshold values per pollutant and averaging interval.",
+      "columns": {
+        "ID": "Primary key",
+        "Parameter": "Pollutant name (matches DMN_Parameters.ParameterName)",
+        "Interval": "Averaging interval in hours (1 = 1-hour avg, 8 = 8-hour avg, 24 = 24-hour avg)",
+        "UnitID": "Foreign key to ReportedUnits.ID",
+        "ExcedenceValue": "Threshold value — readings above this are exceedances",
+        "Status": "1 = active threshold"
+      }
+    },
+    "ReportedUnits": {
+      "description": "Measurement units for parameter values (e.g. µg/m³, ppm, °C, %).",
+      "columns": {
+        "ID": "Primary key — matches DMN_Parameters.UnitID",
+        "UnitName": "Unit symbol (e.g. 'µg/m³', 'ppm', '°C', '%')",
+        "Description": "Full unit description",
+        "Slope": "Unit conversion slope factor",
+        "Intercept": "Unit conversion intercept"
+      }
+    },
+    "Sectors": {
+      "description": "Fixed lookup table for site sector classification. Sectors are predefined and cannot be changed by users — Admin selects one when creating a site.",
+      "key_join": "Sectors.Id = DMN_Stations.SectorID",
+      "known_values": {
+        "1": "Commercial",
+        "2": "Public & Govt-School",
+        "3": "Industrial",
+        "4": "Residential"
+      },
+      "columns": {
+        "Id": "Primary key — matches DMN_Stations.SectorID",
+        "SectorName": "Sector name. Known values: 'Commercial', 'Public & Govt-School', 'Industrial', 'Residential'",
+        "Descrip": "Optional description (usually NULL)"
+      }
+    },
+    "SubSectors": {
+      "description": "Fixed lookup table for site sub-sector classification. Each sub-sector belongs to a parent Sector via SectorID. Admin selects an optional sub-sector when creating a site.",
+      "key_join": "SubSectors.Id = DMN_Stations.SubSectorID AND SubSectors.SectorID = Sectors.Id",
+      "known_values": {
+        "1": "Gov (under Public & Govt-School, SectorID=2)",
+        "2": "Private (under Public & Govt-School, SectorID=2)",
+        "5": "Institutional (under Commercial, SectorID=1)",
+        "6": "Commercial (under Commercial, SectorID=1)"
+      },
+      "columns": {
+        "Id": "Primary key — matches DMN_Stations.SubSectorID",
+        "SectorName": "Sub-sector name. Known values: 'Gov', 'Private', 'Institutional', 'Commercial'",
+        "Descrip": "Optional description (usually NULL)",
+        "SectorID": "Foreign key to Sectors.Id — which sector this sub-sector belongs to"
+      }
+    },
+    "Regions": {
+      "description": "Fixed lookup table for geographic region classification. Regions represent administrative areas in UAE. Admin selects a region (required) when creating a site.",
+      "key_join": "Regions.Id = DMN_Stations.RegionID",
+      "known_values": {
+        "1": "Abudhabi",
+        "2": "AL Ain",
+        "3": "AlDhafra"
+      },
+      "columns": {
+        "Id": "Primary key — matches DMN_Stations.RegionID",
+        "RegionName": "Region name. Known values: 'Abudhabi', 'AL Ain', 'AlDhafra'",
+        "Descrip": "Optional description (usually NULL)",
+        "CoordinateX": "Region center longitude",
+        "CoordinateY": "Region center latitude"
+      }
+    },
+    "DMN_StationGrouping": {
+      "description": "Groups of stations for dashboard/report filtering.",
+      "columns": {
+        "ID": "Primary key",
+        "GroupID": "Group identifier",
+        "GroupName": "Name of the station group",
+        "StationID": "Foreign key to DMN_Stations.ID",
+        "ParameterID": "Optional parameter filter",
+        "Status": "1 = active"
+      }
+    }
+  },
+  "pollutant_name_lookup": {
+    "pm2.5": "PM2.5",
+    "pm 2.5": "PM2.5",
+    "fine particles": "PM2.5",
+    "fine particulate": "PM2.5",
+    "pm10": "PM10",
+    "pm 10": "PM10",
+    "coarse particles": "PM10",
+    "carbon monoxide": "CO",
+    "co": "CO",
+    "carbon dioxide": "CO2",
+    "co2": "CO2",
+    "nitrogen dioxide": "NO2",
+    "no2": "NO2",
+    "ozone": "O3",
+    "o3": "O3",
+    "sulfur dioxide": "SO2",
+    "so2": "SO2",
+    "formaldehyde": "CH2O",
+    "ch2o": "CH2O",
+    "voc": "TVOC",
+    "tvoc": "TVOC",
+    "volatile organic": "TVOC",
+    "temperature": "Temperature",
+    "temp": "Temperature",
+    "humidity": "Humidity",
+    "rh": "Humidity",
+    "aqi": "AQI",
+    "air quality index": "AQI"
+  },
+  "join_patterns": {
+    "readings_with_station_and_parameter": "SELECT pr.*, s.StationName, p.ParameterName, u.UnitName FROM ParameterReadings pr JOIN DMN_Stations s ON pr.StationID = s.ID JOIN DMN_Parameters p ON pr.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID",
+    "averages_with_station_and_parameter": "SELECT pa.*, s.StationName, p.ParameterName, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID",
+    "stations_with_sector_subsector_region": "SELECT s.ID, s.StationName, s.OrganizationName, s.Status, s.moldtest, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, s.CoordinateX, s.CoordinateY FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id"
+  },
+  "region_name_lookup": {
+    "al ain": "AL Ain",
+    "alain": "AL Ain",
+    "al-ain": "AL Ain",
+    "AL Ain": "AL Ain",
+    "abu dhabi": "Abudhabi",
+    "abudhabi": "Abudhabi",
+    "abu-dhabi": "Abudhabi",
+    "Abu Dhabi": "Abudhabi",
+    "al dhafra": "AlDhafra",
+    "aldhafra": "AlDhafra",
+    "al-dhafra": "AlDhafra",
+    "dhafra": "AlDhafra",
+    "Al Dhafra": "AlDhafra"
+  },
+  "sector_name_lookup": {
+    "commercial": "Commercial",
+    "industrial": "Industrial",
+    "residential": "Residential",
+    "government": "Public & Govt-School",
+    "govt": "Public & Govt-School",
+    "public": "Public & Govt-School",
+    "school": "Public & Govt-School",
+    "public and govt": "Public & Govt-School",
+    "public & govt-school": "Public & Govt-School"
+  },
+  "site_query_examples": {
+    "list all active sites": "SELECT s.StationName, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE s.Status = 1 ORDER BY s.StationName",
+    "sites in a region": "SELECT s.StationName, sec.SectorName, r.RegionName FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE r.RegionName = @regionName AND s.Status = 1",
+    "sites in a sector": "SELECT s.StationName, sec.SectorName, sub.SectorName AS SubSectorName FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id WHERE sec.SectorName = @sectorName AND s.Status = 1",
+    "sites with mold test enabled": "SELECT s.StationName, sec.SectorName, r.RegionName FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE s.moldtest = 1 AND s.Status = 1",
+    "count sites by sector": "SELECT sec.SectorName, COUNT(*) AS SiteCount FROM DMN_Stations s JOIN Sectors sec ON s.SectorID = sec.Id WHERE s.Status = 1 GROUP BY sec.SectorName ORDER BY SiteCount DESC",
+    "count sites by region": "SELECT r.RegionName, COUNT(*) AS SiteCount FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id WHERE s.Status = 1 GROUP BY r.RegionName ORDER BY SiteCount DESC"
+  }
+}

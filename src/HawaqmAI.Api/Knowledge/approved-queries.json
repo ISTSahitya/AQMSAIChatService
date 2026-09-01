@@ -1,0 +1,901 @@
+{
+  "queries": [
+    {
+      "id": "faq_answer",
+      "description": "Answer a general question about how HAWAQM works — data success rate, device intervals, offline rules, site AQI calculation, monitored parameters, AQI categories. No database query needed.",
+      "patterns": [
+        "what does data success rate mean", "what is data success rate", "data success rate",
+        "how often do devices record", "how often does hawaqm record", "how often is data recorded",
+        "recording interval", "data interval", "how frequently",
+        "when is a device considered offline", "when is a device considered inactive", "what makes a device offline", "what makes a device inactive",
+        "when is a site inactive", "when is a site shown as inactive", "site inactive",
+        "how is site aqi calculated", "how is aqi calculated", "site aqi calculation", "aqi calculation",
+        "what parameters are monitored", "which parameters are monitored", "what does hawaqm monitor",
+        "what pollutants are monitored", "which pollutants does hawaqm monitor",
+        "does hawaqm monitor temperature", "does hawaqm monitor humidity", "does hawaqm monitor noise",
+        "what aqi range is good", "what aqi is good", "aqi good range",
+        "what aqi range is moderate", "what aqi is moderate", "aqi moderate range",
+        "what aqi range is unhealthy for sensitive", "aqi unhealthy for sensitive groups",
+        "what aqi range is unhealthy", "aqi unhealthy range",
+        "what aqi range is very unhealthy", "aqi very unhealthy range",
+        "what aqi is hazardous", "aqi hazardous", "aqi categories", "aqi levels", "aqi classification",
+        "what is the minimum data success rate", "75% target", "data completeness target",
+        "can i export data", "how to export data", "export hawaqm data", "export data",
+        "download data", "export csv", "export excel", "data export", "export for date range",
+        "background export", "email download link", "large export",
+        "can i view indoor and ambient", "indoor and ambient map", "map layers",
+        "geographical view", "indoor sites on map", "ambient stations on map", "map aqi",
+        "site no coordinates", "site without coordinates", "no geographic coordinates",
+        "site not on map", "site missing from map", "coordinates not configured",
+        "what is moccae", "what does moccae mean", "moccae", "moccae standard",
+        "moccae aqi", "moccae aqi category", "moccae classification", "ministry of climate change",
+        "what are the different regions","total regions"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "FAQ",
+      "skipSiteFilter": true,
+      "isFaq": true
+    },
+    {
+      "id": "site_aqi_all",
+      "description": "Get current AQI for ALL sites — aggregated per site. Use ONLY when user asks for AQI across all sites with NO specific site name mentioned.",
+      "patterns": [
+        "aqi for all sites", "aqi across all sites", "current aqi all sites", "site aqi overview",
+        "show aqi for all sites", "aqi summary all sites", "all sites aqi", "aqi status all sites",
+        "what is the aqi for all sites", "current air quality all sites", "air quality overview all sites",
+        "aqi levels all sites", "site wise aqi", "sitewise aqi", "aqi by site", "aqi per site",
+        "total sites current aqi", "current aqi of all sites", "aqi of all sites",
+        "show current aqi", "all sites aqi status",
+        "sites aqi", "sites current aqi", "aqi status of sites"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [],
+      "responseType": "table",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "sites"
+      }
+    },
+    {
+      "id": "site_aqi_single",
+      "description": "Get the latest live AQI or pollutant reading for a specific named site or station. ALWAYS use this when the user mentions a specific site or station name — including named schools like 'Al Saad Indian School', 'Al Bateen School' (a named school = a specific site). Takes priority over site_aqi_all and schools_latest_pollutant whenever a specific site name is present.",
+      "patterns": [
+        "what is the current aqi at", "what is the aqi at", "current aqi at",
+        "aqi for site", "aqi at site", "air quality at site",
+        "show aqi for site", "current readings for site",
+        "aqi reading for site", "aqi status for site", "pollutants at site",
+        "current air quality at", "all readings at site", "site data for",
+        "parameters for site", "readings for site", "sensor data for site",
+        "show me site", "get site data", "live data for site", "current data for site",
+        "latest co2 reading at", "latest co2 at", "co2 reading at", "co2 at site",
+        "latest pm2.5 at", "pm2.5 reading at", "pm2.5 at site",
+        "latest pm10 at", "pm10 reading at", "pm10 at site",
+        "latest co reading at", "co reading at", "co at site",
+        "latest no2 at", "no2 reading at", "no2 at site",
+        "latest o3 at", "o3 reading at", "o3 at site",
+        "latest tvoc at", "tvoc reading at", "tvoc at site",
+        "temperature at site", "humidity at site", "latest temperature at", "latest humidity at",
+        "latest reading at", "current reading at", "latest pollutant at",
+        "what is the latest", "what is the current reading"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        { "name": "stationName", "type": "string", "source": "question", "optional": false }
+      ],
+      "responseType": "text",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetSiteData?siteId={siteId}",
+        "responseShape": "sites"
+      }
+    },
+    {
+      "id": "schools_latest_pollutant",
+      "description": "Get the latest reading of a specific pollutant (e.g. CO2, PM2.5, AQI) across ALL school sites (Public & Govt-School sector), optionally filtered by region. Use ONLY when user says 'schools' generically (e.g. 'all schools', 'schools in Al Ain') WITHOUT naming a specific school. If a specific school name is mentioned (e.g. 'Al Saad Indian School'), use site_aqi_single instead.",
+      "patterns": [
+        "schools with their latest co2", "schools co2 reading", "co2 at schools", "co2 in schools",
+        "schools with co2", "co2 levels at schools", "co2 readings for schools",
+        "schools with their latest pm2.5", "pm2.5 at schools", "schools pm2.5",
+        "schools with their latest aqi", "aqi at schools", "schools aqi", "aqi for schools",
+        "schools with their latest", "latest reading at schools", "schools latest reading",
+        "show me schools", "table of schools", "list schools", "schools air quality",
+        "abu dhabi schools", "al ain schools", "al dhafra schools",
+        "schools in abu dhabi", "schools in al ain", "schools in al dhafra",
+        "schools with co2 reading", "schools with aqi reading", "schools with pm reading",
+        "all schools co2", "all schools aqi", "all schools pm2.5",
+        "school sites co2", "school sites aqi", "school sites latest"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["CO2", "PM2.5", "PM10", "CO", "NO2", "O3", "TVOC", "CH2O", "Temperature", "Humidity", "AQI Index"] },
+        { "name": "regionName", "type": "string", "source": "question", "optional": true, "allowed": ["Abudhabi", "Abu Dhabi", "AL Ain", "Al Ain", "AlDhafra", "Al Dhafra"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "schools_pollutant"
+      }
+    },
+    {
+      "id": "current_readings_at_station",
+      "description": "Get the latest readings for all parameters at a specific station (site), or all permitted stations if no station is specified. Use for site/station names, NOT device names.",
+      "patterns": ["current readings at station", "latest readings for station", "right now at station", "current air quality at station", "what is the AQI at station", "latest AQI for station", "readings at this station", "station current readings"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pr.CreatedTime, s.StationName, p.ParameterName, pr.Parametervalue, u.UnitName, pr.SubIndex, pr.Alarm FROM ParameterReadings pr JOIN DMN_Stations s ON pr.StationID = s.ID JOIN DMN_Parameters p ON pr.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pr.StationID = @stationId AND pr.Status = 1 AND pr.CreatedTime >= DATEADD(HOUR, -2, GETUTCDATE()) ORDER BY s.StationName, p.ParameterName, pr.CreatedTime DESC",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope", "optional": true }
+      ],
+      "responseType": "table",
+      "tableUsed": "ParameterReadings"
+    },
+    {
+      "id": "current_all_stations",
+      "description": "Get the latest reading for a specific pollutant across all accessible stations",
+      "patterns": ["all stations", "all sites", "every station", "overview", "network overview", "all locations"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, pr.Parametervalue, u.UnitName, pr.SubIndex, pr.CreatedTime FROM ParameterReadings pr JOIN DMN_Stations s ON pr.StationID = s.ID JOIN DMN_Parameters p ON pr.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pr.Status = 1 AND pr.CreatedTime >= DATEADD(HOUR, -1, GETUTCDATE()) ORDER BY pr.SubIndex DESC",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC","Temperature","Humidity"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "ParameterReadings"
+    },
+    {
+      "id": "pollutant_trend_hourly",
+      "description": "Show hourly average trend for a pollutant at a station over a date range",
+      "patterns": ["trend", "over time", "graph", "chart", "plot", "readings over", "how has", "historical", "show me the trend", "show me readings"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pa.Interval, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as MaxValue, MIN(pa.Parametervalue) as MinValue, p.ParameterName, u.UnitName, s.StationName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY pa.Interval, p.ParameterName, u.UnitName, s.StationName ORDER BY pa.Interval",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC","Temperature","Humidity"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "pollutant_trend_monthly",
+      "description": "Show monthly average trend for a pollutant at a station",
+      "patterns": ["monthly trend", "month by month", "monthly average", "over months", "each month"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pam.Interval, AVG(pam.Parametervalue) as AvgValue, MAX(pam.Parametervalue) as MaxValue, p.ParameterName, u.UnitName, s.StationName FROM ParameterAveragesMonth pam JOIN DMN_Stations s ON pam.StationID = s.ID JOIN DMN_Parameters p ON pam.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pam.StationID = @stationId AND p.ParameterName = @parameterName AND pam.Interval BETWEEN @startDate AND @endDate AND pam.Status = 1 GROUP BY pam.Interval, p.ParameterName, u.UnitName, s.StationName ORDER BY pam.Interval",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC","Temperature","Humidity"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAveragesMonth"
+    },
+    {
+      "id": "compare_two_stations",
+      "description": "Compare a pollutant between two stations over a date range",
+      "patterns": ["compare", "vs", "versus", "difference between", "station comparison", "which is worse", "which is better"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pa.Interval, s.StationName, AVG(pa.Parametervalue) as AvgValue, p.ParameterName, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID IN (@stationId1, @stationId2) AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY pa.Interval, s.StationName, p.ParameterName, u.UnitName ORDER BY pa.Interval, s.StationName",
+      "params": [
+        { "name": "stationId1", "type": "int", "source": "question" },
+        { "name": "stationId2", "type": "int", "source": "question" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC","Temperature","Humidity"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "highest_readings",
+      "description": "Find the stations with the highest pollutant readings over a period",
+      "patterns": ["highest", "worst", "most polluted", "maximum", "top polluted", "peak readings"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 10 s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as PeakValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue DESC",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC","AQI"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "lowest_readings",
+      "description": "Find the stations with the lowest (best) pollutant readings over a period",
+      "patterns": ["lowest", "best air quality", "cleanest", "minimum", "best performing stations"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 10 s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MIN(pa.Parametervalue) as MinValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue ASC",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "average_at_station",
+      "description": "Calculate the average, min, and max of a pollutant at a station over a date range",
+      "patterns": ["average", "mean", "avg", "what was the average", "summary statistics"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, u.UnitName, AVG(pa.Parametervalue) as Average, MIN(pa.Parametervalue) as Minimum, MAX(pa.Parametervalue) as Maximum, COUNT(*) as ReadingCount FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC","Temperature","Humidity"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "text",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "exceedance_count",
+      "description": "Count how many readings exceeded the MOCCAE standard threshold for a pollutant at a station",
+      "patterns": ["exceedance", "exceeded", "above threshold", "violations", "breached", "how many times exceeded", "standard exceeded"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName, COUNT(*) as ExceedanceCount, MAX(pa.Parametervalue) as PeakValue FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID JOIN Parameters_Excedence_Values ev ON ev.Parameter = p.ParameterName WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Parametervalue > ev.ExcedenceValue AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","NO2","O3","SO2"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "text",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "exceedance_all_stations",
+      "description": "Count exceedances across all stations for a pollutant — ranked worst to best",
+      "patterns": ["exceedance ranking", "which stations exceeded", "exceedance by station", "stations with violations"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName, COUNT(*) as ExceedanceCount, MAX(pa.Parametervalue) as PeakValue FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID JOIN Parameters_Excedence_Values ev ON ev.Parameter = p.ParameterName WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Parametervalue > ev.ExcedenceValue AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName ORDER BY ExceedanceCount DESC",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","NO2","O3","SO2"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "rank_stations_by_pollutant",
+      "description": "Rank all stations by average pollutant level",
+      "patterns": ["rank stations", "ranking", "worst stations for", "best stations for", "order stations by", "sort stations"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as PeakValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue DESC",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "hourly_breakdown_by_day",
+      "description": "Hourly breakdown of a pollutant at a station on a specific date",
+      "patterns": ["hourly", "hour by hour", "each hour", "throughout the day", "intraday", "time of day"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT DATEPART(HOUR, pa.Interval) as Hour, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as MaxValue, p.ParameterName, u.UnitName FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND CAST(pa.Interval AS DATE) = @targetDate AND pa.Status = 1 GROUP BY DATEPART(HOUR, pa.Interval), p.ParameterName, u.UnitName ORDER BY Hour",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC","Temperature","Humidity"] },
+        { "name": "targetDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "peak_pollution_hours",
+      "description": "Find which hours of the day have the highest pollution levels on average",
+      "patterns": ["peak hours", "worst time of day", "busiest pollution time", "when is pollution highest", "rush hour"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT DATEPART(HOUR, pa.Interval) as Hour, AVG(pa.Parametervalue) as AvgValue, COUNT(*) as ReadingCount FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY DATEPART(HOUR, pa.Interval) ORDER BY AvgValue DESC",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","TVOC"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "multi_pollutant_at_station",
+      "description": "Get all pollutant averages at a station for a date range — multi-pollutant overview",
+      "patterns": ["all pollutants", "multiple pollutants", "all parameters", "full summary", "all readings at"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT p.ParameterName, u.UnitName, AVG(pa.Parametervalue) as AvgValue, MIN(pa.Parametervalue) as MinValue, MAX(pa.Parametervalue) as MaxValue FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY p.ParameterName, u.UnitName ORDER BY p.ParameterName",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "table",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "month_over_month",
+      "description": "Month-over-month comparison of a pollutant at a station",
+      "patterns": ["month over month", "monthly comparison", "last month vs this month", "compare months", "monthly change"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT FORMAT(pam.Interval, 'yyyy-MM') as Month, AVG(pam.Parametervalue) as AvgValue, MAX(pam.Parametervalue) as MaxValue, p.ParameterName, u.UnitName FROM ParameterAveragesMonth pam JOIN DMN_Parameters p ON pam.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pam.StationID = @stationId AND p.ParameterName = @parameterName AND pam.Interval BETWEEN @startDate AND @endDate AND pam.Status = 1 GROUP BY FORMAT(pam.Interval, 'yyyy-MM'), p.ParameterName, u.UnitName ORDER BY Month",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","CH2O","TVOC"] },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAveragesMonth"
+    },
+    {
+      "id": "worst_this_week",
+      "description": "Worst pollutant readings across all stations in the past 7 days",
+      "patterns": ["worst this week", "bad this week", "this week summary", "last 7 days", "past week"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 20 s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as PeakValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval >= DATEADD(DAY, -7, GETUTCDATE()) AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue DESC",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["PM2.5","PM10","CO","CO2","NO2","O3","SO2","TVOC"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "device_compliance_rate",
+      "description": "Device uptime/compliance rate for a station over a date range",
+      "patterns": ["compliance rate", "uptime", "data completeness", "device availability", "how complete", "missing data", "data gaps"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, d.DeviceName, COUNT(*) as ActiveDays, DATEDIFF(DAY, @startDate, @endDate) + 1 as TotalDays, CAST(COUNT(*) AS FLOAT) / (DATEDIFF(DAY, @startDate, @endDate) + 1) * 100 as CompliancePct FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.ID JOIN DMN_Stations s ON d.StationID = s.ID WHERE d.StationID = @stationId AND dc.RecordedDate BETWEEN @startDate AND @endDate AND dc.IsActive = 1 GROUP BY s.StationName, d.DeviceName ORDER BY CompliancePct DESC",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope" },
+        { "name": "startDate", "type": "date", "source": "question_or_scope" },
+        { "name": "endDate", "type": "date", "source": "question_or_scope" }
+      ],
+      "responseType": "table",
+      "tableUsed": "DeviceCompliance"
+    },
+    {
+      "id": "stations_by_sector",
+      "description": "List all stations in a specific sector with their current status",
+      "patterns": ["stations in sector", "sector stations", "healthcare stations", "education stations", "stations by sector", "which stations are in"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.ID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName as SubSectorName, r.RegionName, CASE s.Status WHEN 1 THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE sec.SectorName = @sectorName ORDER BY s.StationName",
+      "params": [
+        { "name": "sectorName", "type": "string", "source": "question" }
+      ],
+      "responseType": "table",
+      "tableUsed": "DMN_Stations"
+    },
+    {
+      "id": "temperature_humidity_trend",
+      "description": "Temperature and humidity trend over time (historical chart) — only use when user asks for trend, chart, graph, or history",
+      "patterns": ["temperature trend", "humidity trend", "temp and humidity trend", "thermal comfort trend", "indoor climate trend", "temperature over time", "humidity over time", "temperature chart", "humidity chart"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pa.Interval, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName IN ('Temperature', 'Humidity') AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY pa.Interval, p.ParameterName, u.UnitName ORDER BY pa.Interval, p.ParameterName",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope", "optional": true },
+        { "name": "startDate", "type": "date", "source": "question_or_scope", "optional": true },
+        { "name": "endDate", "type": "date", "source": "question_or_scope", "optional": true }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "co2_tvoc_trend",
+      "description": "CO2 and TVOC trend over time (historical chart) at a station — only use when user asks for trend, chart, graph, or history",
+      "patterns": ["co2 trend", "tvoc trend", "co2 over time", "tvoc over time", "co2 chart", "tvoc chart", "co2 graph", "co2 and tvoc trend", "indoor air quality trend", "indoor pollutants trend", "carbon dioxide trend", "volatile organic trend"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pa.Interval, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName IN ('CO2', 'TVOC') AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY pa.Interval, p.ParameterName, u.UnitName ORDER BY pa.Interval, p.ParameterName",
+      "params": [
+        { "name": "stationId", "type": "int", "source": "question_or_scope", "optional": true },
+        { "name": "startDate", "type": "date", "source": "question_or_scope", "optional": true },
+        { "name": "endDate", "type": "date", "source": "question_or_scope", "optional": true }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "list_stations",
+      "description": "List all monitoring stations/sites the user is eligible to access — returns site names. Use for LIST questions only, NOT for count/how-many questions.",
+      "patterns": [
+        "list stations", "show stations", "show me my sites", "show my sites", "my sites", "my stations",
+        "which sites", "which sites can i access", "what sites do i have", "sites i can see",
+        "what stations do we have", "station list", "list sites", "show sites",
+        "all my sites", "all my stations", "eligible sites", "accessible sites",
+        "what sites are there", "show all sites", "what are my sites", "sites available"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, r.RegionName FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id WHERE s.Status = 1 ORDER BY s.StationName",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Stations"
+    },
+    {
+      "id": "count_sites_total",
+      "description": "Count the total number of registered sites/stations in HAWAQM. Admin role only. Use for HOW MANY / COUNT / TOTAL questions about sites.",
+      "patterns": [
+        "how many sites are registered", "how many sites are currently registered",
+        "how many sites are in hawaqm", "how many sites does hawaqm have",
+        "total sites in hawaqm", "total number of sites", "total registered sites",
+        "how many stations are registered", "how many stations in hawaqm",
+        "total stations in hawaqm", "site count in hawaqm", "station count in hawaqm",
+        "how many sites are there", "how many stations are there",
+        "how many sites do i have", "how many sites can i access", "total sites"
+      ],
+      "category": "air_quality",
+      "requiredRole": "admin",
+      "sql": "SELECT COUNT(*) AS TotalSiteCount FROM DMN_Stations WHERE Status = 1",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Stations",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "list_devices",
+      "description": "Count the total number of registered devices in HAWAQM. Admin role only.",
+      "patterns": [
+        "how many devices are registered", "how many devices are currently registered",
+        "total registered devices", "total number of devices", "total devices in hawaqm",
+        "how many devices in hawaqm", "how many sensors are registered", "total sensors registered",
+        "devices registered in hawaqm", "registered devices", "device count in hawaqm",
+        "total device count", "number of registered devices", "how many devices does hawaqm have"
+      ],
+      "category": "air_quality",
+      "requiredRole": "admin",
+      "sql": "SELECT COUNT(*) AS TotalDeviceCount FROM DMN_Devices WHERE Status = 1 AND ISNULL(IsEnable, 1) = 1",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Devices",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "list_devices_at_station",
+      "description": "List all devices/sensors installed at a specific station or site by name — shows DeviceName for each device registered under that site.",
+      "patterns": [
+        "devices at", "sensors at", "what devices are at", "which devices are at",
+        "show devices for station", "devices for site", "devices under", "sensors under",
+        "devices in site", "what sensors are at", "list devices at", "list sensors at",
+        "devices under this site", "sensors under this site", "what devices are in this site",
+        "show devices at this site", "list of devices", "give me devices", "show me devices",
+        "device names", "list device names", "give me list of devices", "what are the device names",
+        "devices in this site", "devices for this site", "devices here",
+        "devices list", "devices list under", "list devices under", "show devices under",
+        "list devices for", "show devices for", "devices for this", "sensors for this",
+        "which devices are under", "what devices are under",
+        "which devices are installed at", "devices installed at", "installed at"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT d.DeviceName, s.StationName FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID WHERE s.ID = (SELECT TOP 1 ID FROM DMN_Stations WHERE REPLACE(LOWER(StationName),' ','') LIKE '%' + @stationNameNormalized + '%' ORDER BY CASE WHEN LOWER(StationName) = LOWER(@stationName) THEN 0 WHEN REPLACE(LOWER(StationName),' ','') = @stationNameNormalized THEN 1 ELSE 2 END, LEN(StationName) ASC) AND d.Status = 1 AND ISNULL(d.IsEnable, 1) = 1 ORDER BY d.DeviceName",
+      "params": [
+        { "name": "stationName", "type": "string", "source": "question", "optional": false }
+      ],
+      "responseType": "text",
+      "tableUsed": "DMN_Devices",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "count_sites_in_region",
+      "description": "Count and list sites/stations in a specific region — Abu Dhabi, Al Ain, or Al Dhafra. Shows each site name and active/inactive status.",
+      "patterns": [
+        "total sites in al ain", "total sites in al ain region", "total stations in al ain", "how many sites in al ain", "how many stations in al ain", "number of sites in al ain", "count sites in al ain", "site count al ain",
+        "total sites in abu dhabi", "total sites in abu dhabi region", "total stations in abu dhabi", "how many sites in abu dhabi", "how many stations in abu dhabi", "number of sites in abu dhabi", "count sites in abu dhabi", "site count abu dhabi",
+        "total sites in al dhafra", "total sites in al dhafra region", "total sites in dhafra", "total stations in al dhafra", "how many sites in al dhafra", "how many sites in dhafra", "how many stations in al dhafra", "number of sites in al dhafra", "count sites in al dhafra", "site count al dhafra",
+        "total sites in region", "number of sites in region", "how many sites in region", "count sites in region", "site count in region"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, s.OrganizationName, r.RegionName, sec.SectorName, CASE s.Status WHEN 1 THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id WHERE LOWER(r.RegionName) = LOWER(@regionName) ORDER BY s.Status DESC, s.StationName",
+      "params": [
+        { "name": "regionName", "type": "string", "source": "question", "allowed": ["Abudhabi", "AL Ain", "AlDhafra"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "DMN_Stations"
+    },
+    {
+      "id": "sites_by_region",
+      "description": "List sites/stations in a specific region — Abu Dhabi, Al Ain, or Al Dhafra. Use this when the user mentions a region name.",
+      "patterns": [
+        "sites in al ain", "stations in al ain", "locations in al ain", "show al ain sites", "al ain sites", "al ain stations", "sites in al ain region",
+        "sites in abu dhabi", "stations in abu dhabi", "locations in abu dhabi", "show abu dhabi sites", "abu dhabi sites", "abu dhabi stations", "sites in abu dhabi region",
+        "sites in al dhafra", "stations in al dhafra", "locations in al dhafra", "show al dhafra sites", "al dhafra sites", "al dhafra stations", "sites in dhafra", "dhafra sites", "dhafra stations", "sites in al dhafra region",
+        "sites in region", "stations in region", "which sites are in", "show sites in region", "locations in region",
+        "show me sites in", "list sites in", "list stations in"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, s.OrganizationName, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, CASE s.Status WHEN 1 THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE LOWER(r.RegionName) = LOWER(@regionName) ORDER BY s.StationName",
+      "params": [
+        { "name": "regionName", "type": "string", "source": "question", "allowed": ["Abudhabi", "AL Ain", "AlDhafra"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "DMN_Stations"
+    },
+    {
+      "id": "sector_latest_pollutant",
+      "description": "Get the latest reading of a specific pollutant (CO, NO2, SO2, CO2, PM2.5, AQI, etc.) across all sites in a specific sector (Commercial, Industrial, Residential, Public & Govt-School), optionally filtered by region. Use whenever the user asks for a parameter reading for a sector.",
+      "patterns": [
+        "co reading for commercial", "no2 reading for commercial", "so2 reading for commercial", "co2 reading for commercial",
+        "co reading for industrial", "no2 reading for industrial", "so2 reading for industrial", "co2 reading for industrial",
+        "co reading for residential", "no2 reading for residential", "pm2.5 reading for residential",
+        "pollutant reading for commercial", "pollutant reading for industrial", "pollutant reading for residential",
+        "co for commercial sites", "no2 for commercial sites", "so2 for commercial sites",
+        "co for industrial sites", "no2 for industrial sites", "so2 for industrial sites",
+        "commercial sites co", "commercial sites no2", "commercial sites so2", "commercial sites co2",
+        "industrial sites co", "industrial sites no2", "industrial sites so2", "industrial sites co2",
+        "residential sites co", "residential sites no2", "residential sites co2",
+        "co reading for commercial sites in", "no2 reading for commercial sites in", "co reading for industrial sites in",
+        "what is the co reading", "what is the no2 reading", "what is the so2 reading",
+        "co reading in al ain", "co reading in abu dhabi", "co reading in al dhafra",
+        "no2 reading in al ain", "no2 reading in abu dhabi", "so2 reading in al ain",
+        "aqi for commercial", "aqi for industrial", "aqi for residential",
+        "pm2.5 for commercial", "pm10 for commercial", "temperature for commercial",
+        "pm2.5 for industrial", "pm10 for industrial", "pm2.5 for residential",
+        "latest co for", "latest no2 for", "latest so2 for", "latest co2 for",
+        "sector pollutant reading", "readings for commercial", "readings for industrial",
+        "readings for residential", "readings for sector"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        { "name": "parameterName", "type": "string", "source": "question", "allowed": ["CO2", "PM2.5", "PM10", "CO", "NO2", "O3", "SO2", "TVOC", "CH2O", "Temperature", "Humidity", "AQI Index"] },
+        { "name": "sectorName", "type": "string", "source": "question", "allowed": ["Commercial", "Public & Govt-School", "Industrial", "Residential"] },
+        { "name": "regionName", "type": "string", "source": "question", "optional": true, "allowed": ["Abudhabi", "Abu Dhabi", "AL Ain", "Al Ain", "AlDhafra", "Al Dhafra"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "sector_pollutant"
+      }
+    },
+    {
+      "id": "sites_by_sector",
+      "description": "List sites in a specific named sector — Commercial, Public & Govt-School, Industrial, or Residential. Only use when the user names a specific sector.",
+      "patterns": [
+        "commercial sites", "commercial stations", "commercial sector sites",
+        "industrial sites", "industrial stations", "industrial sector sites",
+        "residential sites", "residential stations", "residential sector sites",
+        "government sites", "government stations", "govt sites", "public sites", "school sites", "public and government sites",
+        "show me commercial sites", "show me industrial sites", "show me residential sites", "show me government sites",
+        "list commercial", "list industrial", "list residential"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, s.OrganizationName, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, CASE s.Status WHEN 1 THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE LOWER(sec.SectorName) = LOWER(@sectorName) ORDER BY s.StationName",
+      "params": [
+        { "name": "sectorName", "type": "string", "source": "question", "allowed": ["Commercial", "Public & Govt-School", "Industrial", "Residential"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "DMN_Stations"
+    },
+    {
+      "id": "sites_count_by_sector",
+      "description": "Count of sites grouped by ALL sectors — use when user asks how many sites per sector, breakdown by sector, or sites in each sector (no specific sector named).",
+      "patterns": [
+        "how many sites per sector", "site count by sector", "sites per sector", "breakdown by sector", "sector summary",
+        "how many sites in each sector", "how many sites are there in each sector", "how many sites are in each sector",
+        "total sites per sector", "total sites by sector", "total sites in each sector",
+        "sites in each sector", "stations in each sector", "stations per sector",
+        "how many stations per sector", "how many stations in each sector",
+        "sites by sector", "sites in sector", "show sector sites", "stations in sector",
+        "site count per sector", "count of sites by sector", "count of sites per sector",
+        "number of sites per sector", "number of sites in each sector", "number of sites by sector"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT sec.SectorName, COUNT(*) AS TotalSites, SUM(CASE WHEN s.Status = 1 THEN 1 ELSE 0 END) AS ActiveSites FROM DMN_Stations s JOIN Sectors sec ON s.SectorID = sec.Id GROUP BY sec.SectorName ORDER BY TotalSites DESC",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Stations",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "sites_count_by_region",
+      "description": "Count of sites grouped by ALL regions, and answers questions like 'what are the regions', 'how many regions'. Shows every region with total and active site counts.",
+      "patterns": [
+        "how many sites per region", "site count by region", "sites per region", "breakdown by region", "region summary", "how many sites in each region",
+        "total regions", "what are the regions", "all regions", "list regions", "show regions", "how many regions", "what regions do we have", "regions we have",
+        "sites by region", "sites across regions", "sites in all regions", "all regions summary", "region breakdown",
+        "total sites per region", "total stations per region", "sites in each region", "stations in each region"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT r.RegionName, COUNT(*) AS TotalSites, SUM(CASE WHEN s.Status = 1 THEN 1 ELSE 0 END) AS ActiveSites FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id GROUP BY r.RegionName ORDER BY TotalSites DESC",
+      "params": [],
+      "responseType": "table",
+      "tableUsed": "DMN_Stations"
+    },
+    {
+      "id": "lowest_aqi_today",
+      "description": "Find the site with the lowest current AQI from live DMN_Parameters readings — returns site name, region, AQI value and timestamp.",
+      "patterns": [
+        "which site has the lowest aqi today", "which site has the lowest aqi",
+        "which site has lowest aqi today", "which site has lowest aqi",
+        "lowest aqi today", "lowest aqi site", "site with lowest aqi", "site with the lowest aqi",
+        "best aqi today", "site with best aqi", "lowest aqi site today",
+        "cleanest site today", "best air quality today", "which site has best air quality today",
+        "minimum aqi today", "least polluted site today", "which site is best today",
+        "lowest aqi recorded today", "site with least pollution today",
+        "which location has the lowest aqi", "best performing site today"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(p.ParameterValue, 0) AS MinAQI, p.ParameterReadingUpdateTime AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) ORDER BY p.ParameterValue ASC",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "highest_aqi_today",
+      "description": "Find the site with the highest current AQI from live DMN_Parameters readings — returns site name, region, AQI value and timestamp.",
+      "patterns": [
+        "which site has the highest aqi today", "which site has the highest aqi",
+        "which site has highest aqi today", "which site has highest aqi",
+        "highest aqi today", "highest aqi site", "site with highest aqi", "site with the highest aqi",
+        "worst aqi today", "site with worst aqi", "highest aqi site today",
+        "most polluted site today", "worst air quality today", "which site has worst air quality today",
+        "top aqi today", "peak aqi today", "maximum aqi today", "highest aqi right now",
+        "which location has the highest aqi", "worst site today", "which site is worst today",
+        "highest aqi recorded today", "site with most pollution today"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(p.ParameterValue, 0) AS MaxAQI, p.ParameterReadingUpdateTime AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) ORDER BY p.ParameterValue DESC",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "site_aqi_ranking",
+      "description": "List all sites with their current AQI values ranked from lowest to highest. Use when user asks for AQI per site, site-wise AQI, or all sites AQI ranking.",
+      "patterns": [
+        "sites lowest and highest aqi", "aqi per site", "site wise aqi values", "aqi values per site",
+        "aqi ranking", "sites aqi ranking", "rank sites by aqi", "sites ranked by aqi",
+        "all sites aqi values", "aqi for each site", "list aqi for all sites",
+        "aqi of all sites", "which sites have highest aqi", "which sites have lowest aqi",
+        "site aqi list", "aqi list for sites", "show aqi for all sites",
+        "current aqi values for all sites", "aqi values for all sites"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, r.RegionName, ROUND(p.ParameterValue, 0) AS AQI, p.ParameterReadingUpdateTime AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) ORDER BY p.ParameterValue ASC",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "aqi_by_region",
+      "description": "Get the current average AQI from DB readings for one or all regions (Abu Dhabi, Al Ain, Al Dhafra) — use only when historical/DB-based regional AQI is explicitly needed",
+      "patterns": [
+        "db aqi by region", "database aqi region", "historical aqi by region",
+        "aqi from database for region", "aqi readings by region from db"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT r.RegionName, ROUND(AVG(CAST(pr.ParameterValue AS FLOAT)), 1) AS AvgAQI, MAX(pr.ParameterValue) AS MaxAQI, MIN(pr.ParameterValue) AS MinAQI, MAX(pr.CreatedTime) AS LastUpdated, COUNT(DISTINCT s.ID) AS SiteCount FROM ParameterReadings pr JOIN DMN_Parameters dp ON pr.ParameterID = dp.ID JOIN DMN_Stations s ON pr.StationID = s.ID JOIN Regions r ON s.RegionID = r.Id WHERE dp.ParameterName = 'AQI Index' AND pr.Status = 1 AND pr.CreatedTime >= DATEADD(HOUR, -2, GETUTCDATE()) GROUP BY r.RegionName ORDER BY r.RegionName",
+      "params": [],
+      "responseType": "table",
+      "tableUsed": "ParameterReadings",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "active_device_count",
+      "description": "Count how many devices are currently active versus total registered devices for the user's permitted sites. A device is active if its last ParameterReadingUpdateTime in DMN_Parameters is within 15 minutes. Use only for HOW MANY / COUNT questions, NOT for listing which devices are online.",
+      "patterns": [
+        "how many devices are active", "how many devices are online", "how many devices online",
+        "how many active devices", "active device count", "count active devices",
+        "how many devices are working", "how many sensors are active",
+        "devices status summary", "device status count"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT ISNULL(SUM(IsActive), 0) AS ActiveDeviceCount, COUNT(*) AS TotalDeviceCount FROM (SELECT d.DeviceId, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID WHERE d.Status = 1 AND ISNULL(d.IsEnable, 1) = 1 GROUP BY d.DeviceId) AS t",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": false
+    },
+    {
+      "id": "online_devices",
+      "description": "List all devices that are currently online/active — devices where the latest ParameterReadingUpdateTime in DMN_Parameters is within 15 minutes. Shows DeviceName and StationName. Use when user asks WHICH devices are online/active, not just how many.",
+      "patterns": [
+        "which devices are online", "which devices are active", "which devices are online right now",
+        "which devices are active right now", "devices online right now", "devices active right now",
+        "show online devices", "show active devices", "list online devices", "list active devices",
+        "which sensors are online", "which sensors are active", "online devices", "active devices",
+        "devices currently online", "devices currently active", "which devices are working",
+        "show me online devices", "show me active devices", "what devices are online",
+        "what devices are active", "devices that are online", "devices that are active"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT d.DeviceName, s.StationName, MAX(p.ParameterReadingUpdateTime) AS LastActive FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID WHERE d.Status = 1 AND ISNULL(d.IsEnable, 1) = 1 GROUP BY d.DeviceName, s.StationName HAVING MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) ORDER BY d.DeviceName",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": false
+    },
+    {
+      "id": "offline_devices",
+      "description": "List all devices that are currently offline — devices where the latest ParameterReadingUpdateTime in DMN_Parameters is older than 15 minutes. Shows DeviceName, StationName, and LastActive time.",
+      "patterns": [
+        "which devices are offline", "offline devices", "devices offline", "devices that are offline",
+        "what devices are offline", "show offline devices", "list offline devices",
+        "which sensors are offline", "offline sensors", "sensors offline",
+        "not sending data", "devices not online", "devices down", "devices not working",
+        "how many devices are offline", "offline device count",
+        "which devices are not online", "show me offline devices", "devices with no data"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT d.DeviceName, s.StationName, MAX(p.ParameterReadingUpdateTime) AS LastActive FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID WHERE d.Status = 1 AND ISNULL(d.IsEnable, 1) = 1 GROUP BY d.DeviceName, s.StationName HAVING MAX(p.ParameterReadingUpdateTime) < DATEADD(MINUTE, -15, GETDATE()) ORDER BY MAX(p.ParameterReadingUpdateTime) ASC",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "device_last_reading",
+      "description": "Get the latest readings for a specific device by device name (e.g. BA0010, BA0012, SEI100M0010, SEI100M0114). Use when user mentions a device name matching pattern like BAXXXX or SEI100MXXXX (no space), or uses words like 'device', 'sensor', 'reading for device'.",
+      "patterns": [
+        "ba0010", "ba0012", "sei100m0010", "sei100m0114", "sei100", "sei100m",
+        "last reading from device", "last measurement from device",
+        "latest readings from device", "latest data from device", "most recent readings from device",
+        "latest readings for device", "what data did device send", "device readings",
+        "last updated device", "when was device last updated", "device last update",
+        "live reading of device", "live readings of device",
+        "current reading of device", "current readings of device", "reading for device",
+        "readings for device", "what is device reading", "device reading",
+        "aqi for device", "aqi of device", "what is the aqi for device",
+        "aqi reading for device", "device aqi", "current aqi for device", "live aqi for device",
+        "current device reading", "live device reading", "device live reading"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        { "name": "deviceName", "type": "string", "source": "question", "optional": false },
+        { "name": "parameterName", "type": "string", "source": "question", "optional": true, "allowed": ["AQI Index", "PM2.5", "PM10", "CO", "CO2", "NO2", "O3", "TVOC", "CH2O", "Temperature", "Humidity", "VOC", "Noise"] }
+      ],
+      "responseType": "table",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetDeviceLatestData?DeviceID={deviceId}",
+        "responseShape": "device_latest"
+      }
+    },
+    {
+      "id": "device_status",
+      "description": "Check whether a specific device is currently active or inactive based on its last reading timestamp from DMN_Parameters. Active = last reading within 15 minutes. Inactive = last reading 24 hours or older. Warning = between 15 minutes and 24 hours. Use when user asks if a device is active, online, working, sending data, or inactive.",
+      "patterns": [
+        "is device active or inactive", "active or inactive right now", "is device active right now",
+        "is device inactive right now", "device active or inactive right now",
+        "is device online right now", "is device offline right now",
+        "is device active", "is device inactive", "is device online", "is device offline",
+        "is device working", "device active or inactive", "check device status",
+        "is the device active", "is the device inactive", "is the device sending data",
+        "device sending data", "is device sending", "device not sending",
+        "device last active", "is sensor active", "is sensor inactive",
+        "sei100m active", "sei100m inactive", "ba active", "ba inactive",
+        "device status check", "check if device is active", "check if device is online",
+        "when did device last send data", "when did device last send", "last send data",
+        "when was device last active", "when did device last update", "device last sent data",
+        "last data from device", "last time device sent", "when was last data received from device",
+        "device last data time", "last reading time for device", "last update time for device"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 1 d.DeviceName, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 'Active' WHEN MAX(p.ParameterReadingUpdateTime) <= DATEADD(HOUR, -24, GETDATE()) THEN 'Inactive' ELSE 'Warning' END AS Status FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE d.DeviceName = @deviceName OR REPLACE(LOWER(d.DeviceName),' ','') = REPLACE(LOWER(@deviceName),' ','') GROUP BY d.DeviceName",
+      "params": [
+        { "name": "deviceName", "type": "string", "source": "question", "optional": false }
+      ],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "region_aqi_geographical",
+      "description": "Get current average AQI per region (Abu Dhabi, Al Ain, Al Dhafra) from live DMN_Parameters readings. Use for any question about AQI in a region or all regions.",
+      "patterns": [
+        "aqi for abu dhabi", "aqi in abu dhabi", "abu dhabi aqi", "what is the aqi in abu dhabi",
+        "aqi for abudhabi", "aqi in abudhabi", "abudhabi aqi", "what is the aqi in abudhabi",
+        "what is the aqi for abu dhabi", "what is the aqi for abudhabi",
+        "aqi for al ain", "aqi in al ain", "al ain aqi", "what is the aqi in al ain",
+        "aqi for alain", "aqi in alain", "alain aqi", "what is the aqi in alain",
+        "what is the aqi for al ain", "what is the aqi for alain",
+        "aqi for al dhafra", "aqi in al dhafra", "al dhafra aqi", "what is the aqi in al dhafra",
+        "aqi for aldhafra", "aqi in aldhafra", "aldhafra aqi", "what is the aqi in aldhafra",
+        "what is the aqi for al dhafra", "what is the aqi for aldhafra",
+        "aqi for all regions", "aqi by region", "aqi across regions", "regional aqi",
+        "current aqi for all regions", "aqi for each region", "aqi per region", "region aqi summary",
+        "air quality for abu dhabi region", "air quality for al ain region", "air quality for al dhafra region",
+        "air quality by region", "what is the regional aqi", "show aqi by region", "aqi overview by region",
+        "current aqi abu dhabi", "current aqi al ain", "current aqi al dhafra",
+        "current aqi abudhabi", "current aqi alain", "current aqi aldhafra",
+        "region wise aqi", "show aqi for abu dhabi", "show aqi for al ain", "show aqi for al dhafra",
+        "aqi status abu dhabi", "aqi status al ain", "aqi status al dhafra",
+        "regional air quality index", "current aqi values for", "aqi values for"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS AQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) GROUP BY r.RegionName ORDER BY r.RegionName",
+      "params": [],
+      "responseType": "text",
+      "tableUsed": "DMN_Parameters",
+      "skipSiteFilter": true
+    },
+    {
+      "id": "sites_with_mold_test",
+      "description": "List sites that have mold test enabled",
+      "patterns": ["mold test sites", "sites with mold test", "mold test enabled", "which sites have mold test", "mold test locations"],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, s.OrganizationName, sec.SectorName, r.RegionName FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE s.moldtest = 1 AND s.Status = 1 ORDER BY s.StationName",
+      "params": [],
+      "responseType": "table",
+      "tableUsed": "DMN_Stations"
+    }
+  ]
+}
