@@ -109,8 +109,9 @@ public sealed class RbacEngine : IRbacEngine
         }
 
         // ── Step 2b: Remove WHERE conditions for optional params that weren't resolved ──
-        // If the SQL references @paramName but it wasn't bound, the query would throw.
-        // For optional params, strip the condition so RBAC's site filter takes over.
+        // If the SQL references @paramName but it wasn't bound, strip the condition entirely
+        // so the query doesn't throw an unbound variable error. This means no filter is applied
+        // for that dimension — all rows pass through for that optional condition.
         foreach (var param in template.Params.Where(p => p.Optional && p.Type != "column"))
         {
             if (!parameters.ContainsKey(param.Name) && sql.Contains($"@{param.Name}", StringComparison.OrdinalIgnoreCase))
@@ -219,15 +220,18 @@ public sealed class RbacEngine : IRbacEngine
     // DB canonical region spellings (as stored in the Regions table)
     private static readonly Dictionary<string, string> _regionAliases = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["Abu Dhabi"]  = "Abudhabi",
-        ["AbuDhabi"]   = "Abudhabi",
-        ["Abudhabi"]   = "Abudhabi",
-        ["Al Ain"]     = "AL Ain",
-        ["AlAin"]      = "AL Ain",
-        ["AL Ain"]     = "AL Ain",
-        ["Al Dhafra"]  = "AlDhafra",
-        ["AlDhafra"]   = "AlDhafra",
-        ["Dhafra"]     = "AlDhafra",
+        ["Abu Dhabi"]  = "Abu Dhabi",
+        ["AbuDhabi"]   = "Abu Dhabi",
+        ["Abudhabi"]   = "Abu Dhabi",
+        ["abudhabi"]   = "Abu Dhabi",
+        ["Al Ain"]     = "Al Ain",
+        ["AlAin"]      = "Al Ain",
+        ["AL Ain"]     = "Al Ain",
+        ["alain"]      = "Al Ain",
+        ["Al Dhafra"]  = "Al Dhafra",
+        ["AlDhafra"]   = "Al Dhafra",
+        ["Dhafra"]     = "Al Dhafra",
+        ["aldhafra"]   = "Al Dhafra",
     };
 
     // DB canonical parameter names (chemical Unicode subscripts as stored in DMN_Parameters)
@@ -282,47 +286,58 @@ public sealed class RbacEngine : IRbacEngine
 
     /// <summary>
     /// Removes a WHERE/AND condition containing @paramName from the SQL.
-    /// Handles: "WHERE col = @param AND ...", "AND col = @param AND ...", "AND col = @param"
+    /// Handles params inside function calls like LOWER(@param) or REPLACE(LOWER(@param),' ','').
+    /// Finds the full condition boundary by looking for the next AND/ORDER BY/GROUP BY after the param.
     /// </summary>
     private static string RemoveParamCondition(string sql, string paramName)
     {
-        // Match: optional leading AND/WHERE whitespace, then any condition containing @paramName, then optional trailing AND
-        // Strategy: find the token @paramName, walk back to find the condition start, remove it
         var token = $"@{paramName}";
         var idx = sql.IndexOf(token, StringComparison.OrdinalIgnoreCase);
         if (idx < 0) return sql;
 
-        // Walk back to find start of this condition (after WHERE or AND)
         var before = sql[..idx];
         var after = sql[idx..];
 
-        // Find last AND or WHERE before @param
-        var andIdx = before.LastIndexOf(" AND ", StringComparison.OrdinalIgnoreCase);
-        var whereIdx = before.LastIndexOf("WHERE ", StringComparison.OrdinalIgnoreCase);
+        // Find the end of this condition: next " AND " or end-of-clause keyword
+        // This correctly handles params wrapped in functions like REPLACE(LOWER(@param),' ','')
+        var endMarkers = new[] { " AND ", " ORDER BY ", " GROUP BY ", " HAVING " };
+        var condEnd = -1;
+        var condEndLen = 0;
+        foreach (var marker in endMarkers)
+        {
+            var pos = after.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (pos >= 0 && (condEnd < 0 || pos < condEnd))
+            {
+                condEnd = pos;
+                condEndLen = marker.Length;
+            }
+        }
 
-        // Find end of @param token in after (skip past the token itself)
-        var paramEnd = after.IndexOf(' ');
-        var rest = paramEnd >= 0 ? after[paramEnd..] : "";
+        // "rest" is everything after this condition (trim the AND separator if present)
+        var rest = condEnd >= 0 ? after[(condEnd + condEndLen)..] : "";
+        // If the next marker was ORDER BY / GROUP BY / HAVING, keep it
+        var nextKeyword = condEnd >= 0 ? after[condEnd..].TrimStart() : "";
+        var isAndMarker = condEnd >= 0 && after[condEnd..].TrimStart().StartsWith("AND ", StringComparison.OrdinalIgnoreCase);
+        if (!isAndMarker && condEnd >= 0)
+            rest = after[condEnd..]; // keep ORDER BY / GROUP BY in rest
+
+        // Find the condition start: last AND or WHERE before @param
+        var andIdx   = before.LastIndexOf(" AND ", StringComparison.OrdinalIgnoreCase);
+        var whereIdx = before.LastIndexOf("WHERE ", StringComparison.OrdinalIgnoreCase);
 
         if (andIdx > whereIdx)
         {
             // Remove " AND <condition>"
-            sql = before[..andIdx] + rest;
+            sql = before[..andIdx] + (rest.Length > 0 ? " " + rest.TrimStart() : "");
         }
         else if (whereIdx >= 0)
         {
-            // This is the only/first condition after WHERE — check if there's an AND after
+            // First/only condition after WHERE
             var andAfterIdx = rest.IndexOf(" AND ", StringComparison.OrdinalIgnoreCase);
             if (andAfterIdx >= 0)
-            {
-                // Replace WHERE <condition> AND with WHERE
                 sql = before[..(whereIdx + 6)] + rest[(andAfterIdx + 5)..];
-            }
             else
-            {
-                // Only condition — remove entire WHERE clause
-                sql = before[..whereIdx].TrimEnd() + " " + rest.TrimStart();
-            }
+                sql = before[..whereIdx].TrimEnd() + (rest.Length > 0 ? " " + rest.TrimStart() : "");
         }
 
         return sql;

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using HawaqmAI.Api.Configuration;
 using HawaqmAI.Api.Models;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using Serilog;
 
@@ -20,17 +21,20 @@ public sealed class ExternalApiService : IExternalApiService
     private readonly AqmsApiOptions _options;
     private readonly IStationResolverService _stationResolver;
     private readonly ISqlExecutorService _sqlExecutor;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public ExternalApiService(
         IHttpClientFactory httpClientFactory,
         IOptions<AqmsApiOptions> options,
         IStationResolverService stationResolver,
-        ISqlExecutorService sqlExecutor)
+        ISqlExecutorService sqlExecutor,
+        IHttpContextAccessor httpContextAccessor)
     {
         _options = options.Value;
         _http = httpClientFactory.CreateClient("AqmsApi");
         _stationResolver = stationResolver;
         _sqlExecutor = sqlExecutor;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     /// <inheritdoc/>
@@ -69,8 +73,7 @@ public sealed class ExternalApiService : IExternalApiService
                 // Always call GetAllSiteData — it includes StationName per device
                 var allUrl = _options.BaseUrl.TrimEnd('/') + "/api/AirQuality/GetAllSiteData";
                 using var allReq = new HttpRequestMessage(HttpMethod.Get, allUrl);
-                if (!string.IsNullOrWhiteSpace(bearerToken))
-                    allReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+                ApplyAuth(allReq, bearerToken);
 
                 using var allResp = await _http.SendAsync(allReq, ct);
                 if (!allResp.IsSuccessStatusCode)
@@ -221,8 +224,7 @@ public sealed class ExternalApiService : IExternalApiService
                 // which is the confirmed source that includes DeviceName per device.
                 var siteUrl = _options.BaseUrl.TrimEnd('/') + $"/api/AirQuality/GetSiteData?siteId={matched.Key}";
                 using var siteReq = new HttpRequestMessage(HttpMethod.Get, siteUrl);
-                if (!string.IsNullOrWhiteSpace(bearerToken))
-                    siteReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+                ApplyAuth(siteReq, bearerToken);
 
                 using var siteResp = await _http.SendAsync(siteReq, ct);
                 sw.Stop();
@@ -246,33 +248,37 @@ public sealed class ExternalApiService : IExternalApiService
 
                 // Flatten all parameters from all devices as individual rows.
                 // The LLM will pick out whichever parameter(s) the user asked for.
+                // site_readings_all omits "Site Name" from each row — it's in the intro sentence
+                // and repeating it in every table row is redundant.
+                var includeSiteName = templateId != "site_readings_all";
                 var allParamRows = siteDevices
-                    .SelectMany(d => d.Params.Select(p => new Dictionary<string, object?>
+                    .SelectMany(d => d.Params.Select(p =>
                     {
-                        ["Site Name"]    = matched.Name,
-                        ["Parameter"]    = p.Key,
-                        ["Value"]        = Math.Round(p.Value.Value, 2),
-                        ["Unit"]         = p.Value.Unit,
-                        ["Last Updated"] = d.LastUpdated
+                        var row = new Dictionary<string, object?>();
+                        if (includeSiteName) row["Site Name"] = matched.Name;
+                        row["Parameter"]    = p.Key;
+                        row["Value"]        = Math.Round(p.Value.Value, 2);
+                        row["Unit"]         = p.Value.Unit;
+                        row["Last Updated"] = d.LastUpdated;
+                        return row;
                     }))
                     .ToList();
 
-                // If the site has multiple devices, average each parameter across devices
+                // If the site has multiple devices, take the value from the most recently
+                // updated device per parameter — same logic as the Executive Dashboard.
+                // Averaging across devices gives wrong values when devices have different
+                // roles or update cycles (e.g. primary vs secondary sensor).
                 if (siteDevices.Count > 1)
                 {
                     allParamRows = allParamRows
                         .GroupBy(r => r["Parameter"]?.ToString() ?? "")
                         .Select(g =>
                         {
-                            var avgVal = g.Select(r => r["Value"] is double v ? v : 0).Average();
-                            return new Dictionary<string, object?>
-                            {
-                                ["Site Name"]    = matched.Name,
-                                ["Parameter"]    = g.Key,
-                                ["Value"]        = Math.Round(avgVal, 2),
-                                ["Unit"]         = g.First()["Unit"],
-                                ["Last Updated"] = g.First()["Last Updated"]
-                            };
+                            // Pick the row whose Last Updated timestamp is most recent
+                            var best = g
+                                .OrderByDescending(r => r["Last Updated"]?.ToString() ?? "")
+                                .First();
+                            return best;
                         })
                         .ToList();
                 }
@@ -287,8 +293,9 @@ public sealed class ExternalApiService : IExternalApiService
                 };
             }
 
-            // For region_aqi shape: default year to current year if not provided by the user
-            if (apiCall.ResponseShape == "region_aqi" && !llmParams.ContainsKey("year"))
+            // For region_aqi / compliance_stats shapes: default year to current year if not provided
+            if ((apiCall.ResponseShape == "region_aqi" || apiCall.ResponseShape == "compliance_stats")
+                && !llmParams.ContainsKey("year"))
                 llmParams["year"] = DateTime.UtcNow.Year.ToString();
 
             // For device_latest shape: resolve deviceName → deviceId via DMN_Devices
@@ -357,8 +364,7 @@ public sealed class ExternalApiService : IExternalApiService
             for (int attempt = 0; ; attempt++)
             {
                 var req = new HttpRequestMessage(apiCall.Method == "POST" ? HttpMethod.Post : HttpMethod.Get, url);
-                if (!string.IsNullOrWhiteSpace(bearerToken))
-                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+                ApplyAuth(req, bearerToken);
                 response = await _http.SendAsync(req, ct);
                 if (response.IsSuccessStatusCode || attempt >= 2 ||
                     (int)response.StatusCode < 500) break;
@@ -386,11 +392,43 @@ public sealed class ExternalApiService : IExternalApiService
                 json.Length, json[..Math.Min(500, json.Length)]);
             var regionFilter = llmParams.GetValueOrDefault("regionName");
 
-            // schools_pollutant: filter API results to school-sector sites via DB, then extract requested parameter
+            // region_aqi_live: aggregate AQI Index per region from GetAllSiteData — same source
+            // as the Executive Dashboard. Groups stations by RegionName, averages AQI Index
+            // across all stations in each region, optionally filtered to one region.
+            if (apiCall.ResponseShape == "region_aqi_live")
+            {
+                var rows2 = BuildRegionAqiLiveRows(json, regionFilter);
+                _log.Debug("ExternalApiService: region_aqi_live → {Count} rows region={Region}",
+                    rows2.Count, regionFilter ?? "all");
+                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // compliance_stats: parse Compliancestatas response → single summary row with
+            // overallAvailability (Data Success Rate %), deviceActiveCount, AQI, criticalSiteCount.
+            if (apiCall.ResponseShape == "compliance_stats")
+            {
+                var rows2 = ParseComplianceStatsRows(json);
+                _log.Debug("ExternalApiService: compliance_stats → {Count} rows", rows2.Count);
+                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // aqi_category_filter: classify all sites by AQI category, optionally filter to one.
+            // "critical" / "hotspot" maps to Unhealthy + Very Unhealthy + Hazardous combined.
+            if (apiCall.ResponseShape == "aqi_category_filter")
+            {
+                var aqiCategory = llmParams.GetValueOrDefault("aqiCategory");
+                var rows2 = BuildAqiCategoryRows(json, aqiCategory, user);
+                _log.Debug("ExternalApiService: aqi_category_filter → {Count} rows category={Cat}",
+                    rows2.Count, aqiCategory ?? "all");
+                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // schools_pollutant: filter API results to sites whose name contains "school",
+            // extract requested parameter, and optionally filter by min/max value threshold.
             if (apiCall.ResponseShape == "schools_pollutant")
             {
-                var parameterName = llmParams.GetValueOrDefault("parameterName") ?? "CO2";
-                var rows2 = await BuildSectorPollutantRows(json, parameterName, "Public & Govt-School", regionFilter, ct);
+                var parameterName = llmParams.GetValueOrDefault("parameterName") ?? "AQI Index";
+                var rows2 = await BuildSchoolPollutantRows(json, parameterName, regionFilter, llmParams, ct);
                 _log.Debug("ExternalApiService: schools_pollutant → {Count} rows for param={Param} region={Region}",
                     rows2.Count, parameterName, regionFilter ?? "all");
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
@@ -452,6 +490,29 @@ public sealed class ExternalApiService : IExternalApiService
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Forwards auth to the AQMS API.
+    /// The main API uses an HttpOnly cookie ("Token"), so we forward it as a Cookie header.
+    /// Falls back to Bearer if a token string was somehow extracted.
+    /// </summary>
+    private void ApplyAuth(HttpRequestMessage req, string bearerToken)
+    {
+        var httpCtx = _httpContextAccessor.HttpContext;
+        if (httpCtx != null)
+        {
+            var cookieToken = httpCtx.Request.Cookies["Token"] ?? httpCtx.Request.Cookies["token"];
+            if (!string.IsNullOrWhiteSpace(cookieToken))
+            {
+                req.Headers.Add("Cookie", $"Token={cookieToken}");
+                return;
+            }
+        }
+
+        // Fallback: use Bearer if provided
+        if (!string.IsNullOrWhiteSpace(bearerToken))
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+    }
 
     private static string SubstitutePath(
         string pathTemplate,
@@ -669,7 +730,8 @@ public sealed class ExternalApiService : IExternalApiService
         string DeviceName,
         bool IsOnline,
         string LastUpdated,
-        Dictionary<string, (double Value, string Unit)> Params);
+        Dictionary<string, (double Value, string Unit)> Params,
+        string RegionName = "");
 
     private static DeviceReading ParseDevice(JsonElement el)
     {
@@ -677,6 +739,10 @@ public sealed class ExternalApiService : IExternalApiService
         var stationName =
             (el.TryGetProperty("StationName", out var sn)  ? sn.GetString()  : null) ??
             (el.TryGetProperty("stationName", out var sn2) ? sn2.GetString() : null) ??
+            "";
+        var regionName =
+            (el.TryGetProperty("RegionName",  out var rn)  ? rn.GetString()  : null) ??
+            (el.TryGetProperty("regionName",  out var rn2) ? rn2.GetString() : null) ??
             "";
         var deviceName  =
             (el.TryGetProperty("DeviceName",  out var dn)  ? dn.GetString()  : null) ??
@@ -722,7 +788,7 @@ public sealed class ExternalApiService : IExternalApiService
             }
         }
 
-        return new DeviceReading(stationId, stationName, deviceName, isOnline, lastUpdated, parameters);
+        return new DeviceReading(stationId, stationName, deviceName, isOnline, lastUpdated, parameters, regionName);
     }
 
     private static List<Dictionary<string, object?>> DeviceRows(List<DeviceReading> devices)
@@ -842,6 +908,110 @@ public sealed class ExternalApiService : IExternalApiService
     };
 
     /// <summary>
+    /// Filters GetAllSiteData response to sites whose StationName contains "school"
+    /// (case-insensitive DB lookup), optionally by region, extracts the requested parameter,
+    /// and applies optional minValue / maxValue filters from llmParams.
+    /// </summary>
+    private async Task<List<Dictionary<string, object?>>> BuildSchoolPollutantRows(
+        string json,
+        string parameterName,
+        string? regionFilter,
+        Dictionary<string, string> llmParams,
+        CancellationToken ct)
+    {
+        // Fetch all sites whose name contains "school" from DB, optionally filtered by region
+        var sql = regionFilter is not null
+            ? """
+              SELECT s.ID, s.StationName, r.RegionName
+              FROM DMN_Stations s
+              LEFT JOIN Regions r ON s.RegionID = r.Id
+              WHERE LOWER(s.StationName) LIKE '%school%'
+                AND s.Status = 1
+                AND (REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ',''))
+              ORDER BY s.StationName
+              """
+            : """
+              SELECT s.ID, s.StationName, r.RegionName
+              FROM DMN_Stations s
+              LEFT JOIN Regions r ON s.RegionID = r.Id
+              WHERE LOWER(s.StationName) LIKE '%school%'
+                AND s.Status = 1
+              ORDER BY s.StationName
+              """;
+
+        var sqlParams = regionFilter is not null
+            ? new Dictionary<string, object> { ["regionName"] = regionFilter }
+            : new Dictionary<string, object>();
+
+        var dbResult = await _sqlExecutor.ExecuteAsync(sql, sqlParams, ct);
+        if (!dbResult.Success || dbResult.Rows.Count == 0)
+            return [];
+
+        var schoolSiteIds = dbResult.Rows
+            .Where(r => r["ID"] is not null)
+            .ToDictionary(
+                r => Convert.ToInt32(r["ID"]),
+                r => (
+                    Name:   r["StationName"]?.ToString() ?? "",
+                    Region: r["RegionName"]?.ToString()  ?? ""
+                ));
+
+        // Parse min/max value thresholds from llmParams (e.g. minValue="50", maxValue="100")
+        double? minValue = llmParams.TryGetValue("minValue", out var minStr) && double.TryParse(minStr, out var mn) ? mn : null;
+        double? maxValue = llmParams.TryGetValue("maxValue", out var maxStr) && double.TryParse(maxStr, out var mx) ? mx : null;
+
+        var allDevices = ParseDevicesFromJson(json);
+        var results = new List<Dictionary<string, object?>>();
+
+        var paramVariants = new[] { parameterName }
+            .Concat(_parameterAliases.TryGetValue(parameterName, out var alias) ? [alias] : Array.Empty<string>())
+            .ToArray();
+
+        foreach (var group in allDevices.GroupBy(d => d.StationId))
+        {
+            if (!schoolSiteIds.TryGetValue(group.Key, out var siteInfo))
+                continue;
+
+            double? value = null;
+            string unit = "";
+            string lastUpdated = "";
+
+            foreach (var device in group)
+            {
+                foreach (var variant in paramVariants)
+                {
+                    if (device.Params.TryGetValue(variant, out var reading))
+                    {
+                        value       = Math.Round(reading.Value, 2);
+                        unit        = reading.Unit;
+                        lastUpdated = device.LastUpdated;
+                        break;
+                    }
+                }
+                if (value.HasValue) break;
+            }
+
+            if (value is null) continue;
+
+            // Apply threshold filters
+            if (minValue.HasValue && value.Value <= minValue.Value) continue;
+            if (maxValue.HasValue && value.Value > maxValue.Value) continue;
+
+            results.Add(new Dictionary<string, object?>
+            {
+                ["Site Name"]    = siteInfo.Name,
+                ["Region"]       = siteInfo.Region,
+                ["Parameter"]    = parameterName,
+                ["Value"]        = value,
+                ["Unit"]         = parameterName.Equals("AQI Index", StringComparison.OrdinalIgnoreCase) ? "" : unit,
+                ["Last Updated"] = lastUpdated
+            });
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Filters GetAllSiteData response to sites in a given sector (via DB lookup),
     /// optionally by region, and extracts the requested parameter per site.
     /// Uses the live API values — same source as the Executive Dashboard.
@@ -944,6 +1114,214 @@ public sealed class ExternalApiService : IExternalApiService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Aggregates AQI Index per region from GetAllSiteData response — same logic as Executive Dashboard.
+    ///
+    /// The API returns one DeviceReading per StationId/DriverId combination (multiple rows per station
+    /// when a station has multiple device drivers). We mirror the DAL logic exactly:
+    ///   1. Per station: average AQI Index across all drivers whose last update is within 24h of
+    ///      the station's most recent update (cutoff = latestUpdateTime - 1440 minutes).
+    ///   2. Per region: average the station-level AQI values.
+    /// </summary>
+    private static List<Dictionary<string, object?>> BuildRegionAqiLiveRows(string json, string? regionFilter)
+    {
+        var allDevices = ParseDevicesFromJson(json);
+
+        // Step 1: per station — average AQI across drivers (mirrors DAL averaging logic)
+        var stationAqiValues = allDevices
+            .GroupBy(d => new { d.StationId, d.StationName, d.RegionName })
+            .Select(g =>
+            {
+                // Find the most recent update time across all drivers for this station
+                var latestUpdate = g
+                    .Select(d => d.LastUpdated)
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .OrderByDescending(t => t)
+                    .FirstOrDefault() ?? "";
+
+                // cutoff = latestUpdate - 1440 minutes (24h), same as DAL
+                DateTime.TryParse(latestUpdate, out var latestDt);
+                var cutoff = latestDt == default ? DateTime.MinValue : latestDt.AddMinutes(-1440);
+
+                // Collect AQI values from all drivers within the cutoff window
+                double sum = 0;
+                int count = 0;
+                foreach (var device in g)
+                {
+                    if (!device.Params.TryGetValue("AQI Index", out var aqiReading)) continue;
+                    DateTime.TryParse(device.LastUpdated, out var devDt);
+                    if (devDt == default || devDt >= cutoff)
+                    {
+                        sum += aqiReading.Value;
+                        count++;
+                    }
+                }
+
+                double? stationAqi = count > 0 ? sum / count : null;
+                return new
+                {
+                    g.Key.StationId,
+                    g.Key.StationName,
+                    g.Key.RegionName,
+                    AQI = stationAqi,
+                    LastUpdated = latestUpdate
+                };
+            })
+            .Where(s => s.AQI.HasValue && !string.IsNullOrWhiteSpace(s.RegionName))
+            .ToList();
+
+        // Step 2: per region — average station-level AQI values
+        var regionRows = stationAqiValues
+            .GroupBy(s => s.RegionName)
+            .Select(g => new Dictionary<string, object?>
+            {
+                ["RegionName"]  = g.Key,
+                ["AQI"]         = Math.Round(g.Average(s => s.AQI!.Value), 0),
+                ["SiteCount"]   = g.Count(),
+                ["LastUpdated"] = g.OrderByDescending(s => s.LastUpdated).First().LastUpdated
+            })
+            .OrderBy(r => r["RegionName"]?.ToString())
+            .ToList();
+
+        // Filter to one region if specified
+        if (!string.IsNullOrWhiteSpace(regionFilter))
+        {
+            var filterNorm = regionFilter.Replace(" ", "").ToLowerInvariant();
+            var filtered = regionRows
+                .Where(r => r["RegionName"]?.ToString()?.Replace(" ", "").ToLowerInvariant() == filterNorm)
+                .ToList();
+            return filtered.Count > 0 ? filtered : regionRows;
+        }
+
+        return regionRows;
+    }
+
+    /// <summary>
+    /// Parses the Compliancestatas API response into a single summary row.
+    /// Fields: DataSuccessRate (%), ActiveDevices, TotalDevices, AQI, CriticalSiteCount.
+    /// </summary>
+    private static List<Dictionary<string, object?>> ParseComplianceStatsRows(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // API may double-serialize — unwrap if root is a string
+            if (root.ValueKind == JsonValueKind.String)
+            {
+                var inner = root.GetString() ?? json;
+                return ParseComplianceStatsRows(inner);
+            }
+
+            if (root.ValueKind != JsonValueKind.Object)
+                return [];
+
+            double? availability = null;
+            if (root.TryGetProperty("overallAvailability", out var av))
+                availability = av.ValueKind == JsonValueKind.Number ? av.GetDouble() : null;
+
+            int? activeCount = null;
+            if (root.TryGetProperty("deviceActiveCount", out var ac))
+                activeCount = ac.ValueKind == JsonValueKind.Number ? ac.GetInt32() : null;
+
+            int? inactiveCount = null;
+            if (root.TryGetProperty("deviceInactiveCount", out var ic))
+                inactiveCount = ic.ValueKind == JsonValueKind.Number ? ic.GetInt32() : null;
+
+            int? totalDevices = (activeCount.HasValue && inactiveCount.HasValue)
+                ? activeCount.Value + inactiveCount.Value
+                : null;
+
+            int? aqi = null;
+            if (root.TryGetProperty("aqi", out var aqiProp) && aqiProp.ValueKind == JsonValueKind.Number)
+                aqi = aqiProp.GetInt32();
+
+            int? criticalCount = null;
+            if (root.TryGetProperty("criticalSiteCount", out var cs))
+                criticalCount = cs.ValueKind == JsonValueKind.Number ? cs.GetInt32() : null;
+
+            return [new Dictionary<string, object?>
+            {
+                ["DataSuccessRate"]  = availability.HasValue ? (object?)Math.Round(availability.Value, 2) : null,
+                ["ActiveDevices"]    = activeCount,
+                ["InactiveDevices"]  = inactiveCount,
+                ["TotalDevices"]     = totalDevices,
+                ["AQI"]             = aqi,
+                ["AQICategory"]      = aqi.HasValue ? ClassifyAqi(aqi.Value) : null,
+                ["CriticalSiteCount"] = criticalCount
+            }];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Classifies all sites by their current AQI category, optionally filtering to one category.
+    /// "Critical" and "hotspot" map to Unhealthy + Very Unhealthy + Hazardous (AQI > 100).
+    /// Returns one row per site: SiteName, RegionName, AQI, AQICategory, LastUpdated.
+    /// </summary>
+    private static List<Dictionary<string, object?>> BuildAqiCategoryRows(
+        string json,
+        string? aqiCategoryFilter,
+        UserContext? user)
+    {
+        var allDevices = ParseDevicesFromJson(json);
+
+        // RBAC: restrict to permitted sites
+        if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+            allDevices = allDevices.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
+
+        // One row per station — API already pre-averages parameters per station
+        var siteRows = allDevices
+            .GroupBy(d => d.StationId)
+            .Select(g =>
+            {
+                var first = g.First();
+                // Find AQI Index parameter across all device readings for this station
+                double? aqi = null;
+                string lastUpdated = "";
+                foreach (var device in g)
+                {
+                    if (device.Params.TryGetValue("AQI Index", out var aqiReading))
+                    {
+                        aqi = Math.Round(aqiReading.Value, 0);
+                        lastUpdated = device.LastUpdated;
+                        break;
+                    }
+                }
+                if (!aqi.HasValue) return null;
+
+                return (object?)new Dictionary<string, object?>
+                {
+                    ["SiteName"]    = first.StationName,
+                    ["RegionName"]  = first.RegionName,
+                    ["AQI"]         = aqi,
+                    ["AQICategory"] = ClassifyAqi(aqi.Value),
+                    ["LastUpdated"] = lastUpdated
+                };
+            })
+            .Where(r => r is not null)
+            .Cast<Dictionary<string, object?>>()
+            .OrderBy(r => r["AQI"] is double d ? d : double.MaxValue)
+            .ToList();
+
+        if (string.IsNullOrWhiteSpace(aqiCategoryFilter))
+            return siteRows;
+
+        // "critical" and "hotspot" = AQI > 100 (all unhealthy tiers combined)
+        var lower = aqiCategoryFilter.Trim().ToLowerInvariant();
+        if (lower == "critical" || lower == "hotspot")
+            return siteRows.Where(r => r["AQI"] is double d && d > 100).ToList();
+
+        // Exact category match (case-insensitive)
+        return siteRows
+            .Where(r => string.Equals(r["AQICategory"]?.ToString(), aqiCategoryFilter, StringComparison.OrdinalIgnoreCase))
+            .ToList();
     }
 
     // Reference to the parameter alias map from RbacEngine logic (duplicated here for API-path use)

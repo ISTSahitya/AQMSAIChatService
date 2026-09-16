@@ -197,7 +197,102 @@ public sealed class ChatController : ControllerBase
         }
         else
         {
+            // ── Resolve stationName → stationId when SQL template needs @stationId ──
+            // Some SQL templates (e.g. average_at_station, pollutant_trend_hourly) use
+            // @stationId (int) but the LLM always extracts a station name string.
+            // Resolve the name to a numeric ID via DB lookup before building the safe query.
+            var needsStationId = template.Params.Any(p =>
+                p.Name.Equals("stationId", StringComparison.OrdinalIgnoreCase) ||
+                p.Name.Equals("stationId1", StringComparison.OrdinalIgnoreCase) ||
+                p.Name.Equals("stationId2", StringComparison.OrdinalIgnoreCase));
+
+            if (needsStationId && llmParams.TryGetValue("stationName", out var nameForLookup)
+                && !string.IsNullOrWhiteSpace(nameForLookup)
+                && !llmParams.ContainsKey("stationId"))
+            {
+                var idLookup = await _sqlExecutor.ExecuteAsync(
+                    "SELECT TOP 1 ID FROM DMN_Stations WHERE REPLACE(LOWER(StationName),' ','') LIKE '%' + REPLACE(LOWER(@name),' ','') + '%' AND Status = 1 ORDER BY LEN(StationName) ASC",
+                    new Dictionary<string, object> { ["name"] = nameForLookup.Trim() }, ct);
+
+                if (idLookup.Success && idLookup.Rows.Count > 0)
+                {
+                    var resolvedId = idLookup.Rows[0]["ID"]?.ToString() ?? "";
+                    if (!string.IsNullOrWhiteSpace(resolvedId))
+                    {
+                        llmParams["stationId"] = resolvedId;
+                        _log.Information("ChatController: resolved stationName='{Name}' → stationId={Id}", nameForLookup, resolvedId);
+                    }
+                }
+                else
+                {
+                    _log.Warning("ChatController: could not resolve stationName='{Name}' to a stationId", nameForLookup);
+                    return Ok(_formatter.FormatError(session.SessionId,
+                        $"I couldn't find a site matching '{nameForLookup}'. Please check the site name and try again.",
+                        "SITE_NOT_FOUND"));
+                }
+            }
+
+            // ── Multi-site handling for devices_with_readings ──────────────────
+            // When stationName contains multiple site names separated by "and"/commas,
+            // run one query per site and merge the results.
+            if (template.Id == "devices_with_readings"
+                && llmParams.TryGetValue("stationName", out var multiSiteName)
+                && !string.IsNullOrWhiteSpace(multiSiteName))
+            {
+                var siteNames = multiSiteName
+                    .Split(new[] { " and ", " & ", ", " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (siteNames.Count > 1)
+                {
+                    var mergedRows = new List<Dictionary<string, object?>>();
+                    var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    long totalMs = 0;
+
+                    foreach (var siteName in siteNames)
+                    {
+                        var perSiteParams = new Dictionary<string, string>(llmParams, StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["stationName"] = siteName.Trim()
+                        };
+
+                        var (perSafeSql, perSqlParams) = _rbac.BuildSafeQuery(template, perSiteParams, user, scope);
+                        var (perValid, perError) = SqlValidator.Validate(perSafeSql);
+                        if (!perValid)
+                        {
+                            _log.Error("SQL validation failed (multi-site) for site '{Site}': {Error}", siteName, perError);
+                            continue;
+                        }
+
+                        var perResult = await _sqlExecutor.ExecuteAsync(perSafeSql, perSqlParams, ct);
+                        totalMs += perResult.ExecutionTimeMs;
+
+                        if (perResult.Success)
+                        {
+                            foreach (var row in perResult.Rows)
+                            {
+                                var key = $"{row.GetValueOrDefault("DeviceName")}|{row.GetValueOrDefault("StationName")}";
+                                if (seenKeys.Add(key))
+                                    mergedRows.Add(row);
+                            }
+                        }
+                        else
+                        {
+                            _log.Warning("SQL_ERROR (multi-site) for site '{Site}': {Error}", siteName, perResult.Error);
+                        }
+                    }
+
+                    resultRows = mergedRows;
+                    executionTimeMs = totalMs;
+                    dataSourceLabel = template.TableUsed;
+                    goto afterSqlExecution;
+                }
+            }
+
             // SQL path — build safe query and validate
+            {
             var (safeSql, sqlParams) = _rbac.BuildSafeQuery(template, llmParams, user, scope);
 
             var (sqlValid, sqlError) = SqlValidator.Validate(safeSql);
@@ -211,11 +306,21 @@ public sealed class ChatController : ControllerBase
 
             var sqlResult = await _sqlExecutor.ExecuteAsync(safeSql, sqlParams, ct);
             if (!sqlResult.Success)
-                return Ok(_formatter.FormatError(session.SessionId, sqlResult.Error!, "SQL_ERROR"));
+            {
+                // Translate technical SQL errors into user-friendly messages
+                var userFriendlyError = sqlResult.Error!.Contains("scalar variable", StringComparison.OrdinalIgnoreCase)
+                    ? "I couldn't gather enough information from your question to run that query. Could you be more specific? For example: 'Show me commercial sites in Abu Dhabi' or 'What is the CO2 at Al Saad Indian School?'"
+                    : "I was unable to retrieve data at this time. Please try rephrasing your question or try again shortly.";
+
+                _log.Warning("SQL_ERROR for template {TemplateId}: {Error}", template.Id, sqlResult.Error);
+                return Ok(_formatter.FormatError(session.SessionId, userFriendlyError, "SQL_ERROR"));
+            }
 
             resultRows = sqlResult.Rows;
             executionTimeMs = sqlResult.ExecutionTimeMs;
             dataSourceLabel = template.TableUsed;
+            }
+            afterSqlExecution:;
         }
 
         // ── 8. Generate natural language summary ────────────────────────────

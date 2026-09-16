@@ -61,6 +61,7 @@ try
     builder.Services.AddMemoryCache();
 
     // ── Application services ─────────────────────────────────────────────────
+    builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<IQueryRouterService, QueryRouterService>();
     builder.Services.AddSingleton<IAzureAIService, AzureAIService>();
     builder.Services.AddScoped<IRbacEngine, RbacEngine>();
@@ -110,10 +111,18 @@ try
             };
             options.Events = new JwtBearerEvents
             {
+                OnMessageReceived = ctx =>
+                {
+                    // Read JWT from the same HttpOnly cookie the main AQMS API sets
+                    if (ctx.Request.Cookies.TryGetValue("Token", out var cookieToken))
+                        ctx.Token = cookieToken;
+                    else if (ctx.Request.Cookies.TryGetValue("token", out var cookieTokenLower))
+                        ctx.Token = cookieTokenLower;
+                    return Task.CompletedTask;
+                },
                 OnAuthenticationFailed = ctx =>
                 {
-                    Log.Warning("JWT authentication failed: {Error} | Token: {Token}",
-                        ctx.Exception.Message);
+                    Log.Warning("JWT authentication failed: {Error}", ctx.Exception.Message);
                     return Task.CompletedTask;
                 },
                 OnTokenValidated = ctx =>
@@ -209,8 +218,18 @@ try
         try
         {
             var db = scope.ServiceProvider.GetRequiredService<ChatHistoryDbContext>();
-            await db.Database.MigrateAsync();
-            Log.Information("Chat history database migrations applied");
+            // Apply pending migrations without attempting to CREATE the database
+            // (the DB already exists — shared with the main AQMS database)
+            var pending = await db.Database.GetPendingMigrationsAsync();
+            if (pending.Any())
+            {
+                await db.Database.MigrateAsync();
+                Log.Information("Chat history database migrations applied");
+            }
+            else
+            {
+                Log.Information("Chat history database is up to date");
+            }
         }
         catch (Exception ex)
         {

@@ -75,15 +75,34 @@ public sealed class ResponseFormatterService : IResponseFormatterService
             }).ToList();
         }
 
-        // For site_aqi_all and site_aqi_single: AQI Category is already set by AggregateByStation —
-        // remove the duplicate AQI_category column that EnrichWithAqiLabels adds for the "AQI" column
-        if (template.Id is "site_aqi_all" or "site_aqi_single" && rows.Count > 0)
+        // For site_aqi_all: AQI Category already set by AggregateByStation — remove duplicate
+        if (template.Id == "site_aqi_all" && rows.Count > 0)
         {
             rows = rows.Select(r =>
             {
                 var d = new Dictionary<string, object?>(r);
                 d.Remove("AQI_category");
                 d.Remove("AQI Category_category");
+                return d;
+            }).ToList();
+        }
+
+        // For site_readings_all: full parameter table — rename "Value_category" → "AQI Category"
+        // on the AQI Index row so the table column is labelled meaningfully.
+        if (template.Id == "site_readings_all" && rows.Count > 0)
+        {
+            rows = rows.Select(r =>
+            {
+                var d = new Dictionary<string, object?>(r);
+                if (d.TryGetValue("Value_category", out var cat))
+                {
+                    d.Remove("Value_category");
+                    if (d.TryGetValue("Parameter", out var param) &&
+                        string.Equals(param?.ToString(), "AQI Index", StringComparison.OrdinalIgnoreCase))
+                    {
+                        d["AQI Category"] = cat;
+                    }
+                }
                 return d;
             }).ToList();
         }

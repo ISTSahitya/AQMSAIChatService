@@ -72,6 +72,122 @@
     {
       "question": "What are the total regions?",
       "answer": "There are 3 regions. Abu Dhabi, Al Ain, and Al Dhafra."
+    },
+    {
+      "question": "Which regions are covered by HAWAQM?",
+      "answer": "HAWAQM covers 3 regions: Abu Dhabi, Al Ain, and Al Dhafra."
+    },
+    {
+      "question": "What data am I able to see in HAWAQM?",
+      "answer": "What you can see depends on the access your account has been given. Some users are set up for a single site, others for a sector or a whole region, and administrators can see everything, so two people asking the same question may legitimately get different totals. Within your permitted scope you can view real-time and historical readings for CO2, PM2.5, PM10, CO, NO2, O3, SO2, TVOC, CH2O, temperature, humidity and noise, along with AQI per site and device, AQI by region, exceedance reports, statistical summaries, data success rates, and mold test results."
+    },
+    {
+      "question": "What is the current Data Success Rate?",
+      "answer": "The Data Success Rate (DSR) measures the percentage of expected data readings that were actually received from devices in a given period. A DSR of 75% or above is the minimum acceptable threshold. Below 75% means data completeness is insufficient to rely on for official reporting."
+    },
+    {
+      "question": "What does it mean if the Data Success Rate is below 75%?",
+      "answer": "A Data Success Rate below 75% means that less than three quarters of the expected readings were received. This reduces confidence in AQI calculations and trend analysis for that period. Results should be used with caution and the affected devices should be investigated."
+    },
+    {
+      "question": "How is the site AQI calculated?",
+      "answer": "When a site has more than one device, the site AQI is the average of the AQI values reported by all active devices at that site. This prevents a single faulty device from misrepresenting the site's overall air quality."
+    },
+    {
+      "question": "Can you confirm a school is safe for children to attend today?",
+      "answer": "HAWAQM provides air quality data and AQI classifications to help inform decisions, but it does not make safety or occupancy recommendations. Please consult the relevant health or education authority for official guidance on school attendance."
+    },
+    {
+      "question": "Can mold test results be combined with AQI into one score?",
+      "answer": "No. Mold test results and AQI are separate indicators measured by different methods. AQI covers airborne pollutant concentrations; mold tests assess surface or airborne mold presence. They are reported separately in HAWAQM and cannot be merged into a single score."
+    },
+    {
+      "question": "Can I compare a 5-minute PM2.5 reading directly with the 24-hour exceedance threshold?",
+      "answer": "No. The MOCCAE exceedance threshold for PM2.5 is based on a 24-hour average, not a 5-minute instantaneous reading. A single high 5-minute reading does not constitute a standard exceedance. Always use the correct averaging interval when checking against thresholds."
+    },
+    {
+      "question": "Which averaging intervals should be used for pollutant exceedance checks?",
+      "answer": "Each pollutant has a specific averaging interval defined by MOCCAE: PM2.5 uses a 24-hour average, PM10 uses a 24-hour average, NO2 uses a 1-hour average, O3 uses an 8-hour average, CO uses an 8-hour average, and SO2 uses a 1-hour or 24-hour average depending on the standard. Always match the averaging interval to the applicable threshold."
+    },
+    {
+      "question": "A site has no device but has a mold test. Should it appear in device statistics?",
+      "answer": "No. A site used only for mold testing with no installed device should not appear in device counts or AQI statistics. It will appear in mold test reports and site listings but is excluded from device-based metrics."
+    },
+    {
+      "question": "What was the AQI at a school in a past year?",
+      "answer": "Historical site-level AQI data is not available in HAWAQM."
+    },
+    {
+      "question": "What was the air quality at a site in a previous year or month?",
+      "answer": "Historical site-level air quality data is not available in HAWAQM."
+    },
+    {
+      "question": "Can you tell me tomorrow's weather forecast?",
+      "answer": "HAWAQM monitors indoor and ambient air quality only. Weather forecasting is outside its scope. Please use a meteorological service for weather forecasts."
+    },
+    {
+      "question": "What is the pollen count at a site?",
+      "answer": "Pollen monitoring is not part of the HAWAQM parameter set. HAWAQM monitors CO2, PM2.5, PM10, CO, NO2, O3, SO2, TVOC, CH2O, temperature, humidity and noise only."
+    },
+    {
+      "question": "Can you show me radon levels?",
+      "answer": "HAWAQM does not measure radon. It does measure CO2, PM10, PM2.5, formaldehyde (CH2O), CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If you share a site name, I can show you the current readings for all monitored parameters at that site."
+    },
+    {
+      "question": "What is the pollen count at a school or site?",
+      "answer": "HAWAQM does not measure pollen. It does measure CO2, PM10, PM2.5, formaldehyde (CH2O), CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If you share a site name, I can show you the current readings for all monitored parameters at that site."
+    },
+    {
+      "question": "The site is marked inactive but one device is still sending data. Is that an error?",
+      "answer": "A site is marked inactive when one or more of its devices are inactive. If at least one device is still sending data but another is not, the site may be shown as inactive depending on configuration. Check the individual device statuses for the site to confirm which devices are active."
+    },
+    {
+      "question": "The Data Success Rate is below 75%. Can I still use the AQI results?",
+      "answer": "AQI results are still displayed when DSR is below 75%, but they should be treated with caution. Low data completeness means some readings are missing, which may affect the accuracy of averages and AQI calculations. For official reporting, a minimum DSR of 75% is recommended."
+    },
+    {
+      "question": "If only a few readings are available, can you estimate the missing AQI values?",
+      "answer": "HAWAQM does not interpolate or estimate missing readings. Only actual received data is used to calculate AQI. Missing readings are reflected in the Data Success Rate."
+    },
+    {
+      "question": "Why do the total device and active device figures not change when I select an older year on the dashboard?",
+      "answer": "The total device and active device counts on the dashboard reflect the current registered and active state of devices, not a historical snapshot. These figures do not change when a different year is selected because they represent the current system state, not past configurations."
+    },
+    {
+      "question": "Why is a site missing from the geographical map even though it exists in HAWAQM?",
+      "answer": "A site will not appear on the geographical map if it does not have geographic coordinates configured. Contact the system administrator to add or update the site coordinates."
+    },
+    {
+      "question": "Can I get the last 24 hours of readings for a device?",
+      "answer": "Yes. I can show the last 24 hours for a device as 5-minute records, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint. Please share the device name (e.g. BA 0001 or SEI100M 0008) and I will retrieve the data for you."
+    },
+    {
+      "question": "Can I use a 1-hour threshold for PM10 because I want a faster alert?",
+      "answer": "Not for official exceedance checks — PM10's defined interval is 24 hours. For early warning you can still watch the live readings, but only the 24-hour average counts as an exceedance."
+    },
+    {
+      "question": "Which offline devices should be checked first?",
+      "answer": "Check first the devices that have been offline the longest, that go offline repeatedly, and that are pulling their site's data completeness down. A device at a high-priority site should also move up the list."
+    },
+    {
+      "question": "How should I compare pollutant exceedances across pollutants with different averaging periods?",
+      "answer": "Compare each pollutant only within its own official averaging interval, and always label the interval. Comparing counts across different intervals is misleading."
+    },
+    {
+      "question": "Can you explain why a site disappeared from dashboards after it was deleted?",
+      "answer": "Once a site or device is deleted by an authorised user, it is removed from all lists, dashboards, maps and filters. Its historical data is handled according to the retention policy set by the administrators."
+    },
+    {
+      "question": "Can you prove the ventilation system caused yesterday's spike?",
+      "answer": "Not with certainty. I can show the temperature, humidity and parameter readings recorded at that site around the same time, which may suggest a correlation — but the sensor data alone cannot prove causation. For a definitive finding, a physical inspection or engineering assessment would be needed."
+    },
+    {
+      "question": "Can you tell me which weather condition caused a pollutant spike?",
+      "answer": "Not with certainty. I can show the temperature, humidity and nearby outdoor readings recorded at the same time, which often suggests a likely cause — but the data cannot prove it."
+    },
+    {
+      "question": "If the nearest ambient station and indoor site have different update times, can I compare them directly?",
+      "answer": "Only with care. Align both to the closest matching timestamps or to the same averaging interval first — comparing readings taken at different times can be misleading."
     }
   ]
 }
