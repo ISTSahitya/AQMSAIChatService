@@ -19,7 +19,7 @@
     },
     {
       "question": "How is the site AQI calculated when a site has more than one device?",
-      "answer": "The site's air-quality value is calculated as the average of the devices installed at that site, rather than using a single device reading."
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
     },
     {
       "question": "Which air-quality parameters are monitored by HAWAQM?",
@@ -31,27 +31,31 @@
     },
     {
       "question": "What AQI range is considered Good?",
-      "answer": "An AQI from 0 to 50 is classified as Good."
+      "answer": "An AQI of 0–50 is Good — the cleanest band. The air is fine for everyone and no precautions are needed."
     },
     {
       "question": "What AQI range is considered Moderate?",
-      "answer": "An AQI from 51 to 100 is classified as Moderate."
+      "answer": "An AQI of 51–100 is Moderate. The air is acceptable for almost everyone; only unusually sensitive people may notice any effect. No action is needed — just keep an eye on it."
     },
     {
       "question": "What AQI range is Unhealthy for Sensitive Groups?",
-      "answer": "An AQI from 101 to 150 is classified as Unhealthy for Sensitive Groups."
+      "answer": "An AQI of 101–150 is Unhealthy for Sensitive Groups. People with asthma or heart conditions, young children and older adults may feel effects. At this level it is worth checking the cause."
     },
     {
       "question": "What AQI range is Unhealthy?",
-      "answer": "An AQI from 151 to 200 is classified as Unhealthy."
+      "answer": "An AQI of 151–200 is Unhealthy. Everyone may start to feel health effects, and sensitive groups more strongly. The source should be investigated."
     },
     {
       "question": "What AQI range is Very Unhealthy?",
-      "answer": "An AQI from 201 to 300 is classified as Very Unhealthy."
+      "answer": "An AQI of 201–300 is Very Unhealthy. Health effects are likely for everyone in the space. Investigate immediately."
     },
     {
       "question": "What AQI value is considered Hazardous?",
-      "answer": "An AQI above 300 is classified as Hazardous."
+      "answer": "An AQI above 300 is Hazardous — the most serious level. It is rare indoors, so first verify the reading, then act immediately."
+    },
+    {
+      "question": "What are the AQI categories or levels?",
+      "answer": "There are six AQI categories: An AQI of 0–50 is Good — the air is fine for everyone and no precautions are needed. An AQI of 51–100 is Moderate — acceptable for almost everyone; only unusually sensitive people may notice any effect. An AQI of 101–150 is Unhealthy for Sensitive Groups — people with asthma or heart conditions, young children and older adults may feel effects. An AQI of 151–200 is Unhealthy — everyone may start to feel health effects. An AQI of 201–300 is Very Unhealthy — health effects are likely for everyone in the space; investigate immediately. An AQI above 300 is Hazardous — the most serious level; verify the reading and act immediately."
     },
     {
       "question": "Can I export HAWAQM data for a selected date range?",
@@ -91,27 +95,27 @@
     },
     {
       "question": "How is the site AQI calculated?",
-      "answer": "When a site has more than one device, the site AQI is the average of the AQI values reported by all active devices at that site. This prevents a single faulty device from misrepresenting the site's overall air quality."
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
     },
     {
       "question": "Can you confirm a school is safe for children to attend today?",
       "answer": "HAWAQM provides air quality data and AQI classifications to help inform decisions, but it does not make safety or occupancy recommendations. Please consult the relevant health or education authority for official guidance on school attendance."
     },
     {
-      "question": "Can mold test results be combined with AQI into one score?",
-      "answer": "No. Mold test results and AQI are separate indicators measured by different methods. AQI covers airborne pollutant concentrations; mold tests assess surface or airborne mold presence. They are reported separately in HAWAQM and cannot be merged into a single score."
+      "question": "Can mold test results be combined with AQI into one air-quality score?",
+      "answer": "No. AQI comes from continuous sensor measurements; mold results come from separate laboratory tests. They answer different questions, so HAWAQM shows them side by side instead of mixing them into one score."
     },
     {
       "question": "Can I compare a 5-minute PM2.5 reading directly with the 24-hour exceedance threshold?",
-      "answer": "No. The MOCCAE exceedance threshold for PM2.5 is based on a 24-hour average, not a 5-minute instantaneous reading. A single high 5-minute reading does not constitute a standard exceedance. Always use the correct averaging interval when checking against thresholds."
+      "answer": "No. A 24-hour threshold must be compared with a 24-hour average, not with a single 5-minute reading. A short spike can look alarming against a daily limit even when there is no real exceedance."
     },
     {
       "question": "Which averaging intervals should be used for pollutant exceedance checks?",
-      "answer": "Each pollutant has a specific averaging interval defined by MOCCAE: PM2.5 uses a 24-hour average, PM10 uses a 24-hour average, NO2 uses a 1-hour average, O3 uses an 8-hour average, CO uses an 8-hour average, and SO2 uses a 1-hour or 24-hour average depending on the standard. Always match the averaging interval to the applicable threshold."
+      "answer": "Each pollutant has its own averaging interval and you have to use the right one, because a threshold is only meaningful against the period it was defined for. NO2 is checked over 1 hour and 24 hours; O3 and CO over 1 hour and 8 hours; PM10 and PM2.5 over 24 hours. Comparing a short-term reading against a 24-hour threshold will produce exceedances that aren't real."
     },
     {
       "question": "A site has no device but has a mold test. Should it appear in device statistics?",
-      "answer": "No. A site used only for mold testing with no installed device should not appear in device counts or AQI statistics. It will appear in mold test reports and site listings but is excluded from device-based metrics."
+      "answer": "No. A mold-only site has no device installed, so including it would distort device coverage and completeness figures. It still appears in mold reporting."
     },
     {
       "question": "What was the AQI at a school in a past year?",
@@ -131,7 +135,7 @@
     },
     {
       "question": "Can you show me radon levels?",
-      "answer": "HAWAQM does not measure radon. It does measure CO2, PM10, PM2.5, formaldehyde (CH2O), CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If you share a site name, I can show you the current readings for all monitored parameters at that site."
+      "answer": "HAWAQM doesn't measure radon. It does measure CO2, PM10, PM2.5, formaldehyde, CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If there is a concern at {SITE_NAME}, I can show you what the monitored parameters were doing over the same period."
     },
     {
       "question": "What is the pollen count at a school or site?",
@@ -143,19 +147,19 @@
     },
     {
       "question": "The Data Success Rate is below 75%. Can I still use the AQI results?",
-      "answer": "AQI results are still displayed when DSR is below 75%, but they should be treated with caution. Low data completeness means some readings are missing, which may affect the accuracy of averages and AQI calculations. For official reporting, a minimum DSR of 75% is recommended."
+      "answer": "Yes — the readings that did arrive are valid and can be used. But always quote the Data Success Rate next to the results, because the averages are built on incomplete data."
     },
     {
       "question": "If only a few readings are available, can you estimate the missing AQI values?",
-      "answer": "HAWAQM does not interpolate or estimate missing readings. Only actual received data is used to calculate AQI. Missing readings are reflected in the Data Success Rate."
+      "answer": "No. Missing values are never estimated or filled in. You get the real measurements, a clear note of which period is missing, and the Data Success Rate for context."
     },
     {
       "question": "Why do the total device and active device figures not change when I select an older year on the dashboard?",
-      "answer": "The total device and active device counts on the dashboard reflect the current registered and active state of devices, not a historical snapshot. These figures do not change when a different year is selected because they represent the current system state, not past configurations."
+      "answer": "Those two numbers count what is registered today — they are not a snapshot of the selected year. That is why they stay the same whichever year you pick."
     },
     {
       "question": "Why is a site missing from the geographical map even though it exists in HAWAQM?",
-      "answer": "A site will not appear on the geographical map if it does not have geographic coordinates configured. Contact the system administrator to add or update the site coordinates."
+      "answer": "Almost always because the site has no geographic coordinates configured. Everything else about it works normally — reports, filters and exports. Adding the coordinates fixes it."
     },
     {
       "question": "Can I get the last 24 hours of readings for a device?",
@@ -188,6 +192,42 @@
     {
       "question": "If the nearest ambient station and indoor site have different update times, can I compare them directly?",
       "answer": "Only with care. Align both to the closest matching timestamps or to the same averaging interval first — comparing readings taken at different times can be misleading."
+    },
+    {
+      "question": "Can you prepare a one-year raw-data export for a school?",
+      "answer": "Yes. A one-year raw-data export is large, so it is generated in the background. Once the file is ready, a download link will be emailed to you. Please allow some time for the export to complete."
+    },
+    {
+      "question": "Can I use the Statistical Report to analyse the whole previous month?",
+      "answer": "Not in one request — the Statistical Report covers up to 7 days at a time. For a full month, use the Data Analysis Report instead, or export the raw data for the month."
+    },
+    {
+      "question": "Can I use the Exceedance Report for the last six months in one request?",
+      "answer": "No — the Exceedance Report covers up to 90 days per request. Split six months into two 90-day requests, or export the raw data for the full period in one file."
+    },
+    {
+      "question": "Which averaging intervals should be used for NO2, O3, CO, PM10, and PM2.5 exceedance checks?",
+      "answer": "Each pollutant has its own averaging interval and you have to use the right one, because a threshold is only meaningful against the period it was defined for. NO2 is checked over 1 hour and 24 hours; O3 and CO over 1 hour and 8 hours; PM10 and PM2.5 over 24 hours. Comparing a short-term reading against a 24-hour threshold will produce exceedances that aren't real."
+    },
+    {
+      "question": "I need six months of exceedance analysis. How should the assistant handle it?",
+      "answer": "Split it into 90-day windows (the report limit), run each window the same way, and combine the results. If that is too much work, export the raw data for the full six months in one file instead."
+    },
+    {
+      "question": "Why can the site AQI look acceptable while one device shows a much higher reading?",
+      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
+    },
+    {
+      "question": "Could the site average be hiding a problem on one device?",
+      "answer": "Yes, it can. The site value is an average, so one device running high can be offset by the other running low. If something feels off, ask me to compare the two devices side by side."
+    },
+    {
+      "question": "Why do the total device and active device counts not change when I select a different year on the Executive Dashboard?",
+      "answer": "The total device and active device counts reflect the current registered and active state of devices today, not a historical snapshot for the selected year. These figures represent the current system state and do not change when a different year is selected."
+    },
+    {
+      "question": "Why is a site not showing on the geographical map even though it is registered in HAWAQM?",
+      "answer": "Almost always because the site has no geographic coordinates configured. Everything else about it works normally — reports, filters and exports. Adding the coordinates fixes it."
     }
   ]
 }

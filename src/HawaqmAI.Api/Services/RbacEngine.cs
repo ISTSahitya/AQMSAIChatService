@@ -105,6 +105,19 @@ public sealed class RbacEngine : IRbacEngine
                 {
                     parameters["stationNameNormalized"] = rawValue.ToLowerInvariant().Replace(" ", "");
                 }
+
+                // Auto-inject @paddedCanonical whenever @deviceName is bound —
+                // resolves partial device names like "BA 1" → "BA0001", "SEI100M 14" → "SEI100M0014".
+                // Real device format: "BA 0001"–"BA 0010", "SEI100M 0014"–"SEI100M 0148".
+                if (param.Name.Equals("deviceName", StringComparison.OrdinalIgnoreCase)
+                    && sql.Contains("@paddedCanonical", StringComparison.OrdinalIgnoreCase))
+                {
+                    var norm = rawValue.Replace(" ", "").ToUpperInvariant();
+                    var m = System.Text.RegularExpressions.Regex.Match(norm, @"^([A-Z]+(?:\d+[A-Z]+)*)(\d+)$");
+                    parameters["paddedCanonical"] = m.Success
+                        ? m.Groups[1].Value + m.Groups[2].Value.PadLeft(4, '0')
+                        : norm;
+                }
             }
         }
 
@@ -327,8 +340,14 @@ public sealed class RbacEngine : IRbacEngine
 
         if (andIdx > whereIdx)
         {
-            // Remove " AND <condition>"
-            sql = before[..andIdx] + (rest.Length > 0 ? " " + rest.TrimStart() : "");
+            // Remove " AND <condition>".
+            // When the next token is also a condition (isAndMarker), re-add the AND separator
+            // so the remaining conditions stay properly joined.
+            // When the next token is ORDER BY / GROUP BY / HAVING, keep it as-is (no AND needed).
+            var suffix = rest.Length > 0
+                ? (isAndMarker ? " AND " + rest.TrimStart() : " " + rest.TrimStart())
+                : "";
+            sql = before[..andIdx] + suffix;
         }
         else if (whereIdx >= 0)
         {

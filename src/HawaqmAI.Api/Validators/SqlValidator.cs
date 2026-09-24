@@ -132,6 +132,6 @@ public static class SqlValidator
     /// </summary>
     public static bool IsAllowedColumn(string columnName, IEnumerable<string> allowlist)
     {
-        return allowlist.Contains(columnName.ToLowerInvariant());
+        return allowlist.Contains(columnName, StringComparer.OrdinalIgnoreCase);
     }
 }
