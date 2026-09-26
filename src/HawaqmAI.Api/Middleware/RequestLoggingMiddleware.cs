@@ -40,8 +40,10 @@ public sealed class RequestLoggingMiddleware
         {
             var userCtx = BuildUserContext(context, userIdStr, ip);
 
-            // Resolve permitted sites from DB using the numeric UserId claim
-            if (int.TryParse(userIdStr, out var numericUserId) && numericUserId > 0)
+            // Admin role has access to all sites — skip RoleStations lookup.
+            // Any other role gets its permitted site IDs from RoleStations in the DB.
+            if (!userCtx.Role.Equals("admin", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(userIdStr, out var numericUserId) && numericUserId > 0)
             {
                 userCtx.PermittedSiteIds = await userSiteService.GetPermittedSiteIdsAsync(
                     numericUserId, context.RequestAborted);

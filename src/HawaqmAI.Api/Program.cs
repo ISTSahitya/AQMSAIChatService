@@ -64,6 +64,13 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddSingleton<IQueryRouterService, QueryRouterService>();
     builder.Services.AddSingleton<IAzureAIService, AzureAIService>();
+
+    // Site data cache — singleton so all scoped services share the same cached data.
+    // Also registered as a hosted background service so it self-refreshes every 5 min.
+    builder.Services.AddSingleton<SiteDataCacheService>();
+    builder.Services.AddSingleton<ISiteDataCacheService>(sp => sp.GetRequiredService<SiteDataCacheService>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<SiteDataCacheService>());
+
     builder.Services.AddScoped<IRbacEngine, RbacEngine>();
     builder.Services.AddScoped<ISqlExecutorService, SqlExecutorService>();
     builder.Services.AddScoped<ISessionService, SessionService>();

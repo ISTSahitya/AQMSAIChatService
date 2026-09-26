@@ -22,19 +22,22 @@ public sealed class ExternalApiService : IExternalApiService
     private readonly IStationResolverService _stationResolver;
     private readonly ISqlExecutorService _sqlExecutor;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ISiteDataCacheService _siteDataCache;
 
     public ExternalApiService(
         IHttpClientFactory httpClientFactory,
         IOptions<AqmsApiOptions> options,
         IStationResolverService stationResolver,
         ISqlExecutorService sqlExecutor,
-        IHttpContextAccessor httpContextAccessor)
+        IHttpContextAccessor httpContextAccessor,
+        ISiteDataCacheService siteDataCache)
     {
         _options = options.Value;
         _http = httpClientFactory.CreateClient("AqmsApi");
         _stationResolver = stationResolver;
         _sqlExecutor = sqlExecutor;
         _httpContextAccessor = httpContextAccessor;
+        _siteDataCache = siteDataCache;
     }
 
     /// <inheritdoc/>
@@ -70,23 +73,33 @@ public sealed class ExternalApiService : IExternalApiService
                     };
                 }
 
-                // Always call GetAllSiteData — it includes StationName per device
-                var allUrl = _options.BaseUrl.TrimEnd('/') + "/api/AirQuality/GetAllSiteData";
-                using var allReq = new HttpRequestMessage(HttpMethod.Get, allUrl);
-                ApplyAuth(allReq, bearerToken);
-
-                using var allResp = await _http.SendAsync(allReq, ct);
-                if (!allResp.IsSuccessStatusCode)
+                // Use cached GetAllSiteData — refreshed every 5 min by SiteDataCacheService.
+                // Falls back to a live API call only when the cache is empty (first-startup race).
+                var allJson = _siteDataCache.GetRawJson();
+                if (allJson is null)
                 {
-                    return new ApiCallResult
+                    _log.Warning("ExternalApiService: site data cache is empty — falling back to live GetAllSiteData call");
+                    var allUrl = _options.BaseUrl.TrimEnd('/') + "/api/AirQuality/GetAllSiteData";
+                    using var allReq = new HttpRequestMessage(HttpMethod.Get, allUrl);
+                    ApplyAuth(allReq, bearerToken);
+                    using var allResp = await _http.SendAsync(allReq, ct);
+                    if (!allResp.IsSuccessStatusCode)
                     {
-                        Success = false,
-                        Error = $"AQMS API returned {(int)allResp.StatusCode} when looking up stations.",
-                        ExecutionTimeMs = sw.ElapsedMilliseconds
-                    };
+                        return new ApiCallResult
+                        {
+                            Success = false,
+                            Error = $"AQMS API returned {(int)allResp.StatusCode} when looking up stations.",
+                            ExecutionTimeMs = sw.ElapsedMilliseconds
+                        };
+                    }
+                    allJson = await allResp.Content.ReadAsStringAsync(ct);
+                    // Seed the cache so subsequent requests and background refresh benefit
+                    _siteDataCache.UpdateCache(allJson);
                 }
-
-                var allJson = await allResp.Content.ReadAsStringAsync(ct);
+                else
+                {
+                    _log.Debug("ExternalApiService: using cached site data for station lookup");
+                }
 
                 // Parse fully into records before JsonDocument goes out of scope
                 var allDevices = ParseDevicesFromJson(allJson);
@@ -220,29 +233,45 @@ public sealed class ExternalApiService : IExternalApiService
                 _log.Debug("ExternalApiService: resolved '{Query}' → '{Station}' (ID={Id}, score={Score})",
                     nameToResolve, matched.Name, matched.Key, matched.Score);
 
-                // GetAllSiteData does not include DeviceName — call GetSiteData?siteId=X
-                // which is the confirmed source that includes DeviceName per device.
-                var siteUrl = _options.BaseUrl.TrimEnd('/') + $"/api/AirQuality/GetSiteData?siteId={matched.Key}";
-                using var siteReq = new HttpRequestMessage(HttpMethod.Get, siteUrl);
-                ApplyAuth(siteReq, bearerToken);
-
-                using var siteResp = await _http.SendAsync(siteReq, ct);
-                sw.Stop();
-
-                if (!siteResp.IsSuccessStatusCode)
-                {
-                    return new ApiCallResult
-                    {
-                        Success = false,
-                        Error = $"AQMS API returned {(int)siteResp.StatusCode} fetching data for '{matched.Name}'.",
-                        ExecutionTimeMs = sw.ElapsedMilliseconds
-                    };
-                }
-
-                var siteJson = await siteResp.Content.ReadAsStringAsync(ct);
-                var siteDevices = ParseDevicesFromJson(siteJson)
-                    .Select(d => d with { StationName = string.IsNullOrWhiteSpace(d.StationName) ? matched.Name : d.StationName })
+                // Use cache for this site's readings — filter matched station rows from allJson.
+                // Falls back to live GetSiteData only when the site has no rows in cache
+                // (e.g. a site with no parameter readings at all).
+                var cachedSiteDevices = matched.Devices
+                    .Select(d => d with { StationName = matched.Name })
                     .ToList();
+
+                List<DeviceReading> siteDevices;
+                if (cachedSiteDevices.Count > 0 && cachedSiteDevices.Any(d => d.Params.Count > 0))
+                {
+                    _log.Debug("ExternalApiService: using cache for site '{Station}' readings ({Count} devices)", matched.Name, cachedSiteDevices.Count);
+                    siteDevices = cachedSiteDevices;
+                    sw.Stop();
+                }
+                else
+                {
+                    _log.Debug("ExternalApiService: cache has no readings for '{Station}' — falling back to live GetSiteData", matched.Name);
+                    var siteUrl = _options.BaseUrl.TrimEnd('/') + $"/api/AirQuality/GetSiteData?siteId={matched.Key}";
+                    using var siteReq = new HttpRequestMessage(HttpMethod.Get, siteUrl);
+                    ApplyAuth(siteReq, bearerToken);
+
+                    using var siteResp = await _http.SendAsync(siteReq, ct);
+                    sw.Stop();
+
+                    if (!siteResp.IsSuccessStatusCode)
+                    {
+                        return new ApiCallResult
+                        {
+                            Success = false,
+                            Error = $"AQMS API returned {(int)siteResp.StatusCode} fetching data for '{matched.Name}'.",
+                            ExecutionTimeMs = sw.ElapsedMilliseconds
+                        };
+                    }
+
+                    var siteJson = await siteResp.Content.ReadAsStringAsync(ct);
+                    siteDevices = ParseDevicesFromJson(siteJson)
+                        .Select(d => d with { StationName = string.IsNullOrWhiteSpace(d.StationName) ? matched.Name : d.StationName })
+                        .ToList();
+                }
 
                 _log.Debug("ExternalApiService: GetSiteData siteId={Id} → {Count} devices", matched.Key, siteDevices.Count);
 
@@ -420,35 +449,53 @@ public sealed class ExternalApiService : IExternalApiService
 
             _log.Debug("ExternalApiService: {Method} {Url}", apiCall.Method, url);
 
-            // Retry on 500 (transient deadlocks from the upstream API)
-            HttpResponseMessage response;
-            for (int attempt = 0; ; attempt++)
-            {
-                var req = new HttpRequestMessage(apiCall.Method == "POST" ? HttpMethod.Post : HttpMethod.Get, url);
-                ApplyAuth(req, bearerToken);
-                response = await _http.SendAsync(req, ct);
-                if (response.IsSuccessStatusCode || attempt >= 2 ||
-                    (int)response.StatusCode < 500) break;
-                _log.Warning("ExternalApiService: {Url} returned {Status} on attempt {A}, retrying...", url, response.StatusCode, attempt + 1);
-                response.Dispose();
-                await Task.Delay(500, ct);
-            }
-            sw.Stop();
+            // For GetAllSiteData calls use the cache when available — avoids redundant upstream hits
+            // for every multi-site query (region AQI, category filters, site list, etc.).
+            string json;
+            var isGetAllSiteData = path.TrimStart('/').Equals("api/AirQuality/GetAllSiteData", StringComparison.OrdinalIgnoreCase);
+            var cachedJson = isGetAllSiteData ? _siteDataCache.GetRawJson() : null;
 
-            if (!response.IsSuccessStatusCode)
+            if (cachedJson is not null)
             {
-                var body = await response.Content.ReadAsStringAsync(ct);
-                _log.Warning("ExternalApiService: {Url} returned {Status}: {Body}",
-                    url, response.StatusCode, body[..Math.Min(300, body.Length)]);
-                return new ApiCallResult
+                _log.Debug("ExternalApiService: serving GetAllSiteData from cache ({Len} chars)", cachedJson.Length);
+                json = cachedJson;
+                sw.Stop();
+            }
+            else
+            {
+                // Retry on 500 (transient deadlocks from the upstream API)
+                HttpResponseMessage response;
+                for (int attempt = 0; ; attempt++)
                 {
-                    Success = false,
-                    Error = $"AQMS API returned {(int)response.StatusCode}: {response.ReasonPhrase}",
-                    ExecutionTimeMs = sw.ElapsedMilliseconds
-                };
-            }
+                    var req = new HttpRequestMessage(apiCall.Method == "POST" ? HttpMethod.Post : HttpMethod.Get, url);
+                    ApplyAuth(req, bearerToken);
+                    response = await _http.SendAsync(req, ct);
+                    if (response.IsSuccessStatusCode || attempt >= 2 ||
+                        (int)response.StatusCode < 500) break;
+                    _log.Warning("ExternalApiService: {Url} returned {Status} on attempt {A}, retrying...", url, response.StatusCode, attempt + 1);
+                    response.Dispose();
+                    await Task.Delay(500, ct);
+                }
+                sw.Stop();
 
-            var json = await response.Content.ReadAsStringAsync(ct);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadAsStringAsync(ct);
+                    _log.Warning("ExternalApiService: {Url} returned {Status}: {Body}",
+                        url, response.StatusCode, body[..Math.Min(300, body.Length)]);
+                    return new ApiCallResult
+                    {
+                        Success = false,
+                        Error = $"AQMS API returned {(int)response.StatusCode}: {response.ReasonPhrase}",
+                        ExecutionTimeMs = sw.ElapsedMilliseconds
+                    };
+                }
+
+                json = await response.Content.ReadAsStringAsync(ct);
+                // Seed the cache whenever we fetch GetAllSiteData live so user traffic keeps it warm
+                if (isGetAllSiteData)
+                    _siteDataCache.UpdateCache(json);
+            }
             _log.Information("ExternalApiService: raw API response ({Len} chars): {Preview}",
                 json.Length, json[..Math.Min(500, json.Length)]);
             var regionFilter = llmParams.GetValueOrDefault("regionName");
@@ -580,6 +627,114 @@ public sealed class ExternalApiService : IExternalApiService
                 _log.Information("ExternalApiService: indoor_ambient_compare → {Count} rows for site='{Site}'",
                     rows2.Count, nameToResolve ?? "(none)");
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // site_list_with_status: mirrors exactly what the Site Overview UI shows.
+            // Sources all sites from DMN_Stations (same as api/Deviceslookup → listStations),
+            // then overlays LiveStatus from DMN_Devices.IsEnable — so sites with no readings
+            // (not in GetAllSiteData) still appear, matching the UI's 14-site list.
+            // LiveStatus values:
+            //   "Active"   — at least one device with IsEnable=true
+            //   "Inactive" — has devices but all IsEnable=false
+            //   "No Data"  — no devices registered for this site
+            // Optional llmParams: regionName, liveStatus (Active / Inactive / No Data)
+            if (apiCall.ResponseShape == "site_list_with_status")
+            {
+                // Support pipe-separated multiple values: "Abu Dhabi|Al Dhafra", "Active|Inactive"
+                var regionFilters = (llmParams.GetValueOrDefault("regionName") ?? "")
+                    .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var statusFilters = (llmParams.GetValueOrDefault("liveStatus") ?? "")
+                    .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                var sectorFilters = (llmParams.GetValueOrDefault("sectorName") ?? "")
+                    .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                // Query all non-deleted stations with region and sector — same as UI's GetStations()
+                // which filters only on !IsDeleted (no Status=1 check).
+                var stationsSql = """
+                    SELECT s.ID AS StationId, s.StationName, r.RegionName, sec.SectorName
+                    FROM DMN_Stations s
+                    JOIN Regions r ON r.Id = s.RegionID
+                    LEFT JOIN Sectors sec ON sec.Id = s.SectorID
+                    WHERE ISNULL(s.IsDeleted,0) = 0
+                    ORDER BY r.RegionName, s.StationName
+                    """;
+                var stationsResult = await _sqlExecutor.ExecuteAsync(stationsSql, new Dictionary<string, object>(), ct);
+
+                // Replicate AdminDAL.DevicesList() live-status logic:
+                //   isActive = any parameter reading within 24h OR LastCommunicationTime within 10min.
+                //   Uses ALL parameters (not just PM2.5/DriverID=4) — some devices may not report PM2.5
+                //   but still be live via other parameters, and AdminDAL falls back to IsEnable=false
+                //   only when NO parameter row exists at all for that device.
+                //   Site is Active if ANY device under that station is active.
+                var deviceStatusSql = """
+                    SELECT
+                        d.StationID,
+                        MAX(CASE
+                            WHEN p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
+                            WHEN p.LastCommunicationTime     >= DATEADD(MINUTE, -10,   GETDATE()) THEN 1
+                            ELSE 0
+                        END) AS HasActiveDevice
+                    FROM DMN_Devices d
+                    LEFT JOIN (
+                        SELECT DeviceID,
+                               MAX(ParameterReadingUpdateTime) AS ParameterReadingUpdateTime,
+                               MAX(LastCommunicationTime)      AS LastCommunicationTime
+                        FROM DMN_Parameters
+                        GROUP BY DeviceID
+                    ) p ON p.DeviceID = d.DeviceId
+                    WHERE ISNULL(d.IsDeleted, 0) = 0
+                    GROUP BY d.StationID
+                    """;
+                var deviceEnableResult = await _sqlExecutor.ExecuteAsync(deviceStatusSql, new Dictionary<string, object>(), ct);
+
+                var deviceEnableByStation = deviceEnableResult.Rows
+                    .ToDictionary(
+                        r => Convert.ToInt32(r["StationID"]),
+                        r => Convert.ToInt32(r["HasActiveDevice"]) == 1);
+
+                // RBAC: restrict to permitted sites for non-admin users
+                var allStationRows = stationsResult.Rows;
+                if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+                    allStationRows = allStationRows
+                        .Where(r => user.PermittedSiteIds.Contains(Convert.ToInt32(r["StationId"])))
+                        .ToList();
+
+                var siteRows = allStationRows
+                    .Select(r =>
+                    {
+                        var stationId  = Convert.ToInt32(r["StationId"]);
+                        var name       = r["StationName"]?.ToString() ?? "";
+                        var region     = r["RegionName"]?.ToString() ?? "";
+                        var sector     = r["SectorName"]?.ToString() ?? "";
+                        string liveStatus;
+                        if (deviceEnableByStation.TryGetValue(stationId, out var hasActive))
+                            liveStatus = hasActive ? "Active" : "Inactive";
+                        else
+                            liveStatus = "No Data";
+
+                        return new { StationName = name, RegionName = region, SectorName = sector, LiveStatus = liveStatus };
+                    })
+                    .Where(s => !string.IsNullOrWhiteSpace(s.StationName))
+                    .Where(s => regionFilters.Length == 0
+                        || regionFilters.Any(r => s.RegionName.Contains(r, StringComparison.OrdinalIgnoreCase)))
+                    .Where(s => sectorFilters.Length == 0
+                        || sectorFilters.Any(f => s.SectorName.Contains(f, StringComparison.OrdinalIgnoreCase)))
+                    .Where(s => statusFilters.Length == 0
+                        || statusFilters.Any(f => s.LiveStatus.Equals(f, StringComparison.OrdinalIgnoreCase)))
+                    .Select(s => new Dictionary<string, object?>
+                    {
+                        ["Site Name"]   = s.StationName,
+                        ["Region"]      = s.RegionName,
+                        ["Sector"]      = s.SectorName,
+                        ["Live Status"] = s.LiveStatus
+                    })
+                    .ToList();
+
+                _log.Information("ExternalApiService: site_list_with_status → {Count} rows (regions={R} statuses={S})",
+                    siteRows.Count,
+                    regionFilters.Length > 0 ? string.Join("|", regionFilters) : "all",
+                    statusFilters.Length > 0 ? string.Join("|", statusFilters) : "all");
+                return new ApiCallResult { Success = true, Rows = siteRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
             // For multi-site shapes (devices/sites/offline/status), filter to permitted sites before flattening.

@@ -432,18 +432,43 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual values from the data.
             """,
 
+        ["current_all_stations"] = """
+            Data columns: "StationName", "ParameterName", "ParameterValue", "UnitName", "LastUpdated".
+            Intro sentence (one line only): "Here are the latest readings across all accessible sites."
+            Then render the data as a markdown table with these exact headers:
+            | Site Name | Parameter | Value | Unit | Last Updated |
+            Fill every row from the data. Do not list sites in plain text.
+            NEVER output placeholder text — always use actual values from the data.
+            """,
+
         // Site count queries
         ["list_stations"] = """
-            Data columns: "StationName", "RegionName".
-            FORMAT: "You have access to {N} site(s): {StationName1}, {StationName2}, ..."
-            If sites span multiple regions, group by region: "You have access to {N} site(s) — {RegionName1}: {names}, {RegionName2}: {names}."
-            List every site from the data by name. Never just give a count. No table, plain text only.
+            Data columns: "Site Name", "Region", "Sector", "Live Status".
+            Live Status values: "Active" (device online), "Inactive" (has devices but none online), "No Data" (no devices registered).
+            Intro sentence (one line only): "You have access to {N} site(s)." — replace {N} with the actual row count.
+            Then render the data as a markdown table with these exact headers:
+            | Site Name | Region | Sector | Live Status |
+            Fill every row from the data. Never list as comma-separated text. Never just give a count.
+            NEVER output placeholder text — always use actual values from the data.
+            """,
+
+        ["sites_filtered"] = """
+            Data columns: "Site Name", "Region", "Sector", "Live Status".
+            Live Status values: "Active" (device online), "Inactive" (has devices but none online), "No Data" (no devices registered).
+            Write ONE intro sentence summarising the filter and row count, e.g.:
+              "There are {N} active site(s) in Abu Dhabi."
+              "There are {N} inactive site(s)."
+              "There are {N} site(s) with no registered devices."
+              "There are {N} site(s) matching your filter."
+            Then render the data as a markdown table with these exact headers:
+            | Site Name | Region | Sector | Live Status |
+            Fill every row from the data.
             NEVER output placeholder text — always use actual values from the data.
             """,
 
         ["count_sites_in_region"] = """
             If the data is empty: "You do not have access to any sites in {RegionName}. Contact your administrator if you need access."
-            If data has rows: "You have access to {N} site(s) in {RegionName}: {StationName1}, {StationName2}, ..."
+            If data has rows: write ONE intro sentence "You have access to {N} site(s) in {RegionName}." then output a table with columns: Site Name | Region
             Never output blank placeholders. Always use the actual region name from the question.
             """,
 
@@ -1066,7 +1091,8 @@ public sealed class AzureAIService : IAzureAIService
             3. Only select "schools_latest_pollutant" when the user says "schools" generically with a GENERIC plural reference (e.g. "all schools", "schools in Al Ain", "what is the AQI at schools") with NO specific school name mentioned AND is asking for a specific POLLUTANT reading (CO2, PM2.5, AQI value, etc.) WITHOUT an AQI quality level filter. NEVER select schools_latest_pollutant when: (a) a specific school or site name is mentioned, or (b) the user is asking about AQI category/quality level (good, moderate, unhealthy, etc.) — use site_aqi_by_category with sectorName="Public & Govt-School" instead.
             4. If the user asks an AQI question that mentions ONLY a region name (Abu Dhabi, Abudhabi, Al Ain, Alain, Al Dhafra, Aldhafra) with NO specific site name, OR asks for "all regions", "by region", "region wise" → select "region_aqi_geographical". Extract regionName if one specific region is mentioned; omit it if all regions are requested. NEVER select region_aqi_geographical when a specific site name is also present — rule 1 takes priority.
             4b. If the user asks a generic AQI question with NO specific site name AND NO region AND NO quality level word → select "site_aqi_all". Examples: "show me the AQI", "what is the AQI", "show the AQI", "current AQI", "display AQI", "AQI at my sites". NEVER select site_aqi_all when: (a) the question names a specific site or person → use site_aqi_single (rule 1), or (b) the question contains a quality word like good, bad, poor, unhealthy, moderate, hazardous, safe, harmful, vulnerable, critical → use site_aqi_by_category (rule 8).
-            5. If the user asks to LIST or SHOW schools, commercial sites, or residential sites — with or without a region filter — → ALWAYS select "sites_by_sector". Extract sectorName ("Public & Govt-School" for any school/govt/public question) and regionName if mentioned. This covers questions like "what are the different schools in Abu Dhabi?", "list schools in Al Ain", "schools present in Abudhabi", "which schools are in Al Dhafra", "commercial sites in Abu Dhabi". NEVER select schools_latest_pollutant or sites_by_region for these — those don't show school type breakdown.
+            5. If the user asks to LIST or SHOW which schools/sites exist (no pollutant reading requested) — with or without a region filter — → ALWAYS select "sites_by_sector". Extract sectorName ("Public & Govt-School" for any school/govt/public question) and regionName if mentioned. This covers questions like "what are the different schools in Abu Dhabi?", "list schools in Al Ain", "schools present in Abudhabi", "which schools are in Al Dhafra", "commercial sites in Abu Dhabi". NEVER select schools_latest_pollutant or sites_by_region for these — those don't show school type breakdown.
+               EXCEPTION to rule 5: if the user says "schools" generically AND asks for a specific pollutant reading or data (e.g. "show me a table of all Abu Dhabi schools with their latest CO2 reading", "Abu Dhabi schools CO2", "schools in Al Ain with AQI") → select "schools_latest_pollutant" (rule 3), NOT sites_by_sector. Rule 3 wins when a pollutant/reading is explicitly requested.
             6. Extract deviceName ONLY from the CURRENT question. Never use a device name from conversation history.
             7. Extract the device name as written in the question. Device names follow these real patterns (with or without space between prefix and number): "BA 0001", "BA 0010", "BA0010", "SEI100M 0014", "SEI100M 0085", "SEI100M0085". Preserve exactly what the user wrote — the system handles all spacing/casing variants automatically.
             7b. For device_reading_history: extract interval from time words in the question.
@@ -1209,7 +1235,7 @@ public sealed class AzureAIService : IAzureAIService
               Always compute using the "Today's date" provided in the user message.
             For columns: use lowercase snake_case (e.g. pm25, not PM2.5).
             For year: extract a 4-digit year if the user mentions one (e.g. "2025", "last year"). If no year is mentioned, omit it — the system will default to the current year automatically.
-            For regionName: extract the region the user mentions (words like "in", "under", "for", "within", "at" before a region name all indicate the region). Map to: "Abu Dhabi" (also: abudhabi, abu-dhabi, abudabi), "Al Ain" (also: alain, al-ain), "Al Dhafra" (also: aldhafra, al-dhafra, dhafra). If the user asks about all regions or does not mention a specific region, omit regionName.
+            For regionName: extract the region(s) the user mentions (words like "in", "under", "for", "within", "at", "and" between region names all indicate regions). Map to: "Abu Dhabi" (also: abudhabi, abu-dhabi, abudabi), "Al Ain" (also: alain, al-ain), "Al Dhafra" (also: aldhafra, al-dhafra, dhafra). If the user mentions MORE THAN ONE region (e.g. "Abu Dhabi and Al Dhafra", "Al Ain or Abu Dhabi"), output ALL matched regions joined by "|" (pipe). Examples: "Abu Dhabi and Al Dhafra" → "Abu Dhabi|Al Dhafra"; "Al Ain and Al Dhafra" → "Al Ain|Al Dhafra"; "all three regions" → omit. If the user asks about all regions or does not mention a specific region, omit regionName.
             For sectorName: there are exactly 3 sectors. Map ALL user variations to one of these three canonical values:
               → "Commercial": "commercial", "commercial sector", "commercial sites"
               → "Public & Govt-School": ANY phrase containing "school", "schools", "govt", "gov", "government", "public & govt", "public & gov", "public and gov", "public and govt", "public and government", "govt-school", "gov-school", "government school", "govt school", "gov school", "educational", "private and gov-school", "private and govt school"
@@ -1232,6 +1258,7 @@ public sealed class AzureAIService : IAzureAIService
             CRITICAL — pollutant group words for device queries: if the user says "physical" (or "physical readings", "physical pollutants", "physical parameters"), omit parameterName — the controller will return PM2.5, PM10, Temperature, Humidity, Noise. If the user says "chemical" (or "chemical readings", "chemical pollutants", "chemical parameters"), omit parameterName — the controller will return CO, CO2, NO2, SO2, O3, CH2O, VOC. Only extract a specific parameterName when the user names a single explicit pollutant.
             If the user asks for "reading", "readings", "all readings", "all parameters", "all data", "physical", or "chemical" — omit parameterName entirely.
             For statusFilter (devices_by_filter only): extract "Active" if user says "active", "online", "working", "sending"; extract "Inactive" if user says "inactive", "offline", "not sending", "down"; omit if user asks for all devices with no status preference.
+            For liveStatus (sites_filtered only): extract "Active" ONLY if user explicitly says "active sites", "online sites", "currently active"; extract "Inactive" ONLY if user explicitly says "inactive sites", "offline sites", "not active"; extract "No Data" ONLY if user says "no data", "no devices", "without devices", "no readings". If the user mentions MORE THAN ONE status (e.g. "active and inactive sites"), join with "|": "Active|Inactive". CRITICAL: if the user says "all sites", "show sites", "list sites", "give all sites", or any generic site list phrase WITHOUT a status word — omit liveStatus entirely. Never guess or infer liveStatus from context.
             For aqiCategory (site_aqi_by_category only): map the user's words to one or more of the six categories below.
               If the user asks for MORE THAN ONE category (e.g. "Moderate and Very Unhealthy", "Good or Unhealthy"), output ALL matched categories joined by "|" (pipe).
               Examples: "Moderate and Very Unhealthy" → "Moderate|Very Unhealthy"; "Good or Hazardous" → "Good|Hazardous"; "just Moderate" → "Moderate".

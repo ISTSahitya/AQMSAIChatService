@@ -252,9 +252,11 @@ public sealed class QueryRouterService : IQueryRouterService
 
     // Site-name indicators — words that appear in station names but NOT in region-only queries.
     // If any of these are present alongside a region word, the question is a site query, not a region query.
+    // NOTE: "school" is intentionally NOT in this list — it is a generic noun used in "all schools",
+    // "schools in Abu Dhabi" etc. and must NOT be treated as a site name indicator.
     private static readonly string[] SiteNameIndicators =
     [
-        "school", "residential", "commercial", "institutional", "institution",
+        "residential", "commercial", "institutional", "institution",
         "building", "facility", "centre", "center", "hospital", "clinic",
         "office", "park", "mall", "tower", "villa", "compound", "camp",
         "indian", "british", "american", "international", "national",
@@ -262,8 +264,7 @@ public sealed class QueryRouterService : IQueryRouterService
         "mushrif", "mussafah", "baniyas", "karama", "shakhbout", "shahama",
         "madinat", "khalidiyah", "corniche", "mangrove", "reem", "yas",
         "wahda", "rowdah", "muroor", "electra", "hameem", "liwa", "gayathi",
-        "reyada", "reayada", "kaltham", "obeidli", "gems", "british", "al ain school",
-        "al dhafra school", "abu dhabi school"
+        "reyada", "reayada", "kaltham", "obeidli", "gems", "british"
     ];
 
     // Specific named-school indicators — unique proper nouns that only appear in a named school, not in
@@ -273,6 +274,17 @@ public sealed class QueryRouterService : IQueryRouterService
         "reyada", "reayada", "saad", "naeem", "naim", "bateen", "gems", "kaltham",
         "indian school", "british school", "american school", "international school",
         "al ain school", "abu dhabi school", "al dhafra school"
+    ];
+
+    // Generic school question patterns — "Abu Dhabi schools", "schools in Al Ain", "all schools" etc.
+    // These refer to the school SECTOR, not a specific named school.
+    private static readonly string[] GenericSchoolPhrases =
+    [
+        "all schools", "schools in", "schools with", "schools co2", "schools aqi", "schools pm",
+        "abu dhabi schools", "al ain schools", "al dhafra schools", "abudhabi schools",
+        "alain schools", "aldhafra schools", "show me schools", "table of schools",
+        "list schools", "schools air quality", "school sites", "school co2", "school aqi",
+        "schools latest", "latest co2 reading", "latest aqi", "latest pm"
     ];
 
     /// <summary>
@@ -407,8 +419,9 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.1;
         }
 
-        // Between device_last_reading and device_reading_history: pick history when interval
-        // words OR a specific date/time reference is present.
+        // Between device_last_reading and device_reading_history:
+        // Pick history ONLY when an explicit time interval OR specific date/time is present.
+        // "reading" and "value" alone do NOT imply history — they appear in current-reading questions too.
         var historyIntervalWords = new[] {
             "5 min", "5min", "5-min", "5-minute",
             "1 hour", "1h", "1hour", "1-hour", "1h average", "1hour average", "1h averages",
@@ -417,10 +430,14 @@ public sealed class QueryRouterService : IQueryRouterService
             "monthly", "month", "monthly average",
             "yearly", "year", "annual", "yearly average",
             "history", "historical", "past", "average", "avg", "mean",
-            "interval", "reading", "value", "trend",
+            "interval", "trend",
             "last hour", "last 24", "last month", "last year",
             "yesterday", "last week"
         };
+        // "current", "now", "latest", "live", "right now", "at this moment" → force device_last_reading
+        var currentReadingWords = new[] { "current", "now", "latest", "live", "right now", "at this moment", "today's reading", "present" };
+        bool isCurrentReading = currentReadingWords.Any(w => lowerQuestion.Contains(w));
+
         // Detect specific date mentions (e.g. "11-aug-2026", "2026-08-11", "yesterday", "on monday")
         var hasSpecificDate = System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
             @"\b(yesterday|last\s+night|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b");
@@ -428,8 +445,18 @@ public sealed class QueryRouterService : IQueryRouterService
         var hasSpecificTime = System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
             @"\b(\d{1,2}:\d{2}\s*(am|pm)?|\d{1,2}\s*(am|pm))\b");
 
-        bool isHistorySignal = historyIntervalWords.Any(w => lowerQuestion.Contains(w))
-                               || hasSpecificDate || hasSpecificTime;
+        // History signal: must have an interval word OR a specific date/time — NOT just "reading"
+        bool isHistorySignal = !isCurrentReading &&
+                               (historyIntervalWords.Any(w => lowerQuestion.Contains(w))
+                                || hasSpecificDate || hasSpecificTime);
+
+        // Force device_last_reading when "current/now/latest" is present with a device name
+        if (template.Id == "device_last_reading"
+            && QuestionHasDeviceName(lowerQuestion)
+            && isCurrentReading)
+        {
+            maxScore = Math.Max(maxScore, 0.97);
+        }
 
         if (template.Id == "device_last_reading"
             && QuestionHasDeviceName(lowerQuestion)
@@ -470,20 +497,65 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.02;
         }
 
+        // Detect generic school questions: "Abu Dhabi schools", "schools in Al Ain", "all schools" etc.
+        // These refer to the school SECTOR and must route to schools_latest_pollutant, NOT site_aqi_single.
+        bool isGenericSchoolQuestion = GenericSchoolPhrases.Any(p => lowerQuestion.Contains(p))
+            || (lowerQuestion.Contains("schools") && !NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k)));
+
         // Penalise site_aqi_all when the question contains a specific site name —
         // a named-site question must use site_aqi_single, not the all-sites table.
-        bool hasSiteName = QuestionHasSiteName(lowerQuestion)
-            || NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k));
+        bool hasSiteName = !isGenericSchoolQuestion
+            && (QuestionHasSiteName(lowerQuestion)
+                || NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k)));
         if (template.Id == "site_aqi_all" && hasSiteName)
             maxScore *= 0.02;
 
-        // Boost site_aqi_single when the question contains a specific site name and asks for AQI or readings
+        // Boost site_aqi_single when the question contains a specific site name and asks for AQI or readings.
+        // Generic school questions (e.g. "Abu Dhabi schools CO2") must NOT trigger this boost —
+        // they route to schools_latest_pollutant instead.
         bool isAqiOrReadingQuestion = lowerQuestion.Contains("aqi") || lowerQuestion.Contains("air quality")
             || lowerQuestion.Contains("reading") || lowerQuestion.Contains("co2")
             || lowerQuestion.Contains("pm2.5") || lowerQuestion.Contains("pm10")
             || lowerQuestion.Contains("temperature") || lowerQuestion.Contains("humidity");
-        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion)
+        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion)
             maxScore = Math.Max(maxScore, 0.96);
+
+        // Boost schools_latest_pollutant for generic school questions with a pollutant signal.
+        // "Abu Dhabi schools CO2", "schools in Al Ain with AQI", "all schools PM2.5" etc.
+        if (template.Id == "schools_latest_pollutant" && isGenericSchoolQuestion)
+            maxScore = Math.Max(maxScore, 0.96);
+        // Penalise site_aqi_single for generic school questions — must not ask for a site name
+        if (template.Id == "site_aqi_single" && isGenericSchoolQuestion)
+            maxScore *= 0.1;
+
+        // Boost region_aqi_geographical when question has a region keyword + AQI/air quality signal
+        // but NO specific site name — e.g. "what is the AQI in AL Ain", "AQI in Abudhabi"
+        bool hasRegionKeyword = RegionKeywords.Any(k => lowerQuestion.Contains(k));
+        bool isAqiQuestion = lowerQuestion.Contains("aqi") || lowerQuestion.Contains("air quality");
+        if (template.Id == "region_aqi_geographical" && hasRegionKeyword && isAqiQuestion && !hasSiteName)
+            maxScore = Math.Max(maxScore, 0.96);
+
+        // Penalise site_aqi_all when a region keyword is present — region queries must go to region_aqi_geographical
+        if (template.Id == "site_aqi_all" && hasRegionKeyword && isAqiQuestion && !hasSiteName)
+            maxScore *= 0.1;
+
+        // Boost list_stations / sites_filtered when question asks for a SITE LIST (not readings).
+        // "what are the sites under X", "sites in X and Y", "sites under X region" etc.
+        // These must NOT route to current_all_stations (which returns readings).
+        var siteListPhrases = new[] {
+            "what are the sites", "what sites are", "which sites are", "list the sites",
+            "sites under", "sites in", "sites within", "show sites", "give sites",
+            "sites available", "all sites", "list sites", "show all sites"
+        };
+        bool isSiteListQuestion = siteListPhrases.Any(p => lowerQuestion.Contains(p));
+        bool hasRegionWord = RegionKeywords.Any(k => lowerQuestion.Contains(k));
+
+        if (isSiteListQuestion && (template.Id == "list_stations" || template.Id == "sites_filtered"))
+            maxScore = Math.Max(maxScore, 0.93);
+
+        // Penalise current_all_stations for site-list questions — it returns readings, not a list
+        if (template.Id == "current_all_stations" && isSiteListQuestion && !isAqiOrReadingQuestion)
+            maxScore *= 0.1;
 
         // Boost worst_month_pollutants for "what drove the worst month" questions
         var worstMonthPhrases = new[] {
