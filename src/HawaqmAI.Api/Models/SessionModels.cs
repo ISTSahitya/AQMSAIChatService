@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace HawaqmAI.Api.Models;
 
@@ -42,6 +43,7 @@ public sealed class ChatMessage
     public Guid SessionId { get; set; }
 
     [ForeignKey(nameof(SessionId))]
+    [JsonIgnore]
     public ChatSession? Session { get; set; }
 
     /// <summary>"user" or "assistant".</summary>
@@ -90,6 +92,7 @@ public sealed class ChatFeedback
     public Guid MessageId { get; set; }
 
     [ForeignKey(nameof(MessageId))]
+    [JsonIgnore]
     public ChatMessage? Message { get; set; }
 
     [Required, MaxLength(100)]
@@ -114,6 +117,7 @@ public sealed class UserPin
     public Guid MessageId { get; set; }
 
     [ForeignKey(nameof(MessageId))]
+    [JsonIgnore]
     public ChatMessage? Message { get; set; }
 
     [Required, MaxLength(100)]

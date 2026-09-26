@@ -37,4 +37,24 @@ public interface ISessionService
 
     /// <summary>Auto-generates a session title from the first question (called after first message).</summary>
     Task UpdateSessionTitleAsync(Guid sessionId, string firstQuestion, CancellationToken ct = default);
+
+    /// <summary>
+    /// Persists the user message and assistant response in a single DB round-trip.
+    /// Use instead of calling SaveUserMessageAsync + SaveAssistantMessageAsync separately.
+    /// </summary>
+    Task SaveBothMessagesAsync(
+        Guid sessionId,
+        string userContent,
+        Guid assistantMessageId,
+        string assistantContent,
+        string? sql,
+        string responseType,
+        string? chartType,
+        string? chartDataJson,
+        string? dataSource,
+        string? dateRange,
+        string? modelUsed,
+        int executionTimeMs,
+        int tokenCount,
+        CancellationToken ct = default);
 }

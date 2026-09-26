@@ -89,6 +89,13 @@ public static class ScopeValidator
             scope.Region = request.Region;
         }
 
+        // ── Sector ───────────────────────────────────────────────────────────
+        if (!string.IsNullOrWhiteSpace(request?.Sector) &&
+            !request.Sector.Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            scope.Sector = request.Sector.Trim();
+        }
+
         // ── Sensors ──────────────────────────────────────────────────────────
         if (request?.Sensors is { Count: > 0 })
         {

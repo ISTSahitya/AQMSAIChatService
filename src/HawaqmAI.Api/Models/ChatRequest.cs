@@ -29,6 +29,9 @@ public sealed class ScopeRequest
     /// <summary>Region selected in the scope bar — one of "Abu Dhabi", "Al Ain", "Al Dhafra". Null means all regions.</summary>
     public string? Region { get; set; }
 
+    /// <summary>Sector selected in the scope bar (e.g. "Public &amp; Govt-School", "Industrial"). Null or "all" means all sectors.</summary>
+    public string? Sector { get; set; }
+
     /// <summary>Date range selected in the scope bar.</summary>
     public DateRangeRequest? Period { get; set; }
 

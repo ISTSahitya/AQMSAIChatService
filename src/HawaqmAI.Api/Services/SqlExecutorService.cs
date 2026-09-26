@@ -82,7 +82,8 @@ public sealed class SqlExecutorService : ISqlExecutorService
         catch (Exception ex)
         {
             sw.Stop();
-            _log.Error(ex, "SQL execution failed | SQL={Sql}", sql[..Math.Min(200, sql.Length)]);
+            var paramDump = string.Join(", ", parameters.Select(kv => $"@{kv.Key}={kv.Value} ({kv.Value?.GetType().Name})"));
+            _log.Error(ex, "SQL execution failed | SQL={Sql} | PARAMS={Params}", sql, paramDump);
             return new SqlExecutionResult
             {
                 Success = false,

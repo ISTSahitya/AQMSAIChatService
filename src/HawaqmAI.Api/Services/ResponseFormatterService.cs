@@ -135,6 +135,11 @@ public sealed class ResponseFormatterService : IResponseFormatterService
         _log.Debug("Formatted response: type={Type}, rows={Rows}, template={Template}",
             responseType, rowCount, template.Id);
 
+        // When no data rows returned, strip any markdown table the LLM may have
+        // included in the summary so the user gets a clean plain-text message.
+        if (rows.Count == 0)
+            llmSummary = StripMarkdownTable(llmSummary);
+
         // Text-only templates — suppress table data so only the summary is shown
         var suppressTable = responseType == "text";
 
@@ -184,6 +189,30 @@ public sealed class ResponseFormatterService : IResponseFormatterService
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Removes markdown table syntax (pipe-delimited rows) from a string,
+    /// keeping only the plain-text sentences before or after the table.
+    /// </summary>
+    private static string StripMarkdownTable(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || !text.Contains('|'))
+            return text;
+
+        // Split on newlines or literal "\n" sequences the LLM may embed
+        var lines = text.Replace("\\n", "\n").Split('\n');
+        var kept = lines
+            .Where(l => !l.TrimStart().StartsWith('|'))
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0);
+
+        var result = string.Join(" ", kept).Trim();
+
+        // If everything was in the table and nothing remains, return a fallback
+        return string.IsNullOrWhiteSpace(result)
+            ? "No data is currently available for the selected filters."
+            : result;
+    }
 
     private List<Dictionary<string, object?>> EnrichWithAqiLabels(List<Dictionary<string, object?>> rows)
     {

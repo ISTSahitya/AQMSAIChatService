@@ -77,11 +77,95 @@ public sealed class ChatController : ControllerBase
         var session = await _sessionService.GetOrCreateSessionAsync(request.SessionId, user.UserId, ct);
         var history = await _sessionService.GetConversationHistoryAsync(session.SessionId, ct: ct);
 
+        // ── 2a. Enrich message with scope-bar context for routing and LLM ──
+        // When the user has a sector selected in the filter bar, append it to the message
+        // so the query router picks sector-aware templates (e.g. sites_by_sector) even when
+        // the user's phrasing doesn't mention the sector explicitly.
+        var enrichedMessage = request.Message;
+        if (!string.IsNullOrWhiteSpace(scope.Sector))
+        {
+            var sectorLower = scope.Sector.ToLowerInvariant();
+            if (!enrichedMessage.ToLowerInvariant().Contains(sectorLower))
+                enrichedMessage = $"{enrichedMessage} in the {scope.Sector} sector";
+        }
+        if (!string.IsNullOrWhiteSpace(scope.Region))
+        {
+            var regionLower = scope.Region.ToLowerInvariant();
+            if (!enrichedMessage.ToLowerInvariant().Contains(regionLower))
+                enrichedMessage = $"{enrichedMessage} in {scope.Region}";
+        }
+
+        // ── 2a-ii. Follow-up reference resolution ──────────────────────────
+        // When the user uses pronouns or positional references ("the above site",
+        // "that device", "it", "the previous one", "same site", "next", "that school")
+        // without naming the entity, extract the entity from the last user message
+        // and inject it into the current question so routing and param extraction work correctly.
+        var followUpReferenceWords = new[]
+        {
+            "above site", "above school", "above device", "above station",
+            "that site", "that school", "that device", "that station",
+            "this site", "this school", "this device", "this station",
+            "the site", "the school", "the device", "the station",
+            "previous site", "previous school", "previous device",
+            "same site", "same school", "same device",
+            "above", "that one", "this one", "it ", " it?", "the same"
+        };
+        var msgLower = enrichedMessage.ToLowerInvariant();
+        bool isReferentialFollowUp = followUpReferenceWords.Any(w => msgLower.Contains(w))
+            && history.Count > 0;
+
+        if (isReferentialFollowUp)
+        {
+            // Find the last user message that contained a named entity
+            var lastUserMessage = history.LastOrDefault(h => h.Role == "user")?.Content ?? "";
+
+            // Extract the most likely entity: look for known site/device patterns in the previous message
+            // Device: BA/SEI100M followed by digits
+            var deviceMatch = System.Text.RegularExpressions.Regex.Match(
+                lastUserMessage, @"\b(BA\s*\d{1,4}|SEI100M\s*\d{1,4})\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            if (deviceMatch.Success)
+            {
+                var deviceName = deviceMatch.Value.Trim();
+                if (!enrichedMessage.Contains(deviceName, StringComparison.OrdinalIgnoreCase))
+                {
+                    enrichedMessage = $"{enrichedMessage} for device {deviceName}";
+                    _log.Debug("Follow-up enriched with device '{Device}' from history", deviceName);
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(lastUserMessage))
+            {
+                // For sites: strip common preposition prefixes to isolate the name portion.
+                // Pattern: "for the site X", "at X", "for X", "at site X" — extract X.
+                var siteMatch = System.Text.RegularExpressions.Regex.Match(
+                    lastUserMessage,
+                    @"(?:for|at|of|about|on)\s+(?:the\s+)?(?:site|school|station|device)?\s*([A-Z][A-Za-z0-9 \-'\.]{3,60}?)(?:\?|$|\s+in\s|\s+region|\s+aqi|\s+sector)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                if (siteMatch.Success)
+                {
+                    var siteName = siteMatch.Groups[1].Value.Trim().TrimEnd('?', '.', ',');
+                    if (siteName.Length > 3 && !enrichedMessage.Contains(siteName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        enrichedMessage = $"{enrichedMessage} for {siteName}";
+                        _log.Debug("Follow-up enriched with site '{Site}' from history", siteName);
+                    }
+                }
+                else
+                {
+                    // Fallback: append the entire previous user message as context hint
+                    enrichedMessage = $"{enrichedMessage} (referring to: {lastUserMessage})";
+                    _log.Debug("Follow-up enriched with full previous message as context");
+                }
+            }
+        }
+
         // ── 2b. Hard pre-check: AQI range/definition questions must always go to FAQ ──
         // These questions ask WHAT a category means (numeric range), not which sites are in it.
         // Pattern scorer can be confused by words like "good", "moderate", "aqi" matching
         // site_aqi_by_category patterns, so we intercept here before routing.
-        var lowerMsg = request.Message.ToLowerInvariant();
+        var lowerMsg = enrichedMessage.ToLowerInvariant();
         var aqiRangeDefinitionKeywords = new[] {
             // range-based phrasings
             "what aqi range", "aqi range is considered", "range considered good", "range considered moderate",
@@ -182,12 +266,12 @@ public sealed class ChatController : ControllerBase
                 var faqPathPre = Path.Combine(AppContext.BaseDirectory, "Knowledge", "faq.json");
                 var faqContextPre = System.IO.File.Exists(faqPathPre) ? await System.IO.File.ReadAllTextAsync(faqPathPre, ct) : string.Empty;
                 var faqAnswerPre = await _azureAI.AnswerFaqAsync(request.Message, faqContextPre, ct);
-                await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
                 var faqPreId = Guid.NewGuid();
-                await _sessionService.SaveAssistantMessageAsync(
+                await _sessionService.SaveBothMessagesAsync(
                     sessionId: session.SessionId,
-                    messageId: faqPreId,
-                    content: faqAnswerPre,
+                    userContent: request.Message,
+                    assistantMessageId: faqPreId,
+                    assistantContent: faqAnswerPre,
                     sql: null,
                     responseType: "text",
                     chartType: null,
@@ -199,7 +283,7 @@ public sealed class ChatController : ControllerBase
                     tokenCount: 0,
                     ct: ct);
                 if (session.MessageCount <= 1)
-                    await _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, ct);
+                    _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
                 return Ok(_formatter.Format(
                     sessionId: session.SessionId,
                     messageId: faqPreId,
@@ -245,14 +329,14 @@ public sealed class ChatController : ControllerBase
                 var safetyApiResult = await _externalApi.CallAsync(safetyTemplate.ApiCall, safetyParamResult.Parameters, scope, safetyBearerToken, user, safetyTemplate.Id, ct);
                 if (safetyApiResult.Success)
                 {
-                    await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
                     var safetyMsgId = Guid.NewGuid();
                     var safetySummary = await _azureAI.SummarizeResultsAsync(
                         request.Message, safetyTemplate, safetyApiResult.Rows, scope, ct);
-                    await _sessionService.SaveAssistantMessageAsync(
+                    await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
-                        messageId: safetyMsgId,
-                        content: safetySummary,
+                        userContent: request.Message,
+                        assistantMessageId: safetyMsgId,
+                        assistantContent: safetySummary,
                         sql: null,
                         responseType: "text",
                         chartType: null,
@@ -264,7 +348,7 @@ public sealed class ChatController : ControllerBase
                         tokenCount: safetyParamResult.TokensUsed,
                         ct: ct);
                     if (session.MessageCount <= 1)
-                        await _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, ct);
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
                     return Ok(_formatter.Format(
                         sessionId: session.SessionId,
                         messageId: safetyMsgId,
@@ -281,7 +365,7 @@ public sealed class ChatController : ControllerBase
         }
 
         // ── 3. Route the question to an approved template ───────────────────
-        var routeResult = await _queryRouter.RouteAsync(request.Message, user, history, ct);
+        var routeResult = await _queryRouter.RouteAsync(enrichedMessage, user, history, ct);
 
         if (routeResult.NeedsClarification)
         {
@@ -290,6 +374,44 @@ public sealed class ChatController : ControllerBase
                 session.SessionId,
                 "I'm sorry — that's outside my scope. I can only help with HAWAQM air-quality data. If it's useful, you could ask me: 'Which devices are offline right now?' or 'What is the current AQI at my school?'",
                 "CLARIFY"));
+        }
+
+        // ── 3b. Hard override: device name + date/time reference → device_reading_history ──
+        // The pattern scorer matches "reading" → device_last_reading with high confidence,
+        // but any date/time reference makes it historical. Override BEFORE LLM param fill.
+        bool msgHasDeviceCode = System.Text.RegularExpressions.Regex.IsMatch(
+            lowerMsg, @"(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})");
+        bool msgHasDateWord =
+            lowerMsg.Contains("yesterday") || lowerMsg.Contains("today") ||
+            lowerMsg.Contains("last hour") || lowerMsg.Contains("last day") ||
+            lowerMsg.Contains("last week") || lowerMsg.Contains("last month") ||
+            lowerMsg.Contains("last year") || lowerMsg.Contains("last 24") ||
+            lowerMsg.Contains("this morning") || lowerMsg.Contains("this week") ||
+            lowerMsg.Contains("this month") ||
+            System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
+                @"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)" +
+                @"|\d{1,2}(st|nd|rd|th)|\d{4}-\d{2}-\d{2}|on\s+\d");
+
+        _log.Debug("ChatController: deviceCode={HasDevice} dateWord={HasDate} routedTo={Template}",
+            msgHasDeviceCode, msgHasDateWord, routeResult.Template?.Id ?? "candidates");
+
+        if (msgHasDeviceCode && msgHasDateWord
+            && routeResult.Template?.Id != "device_reading_history")
+        {
+            var histTemplate = _queryRouter.GetPermittedTemplates(user)
+                .FirstOrDefault(t => t.Id == "device_reading_history");
+            if (histTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → device_reading_history (device+date detected)",
+                    routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult
+                {
+                    Template = histTemplate,
+                    Score = 1.0,
+                    Candidates = [],
+                    PreviousTemplateId = routeResult.PreviousTemplateId
+                };
+            }
         }
 
         // ── 4. LLM fills parameters (and optionally selects template) ──────
@@ -302,7 +424,7 @@ public sealed class ChatController : ControllerBase
         {
             // Medium confidence or follow-up: ask LLM to pick from candidates
             var selection = await _azureAI.SelectTemplateAsync(
-                request.Message, routeResult.Candidates, history, scope, routeResult.PreviousTemplateId, ct);
+                enrichedMessage, routeResult.Candidates, history, scope, routeResult.PreviousTemplateId, ct);
 
             tokensUsed = selection.TokensUsed;
             modelUsed = selection.ModelUsed;
@@ -323,7 +445,7 @@ public sealed class ChatController : ControllerBase
             // High confidence: template already known, just fill parameters
             template = routeResult.Template!;
             var paramResult = await _azureAI.FillParametersAsync(
-                request.Message, template, history, scope, ct);
+                enrichedMessage, template, history, scope, ct);
 
             tokensUsed = paramResult.TokensUsed;
             modelUsed = paramResult.ModelUsed;
@@ -345,12 +467,12 @@ public sealed class ChatController : ControllerBase
             var faqContext = System.IO.File.Exists(faqPath) ? await System.IO.File.ReadAllTextAsync(faqPath, ct) : string.Empty;
             var faqAnswer = await _azureAI.AnswerFaqAsync(request.Message, faqContext, ct);
 
-            await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
             var faqMessageId = Guid.NewGuid();
-            await _sessionService.SaveAssistantMessageAsync(
+            await _sessionService.SaveBothMessagesAsync(
                 sessionId: session.SessionId,
-                messageId: faqMessageId,
-                content: faqAnswer,
+                userContent: request.Message,
+                assistantMessageId: faqMessageId,
+                assistantContent: faqAnswer,
                 sql: null,
                 responseType: "text",
                 chartType: null,
@@ -363,7 +485,7 @@ public sealed class ChatController : ControllerBase
                 ct: ct);
 
             if (session.MessageCount <= 1)
-                await _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, ct);
+                _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
 
             return Ok(_formatter.Format(
                 sessionId: session.SessionId,
@@ -683,7 +805,7 @@ public sealed class ChatController : ControllerBase
 
                 var devLookup = await _sqlExecutor.ExecuteAsync(
                     """
-                    SELECT TOP 1 d.DeviceId, d.DeviceName, d.StationID
+                    SELECT TOP 1 d.ID AS DeviceId, d.DeviceName, d.StationID
                     FROM DMN_Devices d
                     WHERE d.Status = 1
                       AND ISNULL(d.IsDeleted, 0) = 0
@@ -728,8 +850,75 @@ public sealed class ChatController : ControllerBase
 
                 llmParams["deviceId"] = resolvedDeviceId;
 
-                // Pick the right SQL based on interval
-                var interval = llmParams.GetValueOrDefault("interval") ?? "5min";
+                // ── Smart interval defaulting ──────────────────────────────────────
+                // If the LLM did not extract an explicit interval, infer one from the
+                // date range the user requested:
+                //   < 2 hours requested  → 5min  (ParameterReadings — raw granularity)
+                //   < 2 days requested   → 1hour (ParameterAverages Type=1)
+                //   < 60 days requested  → 24hour (ParameterAverages Type=24)
+                //   < 2 years requested  → monthly (ParameterAveragesMonth)
+                //   otherwise            → yearly  (ParameterAveragesYear)
+                var rawInterval = llmParams.GetValueOrDefault("interval");
+                string interval;
+                bool isSpecificPastDay = false;
+                DateTime iStart = default;
+
+                // Normalise whatever the LLM extracted to our canonical interval tokens.
+                // The LLM sometimes returns "1H", "1h", "1 hour", "hourly", "daily", "24H" etc.
+                static string NormaliseInterval(string raw)
+                {
+                    var r = raw.Trim().ToLowerInvariant().Replace(" ", "").Replace("-", "");
+                    return r switch
+                    {
+                        "5min" or "5m" or "5mins" or "5minute" or "5minutes" or "fiveminute" => "5min",
+                        "1h" or "1hour" or "1hours" or "hourly" or "onehour" => "1hour",
+                        "8h" or "8hour" or "8hours" or "eighthour" => "8hour",
+                        "24h" or "24hour" or "24hours" or "daily" or "1day" or "day" or "twentyfourhour" => "24hour",
+                        "monthly" or "1month" or "month" or "1mo" => "monthly",
+                        "yearly" or "annual" or "annually" or "1year" or "year" or "1y" => "yearly",
+                        _ => ""   // unknown — fall through to span-based inference
+                    };
+                }
+
+                var normalisedInterval = string.IsNullOrWhiteSpace(rawInterval) ? "" : NormaliseInterval(rawInterval);
+                if (!string.IsNullOrWhiteSpace(normalisedInterval))
+                {
+                    interval = normalisedInterval;
+                }
+                else
+                {
+                    // Parse the date range the LLM extracted to determine span
+                    DateTime.TryParse(llmParams.GetValueOrDefault("startDate"), out iStart);
+                    DateTime.TryParse(llmParams.GetValueOrDefault("endDate"),   out var iEnd);
+
+                    // For "yesterday", "last 2 days" etc. the LLM gives startDate but no interval.
+                    // Compute span in hours; use endDate=now if not set.
+                    var spanEnd   = iEnd   == default ? DateTime.UtcNow : iEnd;
+                    var spanStart = iStart == default ? spanEnd.AddDays(-1) : iStart;
+                    var spanHours = (spanEnd - spanStart).TotalHours;
+
+                    // Special case: user asked for a specific past day (e.g. "Sep 19th", "on Monday")
+                    // where startDate is a calendar day >24h ago and endDate = startDate+1 or unset.
+                    // The span would be 0–24h, but the correct interval is 24hour (daily average),
+                    // not 1hour — because the user wants the full-day summary, not hourly breakdown.
+                    isSpecificPastDay = iStart != default
+                        && (DateTime.UtcNow - iStart).TotalHours > 24   // the day is >24h in the past
+                        && spanHours <= 25;                               // span is one calendar day
+
+                    interval = isSpecificPastDay ? "24hour" : spanHours switch
+                    {
+                        < 2    => "5min",
+                        < 48   => "1hour",   // up to 2 days → 1H averages
+                        < 1440 => "24hour",  // up to 60 days → daily averages
+                        < 8760 => "monthly", // up to 1 year → monthly averages
+                        _      => "yearly"
+                    };
+
+                    _log.Information(
+                        "device_reading_history: no interval extracted, span={Hours:F1}h pastDay={PastDay} → defaulted to '{Interval}'",
+                        spanHours, isSpecificPastDay, interval);
+                }
+
                 var paramName = llmParams.GetValueOrDefault("parameterName");
                 var paramFilter = string.IsNullOrWhiteSpace(paramName)
                     ? "" : " AND p.ParameterName = @parameterName";
@@ -810,308 +999,240 @@ public sealed class ChatController : ControllerBase
                 // Determine date range: default based on interval when not specified
                 if (!llmParams.ContainsKey("startDate"))
                 {
-                    var defaultEnd = DateTime.UtcNow.Date;
+                    var defaultEnd = DateTime.UtcNow;
                     var defaultStart = interval switch
                     {
+                        "yearly"  => new DateTime(defaultEnd.Year - 5, 1, 1),
                         "monthly" => defaultEnd.AddMonths(-12),
-                        "yearly"  => defaultEnd.AddYears(-5),
+                        "24hour"  => defaultEnd.AddDays(-30),
                         "8hour"   => defaultEnd.AddDays(-7),
-                        // 1H (Daily API): default to today — API returns all 24 hourly rows for that day
-                        // 24H (Weekly API): default to last 7 days — API returns one row per day
-                        "24hour"  => defaultEnd.AddDays(-6),
-                        "1hour"   => defaultEnd,
-                        _         => defaultEnd.AddDays(-1)  // 5min: last 24h
+                        "1hour"   => defaultEnd.AddDays(-1),  // last 24h of 1H rows
+                        _         => defaultEnd.AddDays(-1)   // 5min: last 24h
                     };
                     llmParams["startDate"] = defaultStart.ToString("yyyy-MM-dd HH:mm:ss");
                     llmParams["endDate"]   = defaultEnd.ToString("yyyy-MM-dd HH:mm:ss");
                 }
-
-                // ── Route to GetAQIGraphData API or SQL based on interval ────────────
-                // GetAQIGraphData API criteria mapping:
-                //   1hour   → criteria=Daily   — returns 24 hourly rows for a single day
-                //   24hour  → criteria=Weekly  — returns 7 daily rows for the supplied date range
-                //   monthly → criteria=Monthly — returns monthly summary rows
-                //   yearly  → criteria=Yearly  — returns yearly summary rows
-                //   8hour   → SQL only (no supported criteria)
-                //   5min    → SQL only (raw ParameterReadings)
-                var apiCriteria = interval switch
+                // When a specific past day was requested, ensure endDate covers the full day
+                // (LLM often sets endDate = startDate with no time, so the window is 0 seconds).
+                else if (isSpecificPastDay && iStart != default)
                 {
-                    "1hour"   => "Daily",
-                    "24hour"  => "Weekly",
-                    "monthly" => "Monthly",
-                    "yearly"  => "Yearly",
-                    _         => null  // 5min and 8hour use SQL
-                };
+                    llmParams["startDate"] = iStart.Date.ToString("yyyy-MM-dd HH:mm:ss");
+                    llmParams["endDate"]   = iStart.Date.AddDays(1).AddSeconds(-1).ToString("yyyy-MM-dd HH:mm:ss");
+                }
 
-                _log.Information("ChatController: device_reading_history deviceId={Id} interval={Interval} criteria={Criteria} param={Param}",
-                    resolvedDeviceId, interval, apiCriteria ?? "SQL", paramName ?? "all");
+                // ── Route to correct SQL table based on interval ──────────────────
+                // 5min    → ParameterReadings          (raw 5-minute readings)
+                // 1hour   → ParameterAverages Type=1   (1-hour averages)
+                // 8hour   → ParameterAverages Type=8   (8-hour averages)
+                // 24hour  → ParameterAverages Type=24  (24-hour / daily averages)
+                // monthly → ParameterAveragesMonth     (monthly averages)
+                // yearly  → ParameterAveragesYear      (yearly averages)
 
-                if (apiCriteria != null)
+                _log.Information("ChatController: device_reading_history deviceId={Id} interval={Interval} param={Param}",
+                    resolvedDeviceId, interval, paramName ?? "all");
+
+                // Point-in-time lookup: used for 5min when targetTime is supplied
+                bool isPointInTime = !string.IsNullOrWhiteSpace(rawTargetTime)
+                                     && llmParams.ContainsKey("startDate")
+                                     && interval == "5min";
+
+                // Validate startDate/endDate are actual dates — LLM can put interval strings like "1H" in these fields.
+                // If invalid, fall back to sensible defaults so the SQL doesn't throw a conversion error.
+                static DateTime SafeParseDate(string? raw, DateTime fallback)
+                    => DateTime.TryParse(raw, out var dt) ? dt : fallback;
+
+                var safeStartDate = SafeParseDate(
+                    llmParams.GetValueOrDefault("startDate"),
+                    DateTime.UtcNow.AddDays(-1));
+                var safeEndDate = SafeParseDate(
+                    llmParams.GetValueOrDefault("endDate"),
+                    DateTime.UtcNow);
+
+                // If start > end (LLM got them backwards) or they're equal (0-span), fix end.
+                if (safeEndDate <= safeStartDate)
+                    safeEndDate = safeStartDate.Date.AddDays(1).AddSeconds(-1);
+
+                // ParameterAverages.DeviceID and DMN_Parameters.DeviceID both have dirty nvarchar
+                // data (e.g. '1H') that causes conversion errors when compared with an int param.
+                // Safest approach: pre-fetch the list of DMN_Parameters.ID for this device using
+                // TRY_CAST to skip bad rows, then filter averages/readings by ParameterID IN (...).
+                var paramIdLookup = await _sqlExecutor.ExecuteAsync(
+                    "SELECT p.ID FROM DMN_Parameters p WHERE TRY_CAST(p.DeviceID AS INT) = @deviceIntId AND p.Status = 1",
+                    new Dictionary<string, object> { ["deviceIntId"] = resolvedDeviceId }, ct);
+
+                var parameterIds = paramIdLookup.Success
+                    ? paramIdLookup.Rows
+                        .Select(r => r.GetValueOrDefault("ID")?.ToString() ?? "")
+                        .Where(id => !string.IsNullOrWhiteSpace(id))
+                        .ToList()
+                    : new List<string>();
+
+                if (parameterIds.Count == 0)
                 {
-                    DateTime.TryParse(llmParams.GetValueOrDefault("startDate"), out var apiFrom);
-                    DateTime.TryParse(llmParams.GetValueOrDefault("endDate"),   out var apiTo);
-
-                    // ── Adjust date window per API behaviour ────────────────────────────
-                    // criteria=Daily (1H): API returns all 24 hourly rows for a single calendar day.
-                    //   → Send the target day as both Fromdate and Todate.
-                    //   → If user gave a targetTime (e.g. "at 8AM"), apiFrom.Date is already that day.
-                    //   → The existing timestamp-window filter in the controller then picks the right hour.
-                    //
-                    // criteria=Weekly (24H): API returns one row per day for the supplied date range.
-                    //   → Send a 7-day window ending on the target day.
-                    //   → The existing date filter in the controller then picks the specific day requested.
-                    if (apiCriteria == "Daily")
-                    {
-                        // Both dates = the target day (ignore time component)
-                        var targetDay = apiFrom == default ? DateTime.UtcNow.Date : apiFrom.Date;
-                        apiFrom = targetDay;
-                        apiTo   = targetDay;
-                    }
-                    else if (apiCriteria == "Weekly")
-                    {
-                        // End on the requested day; start 6 days earlier to get a 7-day window
-                        if (apiTo == default) apiTo = DateTime.UtcNow.Date;
-                        apiFrom = apiTo.Date.AddDays(-6);
-                        // Store the adjusted range back so the timestamp-filter below uses the right window
-                        llmParams["startDate"] = apiFrom.ToString("yyyy-MM-dd HH:mm:ss");
-                        llmParams["endDate"]   = apiTo.Date.AddDays(1).AddSeconds(-1).ToString("yyyy-MM-dd HH:mm:ss");
-                    }
-                    else
-                    {
-                        if (apiFrom == default) apiFrom = interval switch
-                        {
-                            "yearly"  => DateTime.UtcNow.AddYears(-5),
-                            "monthly" => DateTime.UtcNow.AddMonths(-12),
-                            _         => DateTime.UtcNow.AddDays(-7)
-                        };
-                        if (apiTo == default) apiTo = DateTime.UtcNow;
-                    }
-
-                    var apiResult = await _externalApi.GetAQIGraphDataAsync(
-                        resolvedDeviceId, resolvedStationId, resolvedDeviceName, apiCriteria,
-                        apiFrom, apiTo, paramName, bearerToken, ct);
-
-                    if (!apiResult.Success)
-                    {
-                        _log.Warning("device_reading_history API_ERROR: {Error}", apiResult.Error);
-                        return Ok(_formatter.FormatError(session.SessionId,
-                            "Could not retrieve historical data for that device. Please try again.", "API_ERROR"));
-                    }
-
-                    var filteredRows = apiResult.Rows;
-
-                    // ── 1H (Daily API): filter to the specific hour the user asked for ───
-                    // criteria=Daily returns all 24 hourly rows for the day.
-                    // When the user gave a targetTime (e.g. "at 8AM"), startDate/endDate were
-                    // already snapped to the [8:00, 9:00) window — filter to that window.
-                    // When no targetTime was given, return the full day (all rows).
-                    //
-                    // Timestamp comparison uses the time-of-day component only (hour match),
-                    // ignoring timezone offset so "8AM" matches "8:00:00" regardless of +04:00.
-                    if (apiCriteria == "Daily" && !string.IsNullOrWhiteSpace(rawTargetTime)
-                        && DateTime.TryParse(llmParams.GetValueOrDefault("startDate"), out var windowStart1H)
-                        && DateTime.TryParse(llmParams.GetValueOrDefault("endDate"),   out var windowEnd1H))
-                    {
-                        var targetHour = windowStart1H.Hour; // e.g. 8 for "8AM"
-
-                        // Log all timestamps we received to aid diagnosis
-                        _log.Information("device_reading_history (1H): targetHour={H}, available timestamps: {Ts}",
-                            targetHour,
-                            string.Join(", ", filteredRows
-                                .Select(r => r.GetValueOrDefault("Timestamp")?.ToString())
-                                .Distinct()
-                                .Take(10)));
-
-                        filteredRows = filteredRows.Where(r =>
-                        {
-                            var tsStr = r.GetValueOrDefault("Timestamp")?.ToString();
-                            if (string.IsNullOrWhiteSpace(tsStr)) return false;
-                            // Parse with DateTimeStyles.RoundtripKind to preserve any offset info
-                            if (!DateTime.TryParse(tsStr,
-                                    System.Globalization.CultureInfo.InvariantCulture,
-                                    System.Globalization.DateTimeStyles.RoundtripKind, out var ts))
-                                return false;
-                            // Match on hour only — the stored time-of-day is what the user asked for
-                            return ts.Hour == targetHour;
-                        }).ToList();
-
-                        _log.Information(
-                            "device_reading_history (1H): filtered to hour {H}, {Count} rows remain",
-                            targetHour, filteredRows.Count);
-
-                        // Fallback: if exact hour not found, pick the nearest row per pollutant
-                        if (filteredRows.Count == 0)
-                        {
-                            filteredRows = apiResult.Rows
-                                .Where(r => DateTime.TryParse(r.GetValueOrDefault("Timestamp")?.ToString(),
-                                    System.Globalization.CultureInfo.InvariantCulture,
-                                    System.Globalization.DateTimeStyles.RoundtripKind, out _))
-                                .GroupBy(r => r.GetValueOrDefault("ParameterName")?.ToString() ?? "")
-                                .Select(g => g
-                                    .OrderBy(r =>
-                                    {
-                                        DateTime.TryParse(r.GetValueOrDefault("Timestamp")?.ToString(),
-                                            System.Globalization.CultureInfo.InvariantCulture,
-                                            System.Globalization.DateTimeStyles.RoundtripKind, out var ts);
-                                        return Math.Abs(ts.Hour - targetHour);
-                                    })
-                                    .First())
-                                .ToList();
-
-                            _log.Information(
-                                "device_reading_history (1H): no exact hour match, nearest row per pollutant, {Count} rows",
-                                filteredRows.Count);
-                        }
-                    }
-
-                    // ── 24H (Weekly API): filter to the specific day the user asked for ──
-                    // criteria=Weekly returns one row per day for up to 7 days.
-                    // The user asked about a specific day (e.g. "yesterday", "last Monday") —
-                    // that day's date is in startDate after the Weekly window adjustment above.
-                    // Filter to rows whose timestamp falls on that calendar day.
-                    if (apiCriteria == "Weekly")
-                    {
-                        // The target day the user asked about is the original endDate before we widened the window.
-                        // Re-parse from the stored llmParams to get the target day's date.
-                        DateTime.TryParse(llmParams.GetValueOrDefault("endDate"), out var weeklyEndBoundary);
-                        var targetDay24H = weeklyEndBoundary == default
-                            ? DateTime.UtcNow.Date
-                            : weeklyEndBoundary.Date;
-
-                        // When LLM gave a specific startDate (the user named a date), that is the target day
-                        if (DateTime.TryParse(llmParams.GetValueOrDefault("startDate"), out var llmStart)
-                            && llmStart.Date > DateTime.MinValue.Date)
-                        {
-                            // The stored startDate was set to apiFrom (window start, 6 days back).
-                            // The target day is apiTo — stored as endDate before we added AddDays(1)-1sec.
-                            // Use the endDate midnight boundary as the target day.
-                            targetDay24H = weeklyEndBoundary.Date;
-                        }
-
-                        var dayStart = targetDay24H.Date;
-                        var dayEnd   = dayStart.AddDays(1);
-
-                        var dayFilteredRows = filteredRows.Where(r =>
-                        {
-                            var tsStr = r.GetValueOrDefault("Timestamp")?.ToString();
-                            if (!DateTime.TryParse(tsStr, out var ts)) return false;
-                            return ts >= dayStart && ts < dayEnd;
-                        }).ToList();
-
-                        _log.Information(
-                            "device_reading_history (24H): filtered to day {Day}, {Count} rows remain (from {Total} total)",
-                            dayStart.ToString("yyyy-MM-dd"), dayFilteredRows.Count, filteredRows.Count);
-
-                        // If the target day has no row, fall back to the most recent available day
-                        filteredRows = dayFilteredRows.Count > 0
-                            ? dayFilteredRows
-                            : filteredRows
-                                .Where(r => DateTime.TryParse(r.GetValueOrDefault("Timestamp")?.ToString(), out _))
-                                .GroupBy(r => r.GetValueOrDefault("ParameterName")?.ToString() ?? "")
-                                .Select(g => g.OrderByDescending(r => r.GetValueOrDefault("Timestamp")?.ToString()).First())
-                                .ToList();
-                    }
-
-                    // ── Filter by pollutant name when user specified one ───────────────
-                    if (!string.IsNullOrWhiteSpace(paramName))
-                    {
-                        filteredRows = filteredRows.Where(r =>
-                            string.Equals(
-                                r.GetValueOrDefault("ParameterName")?.ToString(),
-                                paramName,
-                                StringComparison.OrdinalIgnoreCase))
-                            .ToList();
-                    }
-
-                    resultRows      = filteredRows;
-                    executionTimeMs = (int)apiResult.ExecutionTimeMs;
-                    dataSourceLabel = interval switch
-                    {
-                        "monthly" => "ParameterAveragesMonth",
-                        "yearly"  => "ParameterAveragesYear",
-                        _         => "ParameterAverages"
-                    };
+                    _log.Warning("device_reading_history: no parameters found for deviceId={Id}", resolvedDeviceId);
+                    resultRows = [];
+                    executionTimeMs = 0;
+                    dataSourceLabel = "ParameterAverages";
                     goto afterSqlExecution;
                 }
 
-                // SQL path for 5min and 8hour intervals
-                // When targetTime is active (point-in-time lookup), use nearest-record query
-                // with a ±15 min window rather than a strict range, ordered by proximity.
-                bool isPointInTime = !string.IsNullOrWhiteSpace(rawTargetTime)
-                                     && llmParams.ContainsKey("startDate");
+                // Build an inline IN list (safe — all values are int IDs from DB, not user input)
+                var paramIdList = string.Join(",", parameterIds);
+                var paramNameFilter2 = string.IsNullOrWhiteSpace(paramName)
+                    ? "" : " AND p.ParameterName = @parameterName";
 
                 string historySql;
                 var historyParams = new Dictionary<string, object>
                 {
-                    ["deviceId"]           = resolvedDeviceId,
                     ["resolvedDeviceName"] = resolvedDeviceName,
-                    ["startDate"]          = llmParams["startDate"],
-                    ["endDate"]            = llmParams.GetValueOrDefault("endDate") ?? DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss")
+                    ["startDate"]          = safeStartDate.ToString("yyyy-MM-dd HH:mm:ss"),
+                    ["endDate"]            = safeEndDate.ToString("yyyy-MM-dd HH:mm:ss")
                 };
                 if (!string.IsNullOrWhiteSpace(paramName))
                     historyParams["parameterName"] = paramName;
 
-                if (interval == "8hour")
+                switch (interval)
                 {
-                    historySql = $"""
-                        SELECT TOP 200
-                            @resolvedDeviceName AS DeviceName,
-                            p.ParameterName,
-                            ROUND(pa.Parametervalue, 2) AS ParameterValue,
-                            u.UnitName,
-                            pa.Interval AS Timestamp
-                        FROM ParameterAverages pa
-                        JOIN DMN_Parameters p ON pa.ParameterID = p.ID
-                        JOIN ReportedUnits u ON p.UnitID = u.ID
-                        WHERE p.DeviceID = @deviceId AND pa.Type = 8
-                          AND pa.Status = 1{paramFilter}
-                          AND pa.Interval >= @startDate AND pa.Interval <= @endDate
-                        ORDER BY pa.Interval DESC
-                        """;
-                }
-                else if (isPointInTime)
-                {
-                    // Point-in-time: widen to ±15 min and pick closest records per parameter
-                    var targetDt = llmParams["startDate"]; // already snapped to 5-min boundary
-                    historyParams["targetDateTime"] = targetDt;
-                    historyParams["windowStart"]    = DateTime.Parse(targetDt).AddMinutes(-15).ToString("yyyy-MM-dd HH:mm:ss");
-                    historyParams["windowEnd"]      = DateTime.Parse(targetDt).AddMinutes(15).ToString("yyyy-MM-dd HH:mm:ss");
+                    case "1hour":
+                        historySql = $"""
+                            SELECT TOP 500
+                                @resolvedDeviceName AS DeviceName,
+                                p.ParameterName,
+                                ROUND(pa.Parametervalue, 2) AS ParameterValue,
+                                u.UnitName,
+                                pa.Interval AS Timestamp
+                            FROM ParameterAverages pa
+                            JOIN DMN_Parameters p ON pa.ParameterID = p.ID
+                            JOIN ReportedUnits u ON p.UnitID = u.ID
+                            WHERE pa.ParameterID IN ({paramIdList}) AND pa.Type = 1
+                              AND pa.Status = 1{paramNameFilter2}
+                              AND pa.Interval >= @startDate AND pa.Interval <= @endDate
+                            ORDER BY pa.Interval DESC
+                            """;
+                        dataSourceLabel = "ParameterAverages";
+                        break;
 
-                    historySql = $"""
-                        SELECT
-                            @resolvedDeviceName AS DeviceName,
-                            p.ParameterName,
-                            ROUND(pr.Parametervalue, 2) AS ParameterValue,
-                            u.UnitName,
-                            pr.CreatedTime AS Timestamp
-                        FROM ParameterReadings pr
-                        JOIN DMN_Parameters p ON pr.ParameterID = p.ID
-                        JOIN ReportedUnits u ON p.UnitID = u.ID
-                        WHERE p.DeviceID = @deviceId
-                          AND pr.Status = 1{paramFilter}
-                          AND pr.CreatedTime >= @windowStart AND pr.CreatedTime <= @windowEnd
-                        ORDER BY ABS(DATEDIFF(SECOND, CAST(@targetDateTime AS DATETIME), pr.CreatedTime)),
-                                 p.ParameterName
-                        """;
-                }
-                else
-                {
-                    // Normal range query — last 24h or LLM-supplied date range
-                    historySql = $"""
-                        SELECT TOP 288
-                            @resolvedDeviceName AS DeviceName,
-                            p.ParameterName,
-                            ROUND(pr.Parametervalue, 2) AS ParameterValue,
-                            u.UnitName,
-                            pr.CreatedTime AS Timestamp
-                        FROM ParameterReadings pr
-                        JOIN DMN_Parameters p ON pr.ParameterID = p.ID
-                        JOIN ReportedUnits u ON p.UnitID = u.ID
-                        WHERE p.DeviceID = @deviceId
-                          AND pr.Status = 1{paramFilter}
-                          AND pr.CreatedTime >= @startDate AND pr.CreatedTime <= @endDate
-                        ORDER BY pr.CreatedTime DESC
-                        """;
+                    case "8hour":
+                        historySql = $"""
+                            SELECT TOP 200
+                                @resolvedDeviceName AS DeviceName,
+                                p.ParameterName,
+                                ROUND(pa.Parametervalue, 2) AS ParameterValue,
+                                u.UnitName,
+                                pa.Interval AS Timestamp
+                            FROM ParameterAverages pa
+                            JOIN DMN_Parameters p ON pa.ParameterID = p.ID
+                            JOIN ReportedUnits u ON p.UnitID = u.ID
+                            WHERE pa.ParameterID IN ({paramIdList}) AND pa.Type = 8
+                              AND pa.Status = 1{paramNameFilter2}
+                              AND pa.Interval >= @startDate AND pa.Interval <= @endDate
+                            ORDER BY pa.Interval DESC
+                            """;
+                        dataSourceLabel = "ParameterAverages";
+                        break;
+
+                    case "24hour":
+                        historySql = $"""
+                            SELECT TOP 200
+                                @resolvedDeviceName AS DeviceName,
+                                p.ParameterName,
+                                ROUND(pa.Parametervalue, 2) AS ParameterValue,
+                                u.UnitName,
+                                pa.Interval AS Timestamp
+                            FROM ParameterAverages pa
+                            JOIN DMN_Parameters p ON pa.ParameterID = p.ID
+                            JOIN ReportedUnits u ON p.UnitID = u.ID
+                            WHERE pa.ParameterID IN ({paramIdList}) AND pa.Type = 24
+                              AND pa.Status = 1{paramNameFilter2}
+                              AND pa.Interval >= @startDate AND pa.Interval <= @endDate
+                            ORDER BY pa.Interval DESC
+                            """;
+                        dataSourceLabel = "ParameterAverages";
+                        break;
+
+                    case "monthly":
+                        historySql = $"""
+                            SELECT TOP 60
+                                @resolvedDeviceName AS DeviceName,
+                                p.ParameterName,
+                                ROUND(pam.Parametervalue, 2) AS ParameterValue,
+                                u.UnitName,
+                                pam.Interval AS Timestamp
+                            FROM ParameterAveragesMonth pam
+                            JOIN DMN_Parameters p ON pam.ParameterID = p.ID
+                            JOIN ReportedUnits u ON p.UnitID = u.ID
+                            WHERE pam.ParameterID IN ({paramIdList})
+                              AND pam.Status = 1{paramNameFilter2}
+                              AND pam.Interval >= @startDate AND pam.Interval <= @endDate
+                            ORDER BY pam.Interval DESC
+                            """;
+                        dataSourceLabel = "ParameterAveragesMonth";
+                        break;
+
+                    case "yearly":
+                        historySql = $"""
+                            SELECT TOP 20
+                                @resolvedDeviceName AS DeviceName,
+                                p.ParameterName,
+                                ROUND(pay.Parametervalue, 2) AS ParameterValue,
+                                u.UnitName,
+                                pay.Interval AS Timestamp
+                            FROM ParameterAveragesYear pay
+                            JOIN DMN_Parameters p ON pay.ParameterID = p.ID
+                            JOIN ReportedUnits u ON p.UnitID = u.ID
+                            WHERE pay.ParameterID IN ({paramIdList})
+                              AND pay.Status = 1{paramNameFilter2}
+                              AND pay.Interval >= @startDate AND pay.Interval <= @endDate
+                            ORDER BY pay.Interval DESC
+                            """;
+                        dataSourceLabel = "ParameterAveragesYear";
+                        break;
+
+                    default: // 5min — ParameterReadings
+                        if (isPointInTime)
+                        {
+                            var targetDt = safeStartDate.ToString("yyyy-MM-dd HH:mm:ss");
+                            historyParams["targetDateTime"] = targetDt;
+                            historyParams["windowStart"]    = safeStartDate.AddMinutes(-15).ToString("yyyy-MM-dd HH:mm:ss");
+                            historyParams["windowEnd"]      = safeStartDate.AddMinutes(15).ToString("yyyy-MM-dd HH:mm:ss");
+
+                            historySql = $"""
+                                SELECT
+                                    @resolvedDeviceName AS DeviceName,
+                                    p.ParameterName,
+                                    ROUND(pr.Parametervalue, 2) AS ParameterValue,
+                                    u.UnitName,
+                                    pr.CreatedTime AS Timestamp
+                                FROM ParameterReadings pr
+                                JOIN DMN_Parameters p ON pr.ParameterID = p.ID
+                                JOIN ReportedUnits u ON p.UnitID = u.ID
+                                WHERE pr.ParameterID IN ({paramIdList})
+                                  AND pr.Status = 1{paramNameFilter2}
+                                  AND pr.CreatedTime >= @windowStart AND pr.CreatedTime <= @windowEnd
+                                ORDER BY ABS(DATEDIFF(SECOND, CAST(@targetDateTime AS DATETIME), pr.CreatedTime)),
+                                         p.ParameterName
+                                """;
+                        }
+                        else
+                        {
+                            historySql = $"""
+                                SELECT TOP 288
+                                    @resolvedDeviceName AS DeviceName,
+                                    p.ParameterName,
+                                    ROUND(pr.Parametervalue, 2) AS ParameterValue,
+                                    u.UnitName,
+                                    pr.CreatedTime AS Timestamp
+                                FROM ParameterReadings pr
+                                JOIN DMN_Parameters p ON pr.ParameterID = p.ID
+                                JOIN ReportedUnits u ON p.UnitID = u.ID
+                                WHERE pr.ParameterID IN ({paramIdList})
+                                  AND pr.Status = 1{paramNameFilter2}
+                                  AND pr.CreatedTime >= @startDate AND pr.CreatedTime <= @endDate
+                                ORDER BY pr.CreatedTime DESC
+                                """;
+                        }
+                        dataSourceLabel = "ParameterReadings";
+                        break;
                 }
 
                 var histResult = await _sqlExecutor.ExecuteAsync(historySql, historyParams, ct);
@@ -1135,7 +1256,6 @@ public sealed class ChatController : ControllerBase
 
                 resultRows      = rawHistRows;
                 executionTimeMs = histResult.ExecutionTimeMs;
-                dataSourceLabel = interval == "8hour" ? "ParameterAverages" : "ParameterReadings";
                 goto afterSqlExecution;
             }
 
@@ -1228,21 +1348,63 @@ public sealed class ChatController : ControllerBase
         }
 
         // ── 8. Generate natural language summary ────────────────────────────
-        var summary = await _azureAI.SummarizeResultsAsync(
-            request.Message, template, resultRows, scope, ct);
+        // When no data is returned, short-circuit with a polite message instead of
+        // letting the LLM hallucinate an empty markdown table in the summary.
+        if (resultRows.Count == 0 && template.ResponseType != "text")
+        {
+            var noDataMessage = BuildNoDataMessage(template.Id, scope);
 
-        // ── 9. Persist conversation ─────────────────────────────────────────
-        await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
+            var noDataMsgId = Guid.NewGuid();
+            await _sessionService.SaveBothMessagesAsync(
+                sessionId: session.SessionId,
+                userContent: request.Message,
+                assistantMessageId: noDataMsgId,
+                assistantContent: noDataMessage,
+                sql: null,
+                responseType: "text",
+                chartType: null,
+                chartDataJson: null,
+                dataSource: dataSourceLabel,
+                dateRange: scope.DateRangeLabel,
+                modelUsed: modelUsed,
+                executionTimeMs: (int)Math.Min(executionTimeMs, int.MaxValue),
+                tokenCount: tokensUsed,
+                ct: ct);
 
+            if (session.MessageCount <= 1)
+                _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+
+            return Ok(_formatter.FormatError(session.SessionId, noDataMessage, "NO_DATA"));
+        }
+
+        // For table/chart responses the data is rendered visually — skip LLM summarization.
+        // Generate a zero-cost summary string instead (~0ms vs ~10s).
+        // Only call SummarizeResultsAsync for text responses where the answer IS the summary.
+        string summary;
+        if (template.ResponseType is "table" or "chart")
+        {
+            summary = resultRows.Count == 1
+                ? "1 result found."
+                : $"{resultRows.Count} results found.";
+            tokensUsed = 0;
+        }
+        else
+        {
+            summary = await _azureAI.SummarizeResultsAsync(
+                enrichedMessage, template, resultRows, scope, ct);
+        }
+
+        // ── 9. Persist conversation (single DB round-trip) ──────────────────
         var messageId = Guid.NewGuid();
         var chartDataJson = resultRows.Count > 0 && template.ResponseType == "chart"
             ? System.Text.Json.JsonSerializer.Serialize(resultRows)
             : null;
 
-        await _sessionService.SaveAssistantMessageAsync(
+        await _sessionService.SaveBothMessagesAsync(
             sessionId: session.SessionId,
-            messageId: messageId,
-            content: summary,
+            userContent: request.Message,
+            assistantMessageId: messageId,
+            assistantContent: summary,
             sql: template.ApiCall is not null ? $"API:{template.ApiCall.Path}" : null,
             responseType: template.ResponseType,
             chartType: template.ChartType,
@@ -1254,9 +1416,9 @@ public sealed class ChatController : ControllerBase
             tokenCount: tokensUsed,
             ct: ct);
 
-        // Auto-title session from first message
+        // Auto-title session from first message — fire-and-forget (does not block response)
         if (session.MessageCount <= 1)
-            await _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, ct);
+            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
 
         // ── 10. Format and return response ──────────────────────────────────
         var response = _formatter.Format(
@@ -1278,4 +1440,34 @@ public sealed class ChatController : ControllerBase
 
     private UserContext? GetUserContext()
         => HttpContext.Items.TryGetValue("UserContext", out var ctx) ? ctx as UserContext : null;
+
+    private static string BuildNoDataMessage(string templateId, ResolvedScope scope)
+    {
+        var region = string.IsNullOrWhiteSpace(scope.Region) ? "the selected region" : scope.Region;
+        var date = scope.DateRangeLabel ?? "the selected date";
+
+        return templateId switch
+        {
+            "current_all_stations" or "site_aqi_all" =>
+                $"No air quality readings are currently available for {region}. This may be because devices are still syncing or no active sites have reported data yet. Please try again shortly.",
+
+            "sites_by_region" or "count_sites_in_region" =>
+                $"No sites were found for {region}. Please check that the region name is correct or try a different filter.",
+
+            "sites_outside_safe_range" or "site_aqi_by_category" =>
+                $"Great news — no sites in {region} are currently outside the safe air quality range.",
+
+            "critical_sites" or "critical_sites_today" =>
+                $"No critical sites were found in {region} for {date}. All monitored sites appear to be within acceptable limits.",
+
+            "offline_devices" or "devices_offline" =>
+                $"All devices in {region} appear to be online. No offline devices were detected at this time.",
+
+            "top_polluted_sites" =>
+                $"No pollution data is available for {region} at the moment. Devices may still be syncing. Please try again shortly.",
+
+            _ =>
+                $"No data was found for your query in {region} for {date}. The devices may be syncing or no readings match the selected filters. Please try adjusting your filters or check back shortly."
+        };
+    }
 }

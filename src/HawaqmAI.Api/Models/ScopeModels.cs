@@ -24,6 +24,9 @@ public sealed class ResolvedScope
     /// <summary>Region filter from scope bar — "Abu Dhabi", "Al Ain", or "Al Dhafra". Null means all regions.</summary>
     public string? Region { get; set; }
 
+    /// <summary>Sector filter from scope bar — e.g. "Public &amp; Govt-School", "Industrial". Null means all sectors.</summary>
+    public string? Sector { get; set; }
+
     /// <summary>Human-readable date range string for response metadata.</summary>
     public string DateRangeLabel
     {

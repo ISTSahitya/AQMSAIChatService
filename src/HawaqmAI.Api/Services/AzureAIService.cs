@@ -20,12 +20,23 @@ public sealed class AzureAIService : IAzureAIService
 {
     private static readonly Serilog.ILogger _log = Log.ForContext<AzureAIService>();
     private readonly AzureAIOptions _options;
-    private readonly ChatClient _chatClient;
+    private readonly ChatClient _chatClient;      // large model — summarization
+    private readonly ChatClient _fastChatClient;  // fast/cheap model — routing, param extraction
 
     public AzureAIService(IOptions<AzureAIOptions> options)
     {
         _options = options.Value;
-        _chatClient = BuildChatClient();
+        _chatClient = BuildChatClient(_options.DeploymentName);
+
+        // If a separate fast model is configured, build a second client for it.
+        // Otherwise fall back to the same model (no perf gain but no regression either).
+        var fastDeploy = string.IsNullOrWhiteSpace(_options.FastDeploymentName)
+            ? _options.DeploymentName
+            : _options.FastDeploymentName;
+        _fastChatClient = BuildChatClient(fastDeploy);
+
+        _log.Information("Azure AI: summary model={Main}, fast model={Fast}",
+            _options.DeploymentName, fastDeploy);
     }
 
     /// <inheritdoc/>
@@ -44,7 +55,7 @@ public sealed class AzureAIService : IAzureAIService
         var hasDeviceTemplate = candidates.Any(c => c.Id == "device_last_reading");
         var messages = BuildMessages(systemPrompt, history, userPrompt, includeHistory: !hasDeviceTemplate);
 
-        var response = await CallWithRetryAsync(messages, ct);
+        var response = await CallWithRetryAsync(messages, ct, client: _fastChatClient);
         return ParseSelectionResponse(response, candidates);
     }
 
@@ -65,7 +76,7 @@ public sealed class AzureAIService : IAzureAIService
             p.Name.Equals("stationName", StringComparison.OrdinalIgnoreCase));
         var messages = BuildMessages(systemPrompt, history, userPrompt, includeHistory: !hasEntityParam);
 
-        var response = await CallWithRetryAsync(messages, ct);
+        var response = await CallWithRetryAsync(messages, ct, client: _fastChatClient);
         return ParseParameterResponse(response);
     }
 
@@ -930,13 +941,13 @@ public sealed class AzureAIService : IAzureAIService
             OaiChatMessage.CreateUserMessage(question)
         };
 
-        var (content, _, _) = await CallWithRetryAsync(messages, ct);
+        var (content, _, _) = await CallWithRetryAsync(messages, ct, client: _fastChatClient);
         return content;
     }
 
     // ── Private: client building ────────────────────────────────────────────
 
-    private ChatClient BuildChatClient()
+    private ChatClient BuildChatClient(string deploymentName)
     {
         if (string.IsNullOrWhiteSpace(_options.Endpoint))
             throw new InvalidOperationException("AzureAI:Endpoint must be configured.");
@@ -958,16 +969,14 @@ public sealed class AzureAIService : IAzureAIService
         }
         else if (!string.IsNullOrWhiteSpace(_options.ApiKey))
         {
-            _log.Information("Azure AI: using API key auth (development mode)");
             client = new AzureOpenAIClient(new Uri(_options.Endpoint), new System.ClientModel.ApiKeyCredential(_options.ApiKey));
         }
         else
         {
-            _log.Information("Azure AI: using DefaultAzureCredential");
             client = new AzureOpenAIClient(new Uri(_options.Endpoint), new DefaultAzureCredential());
         }
 
-        return client.GetChatClient(_options.DeploymentName);
+        return client.GetChatClient(deploymentName);
     }
 
     // ── Private: LLM call ───────────────────────────────────────────────────
@@ -975,8 +984,10 @@ public sealed class AzureAIService : IAzureAIService
     private async Task<(string Content, int Tokens, string Model)> CallWithRetryAsync(
         List<OaiChatMessage> messages,
         CancellationToken ct,
-        int attempt = 0)
+        int attempt = 0,
+        ChatClient? client = null)
     {
+        var activeClient = client ?? _chatClient;
         try
         {
             var completionOptions = new ChatCompletionOptions();
@@ -987,7 +998,7 @@ public sealed class AzureAIService : IAzureAIService
                 completionOptions.Temperature = (float)_options.Temperature;
             }
 
-            var completion = await _chatClient.CompleteChatAsync(messages, completionOptions, ct);
+            var completion = await activeClient.CompleteChatAsync(messages, completionOptions, ct);
 
             var content = completion.Value.Content.FirstOrDefault()?.Text ?? string.Empty;
             var tokens = completion.Value.Usage?.TotalTokenCount ?? 0;
@@ -1000,7 +1011,7 @@ public sealed class AzureAIService : IAzureAIService
         {
             _log.Warning(ex, "Azure AI call failed (attempt {Attempt}), retrying...", attempt + 1);
             await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
-            return await CallWithRetryAsync(messages, ct, attempt + 1);
+            return await CallWithRetryAsync(messages, ct, attempt + 1, activeClient);
         }
     }
 
@@ -1024,7 +1035,7 @@ public sealed class AzureAIService : IAzureAIService
             - If the question asks for METADATA (site, station, region, sector, deployed, created, installed, when, model, details, info, last measured time, last data time, where is) → select "device_info"
             - If the question asks what POLLUTANTS or PARAMETERS a device monitors/measures → select "device_pollutants"
             - If the question asks for STATUS only (active, inactive, online, offline, is it working, is it sending) WITHOUT asking for readings → select "device_status"
-            - If the question mentions ANY of: a time interval (5 min, 1 hour, 1H, 8 hour, 8H, 24 hour, 24H, daily, monthly, yearly, annual), OR the words average/avg/mean/reading/value/history/historical/past/trend, OR a specific date/time (yesterday, last hour, last 24 hours, last month, last year, "at 8AM", "on 2026-07-16", any date or clock time) → select "device_reading_history"
+            - If the question mentions ANY of: a time interval (5 min, 1 hour, 1H, 8 hour, 8H, 24 hour, 24H, daily, monthly, yearly, annual), OR the words average/avg/mean/reading/value/history/historical/past/trend, OR a date/time reference (yesterday, today, last hour, last 24 hours, last week, last month, last year, "at 8AM", "on 2026-07-16", any date or clock time, any "last N" phrase) → select "device_reading_history". A device name + any date word (yesterday, today, last week, last month) ALWAYS means device_reading_history — NEVER device_info.
             - Otherwise (no time interval or date, asks for current/latest/live/now readings, or no specific context) → select "device_last_reading"
             NEVER select a site template (site_aqi_single, site_readings_all, site_aqi_all, site_aqi_by_category) when the question contains a device name.
             NEVER select "average_at_station", "pollutant_trend_hourly", or any non-device template when the question contains a device name — device name is ABSOLUTE priority.

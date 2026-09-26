@@ -21,6 +21,7 @@ public sealed class SessionService : ISessionService
     private readonly ChatOptions _chatOptions;
 
     private static string CacheKey(Guid id) => $"session_history_{id}";
+    private static string SessionCacheKey(Guid id) => $"session_row_{id}";
 
     public SessionService(
         ChatHistoryDbContext db,
@@ -40,11 +41,23 @@ public sealed class SessionService : ISessionService
     {
         if (sessionId.HasValue)
         {
+            // Check in-memory cache first to avoid DB round-trip on every message
+            if (_cache.TryGetValue(SessionCacheKey(sessionId.Value), out ChatSession? cachedSession)
+                && cachedSession is not null
+                && cachedSession.UserId == userId)
+            {
+                return cachedSession;
+            }
+
             var existing = await _db.ChatSessions
                 .FirstOrDefaultAsync(s => s.SessionId == sessionId.Value && s.UserId == userId, ct);
 
             if (existing is not null)
+            {
+                _cache.Set(SessionCacheKey(existing.SessionId), existing,
+                    TimeSpan.FromMinutes(_chatOptions.SessionTimeoutMinutes));
                 return existing;
+            }
         }
 
         // Create new session
@@ -57,6 +70,9 @@ public sealed class SessionService : ISessionService
 
         _db.ChatSessions.Add(session);
         await _db.SaveChangesAsync(ct);
+
+        _cache.Set(SessionCacheKey(session.SessionId), session,
+            TimeSpan.FromMinutes(_chatOptions.SessionTimeoutMinutes));
 
         _log.Information("Created new session {SessionId} for user {UserId}", session.SessionId, userId);
         return session;
@@ -148,6 +164,60 @@ public sealed class SessionService : ISessionService
     }
 
     /// <inheritdoc/>
+    public async Task SaveBothMessagesAsync(
+        Guid sessionId,
+        string userContent,
+        Guid assistantMessageId,
+        string assistantContent,
+        string? sql,
+        string responseType,
+        string? chartType,
+        string? chartDataJson,
+        string? dataSource,
+        string? dateRange,
+        string? modelUsed,
+        int executionTimeMs,
+        int tokenCount,
+        CancellationToken ct = default)
+    {
+        var userMessage = new ChatMessage
+        {
+            SessionId = sessionId,
+            Role = "user",
+            Content = userContent
+        };
+
+        var assistantMessage = new ChatMessage
+        {
+            MessageId = assistantMessageId,
+            SessionId = sessionId,
+            Role = "assistant",
+            Content = assistantContent,
+            SqlQuery = sql,
+            ResponseType = responseType,
+            ChartType = chartType,
+            ChartData = chartDataJson,
+            DataSource = dataSource,
+            DateRange = dateRange,
+            ModelUsed = modelUsed,
+            ExecutionTimeMs = executionTimeMs,
+            TokenCount = tokenCount
+        };
+
+        _db.ChatMessages.Add(userMessage);
+        _db.ChatMessages.Add(assistantMessage);
+
+        // Update session stats (MessageCount + LastMessageAt) in one pass
+        await UpdateSessionStats(sessionId, ct);
+
+        // Single round-trip for both messages
+        await _db.SaveChangesAsync(ct);
+
+        AppendToCache(sessionId, "user", userContent);
+        AppendToCache(sessionId, "assistant", assistantContent, templateId: dataSource);
+    }
+
+    /// <inheritdoc/>
     public async Task<IReadOnlyList<SessionSummaryDto>> GetUserSessionsAsync(
         string userId,
         CancellationToken ct = default)
@@ -201,6 +271,7 @@ public sealed class SessionService : ISessionService
         await _db.SaveChangesAsync(ct);
 
         _cache.Remove(CacheKey(sessionId));
+        _cache.Remove(SessionCacheKey(sessionId));
         _log.Information("Deleted session {SessionId} for user {UserId}", sessionId, userId);
         return true;
     }

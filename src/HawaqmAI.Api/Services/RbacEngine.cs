@@ -149,6 +149,26 @@ public sealed class RbacEngine : IRbacEngine
             parameters["siteId"] = scope.SiteIds[0];
         }
 
+        // ── Step 3b: Inject sector filter if scope has one and SQL references @sectorName ──
+        // Skip injection for aggregate/summary templates (skipSiteFilter=true) and any template
+        // that already groups by sector — injecting a WHERE filter would break those queries.
+        var skipSectorInjection = template.SkipSiteFilter
+            || template.Id is "sites_count_by_sector" or "sites_count_by_region"
+                or "sector_latest_pollutant" or "sites_count_by_sector";
+        if (!skipSectorInjection && !string.IsNullOrWhiteSpace(scope.Sector))
+        {
+            if (sql.Contains("@sectorName", StringComparison.OrdinalIgnoreCase) && !parameters.ContainsKey("sectorName"))
+            {
+                parameters["sectorName"] = scope.Sector;
+                _log.Debug("RBAC: injected sector filter '{Sector}' from scope bar", scope.Sector);
+            }
+            else if (!sql.Contains("@sectorName", StringComparison.OrdinalIgnoreCase))
+            {
+                // SQL doesn't have a @sectorName param — inject a WHERE/AND condition on SectorName
+                sql = InjectSectorFilter(sql, scope.Sector, parameters);
+            }
+        }
+
         // ── Step 4: Inject date range if scope has it and SQL uses @startDate/@endDate ──
         if (scope.StartDate.HasValue && !parameters.ContainsKey("startDate"))
             parameters["startDate"] = scope.StartDate.Value.ToString("yyyy-MM-dd");
@@ -226,6 +246,7 @@ public sealed class RbacEngine : IRbacEngine
             "enddate" => scope.EndDate?.ToString("yyyy-MM-dd"),
             "targetdate" => scope.StartDate?.ToString("yyyy-MM-dd"),
             "regionname" => !string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : null,
+            "sectorname" => !string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null,
             _ => null
         };
     }
@@ -429,6 +450,51 @@ public sealed class RbacEngine : IRbacEngine
         }
 
         parameters["siteIds"] = siteIds;
+        return sql;
+    }
+
+    /// <summary>
+    /// Injects a sector filter (SectorName LIKE @sectorName) into the SQL WHERE clause.
+    /// Only applied when the SQL does not already handle @sectorName explicitly.
+    /// </summary>
+    private static string InjectSectorFilter(
+        string sql,
+        string sector,
+        Dictionary<string, object> parameters)
+    {
+        // Determine the sector column based on tables referenced.
+        // SectorName lives in the Sectors table (aliased as 'sec' in most queries).
+        // Only fall back to a bare column when neither join pattern is found.
+        var upperSql = sql.ToUpperInvariant();
+        string sectorColumn;
+        if (upperSql.Contains("JOIN SECTORS SEC") || upperSql.Contains("LEFT JOIN SECTORS SEC"))
+            sectorColumn = "sec.SectorName";
+        else if (upperSql.Contains("JOIN SECTORS S ") || upperSql.Contains("LEFT JOIN SECTORS S "))
+            sectorColumn = "s.SectorName";
+        else if (upperSql.Contains("FROM SECTORS"))
+            sectorColumn = "SectorName";
+        else
+            sectorColumn = "sec.SectorName"; // default — most templates join Sectors as 'sec'
+
+        var condition = $"{sectorColumn} LIKE @sectorName";
+        parameters["sectorName"] = $"%{sector}%";
+
+        if (upperSql.Contains("WHERE"))
+        {
+            var insertPos = sql.IndexOf("WHERE", StringComparison.OrdinalIgnoreCase) + 5;
+            sql = sql[..insertPos] + $" {condition} AND " + sql[insertPos..];
+        }
+        else
+        {
+            var groupByIdx = sql.IndexOf("GROUP BY", StringComparison.OrdinalIgnoreCase);
+            var orderByIdx = sql.IndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase);
+            var insertIdx = groupByIdx >= 0 ? groupByIdx : orderByIdx >= 0 ? orderByIdx : -1;
+            if (insertIdx >= 0)
+                sql = sql[..insertIdx] + $" WHERE {condition} " + sql[insertIdx..];
+            else
+                sql += $" WHERE {condition}";
+        }
+
         return sql;
     }
 }
