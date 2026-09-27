@@ -1939,7 +1939,17 @@
         "how many devices are currently active",
         "how many critical sites",
         "critical site count",
-        "priority hotspot count"
+        "priority hotspot count",
+        "overall aqi",
+        "what is the overall aqi",
+        "current overall aqi",
+        "network aqi",
+        "average aqi across all sites",
+        "aqi for the application",
+        "aqi from dashboard",
+        "executive dashboard aqi",
+        "what is the aqi right now",
+        "current aqi overview"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
@@ -1959,6 +1969,49 @@
         "method": "GET",
         "path": "/api/AirQuality/Compliancestatas?year={year}",
         "responseShape": "compliance_stats"
+      }
+    },
+    {
+      "id": "priority_hotspots",
+      "description": "List priority hotspot sites (sites with critically high AQI) from the Executive Dashboard. Returns the site names flagged as critical/hotspot for the given year. Use when the user asks about hotspots, priority hotspots, critical sites, or which sites have the worst air quality from the dashboard.",
+      "patterns": [
+        "priority hotspots",
+        "hotspots",
+        "what are the hotspots",
+        "show hotspots",
+        "list hotspots",
+        "priority hotspot sites",
+        "which sites are hotspots",
+        "critical sites",
+        "which sites are critical",
+        "show critical sites",
+        "list critical sites",
+        "hotspot sites",
+        "sites with critical aqi",
+        "worst aqi sites from dashboard",
+        "dashboard hotspots",
+        "executive dashboard hotspots",
+        "sites flagged as critical",
+        "what sites are priority hotspots"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        {
+          "name": "year",
+          "type": "int",
+          "source": "question",
+          "optional": true
+        }
+      ],
+      "responseType": "table",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/Compliancestatas?year={year}",
+        "responseShape": "priority_hotspots"
       }
     },
     {
@@ -2817,7 +2870,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, sub.SectorName AS SubSectorName, sec.SectorName, r.RegionName, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS LiveStatus FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND d.Status = 1 AND ISNULL(d.IsEnable,1) = 1 AND ISNULL(d.IsDeleted,0) = 0 LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE s.Status = 1 AND ISNULL(s.IsDeleted, 0) = 0 AND REPLACE(LOWER(sec.SectorName),' ','') LIKE '%' + REPLACE(LOWER(@sectorName),' ','') + '%' AND (REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','') OR REPLACE(LOWER(r.RegionName),' ','') LIKE '%' + REPLACE(LOWER(@regionName),' ','') + '%') AND (REPLACE(LOWER(sub.SectorName),' ','') LIKE '%' + REPLACE(LOWER(@subSectorName),' ','') + '%' OR @subSectorName IS NULL) GROUP BY s.StationName, sub.SectorName, sec.SectorName, r.RegionName ORDER BY sub.SectorName, s.StationName",
+      "sql": "SELECT s.StationName, sub.SectorName AS SubSectorName, sec.SectorName, r.RegionName, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS LiveStatus FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND d.Status = 1 AND ISNULL(d.IsEnable,1) = 1 AND ISNULL(d.IsDeleted,0) = 0 LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE s.Status = 1 AND ISNULL(s.IsDeleted, 0) = 0 AND REPLACE(LOWER(sec.SectorName),' ','') LIKE '%' + REPLACE(LOWER(@sectorName),' ','') + '%' AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') LIKE '%' + REPLACE(LOWER(@regionName),' ','') + '%') AND (@subSectorName IS NULL OR REPLACE(LOWER(sub.SectorName),' ','') LIKE '%' + REPLACE(LOWER(@subSectorName),' ','') + '%') GROUP BY s.StationName, sub.SectorName, sec.SectorName, r.RegionName ORDER BY sub.SectorName, s.StationName",
       "params": [
         {
           "name": "sectorName",
@@ -2834,6 +2887,7 @@
           "type": "string",
           "source": "question",
           "optional": true,
+          "default": "Abu Dhabi",
           "allowed": [
             "Abudhabi",
             "Abu Dhabi",

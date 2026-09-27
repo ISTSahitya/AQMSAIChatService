@@ -334,8 +334,9 @@ public sealed class ExternalApiService : IExternalApiService
                 };
             }
 
-            // For region_aqi / compliance_stats shapes: default year to current year if not provided
-            if ((apiCall.ResponseShape == "region_aqi" || apiCall.ResponseShape == "compliance_stats")
+            // For region_aqi / compliance_stats / priority_hotspots: default year to current year if not provided
+            if ((apiCall.ResponseShape == "region_aqi" || apiCall.ResponseShape == "compliance_stats"
+                 || apiCall.ResponseShape == "priority_hotspots")
                 && !llmParams.ContainsKey("year"))
                 llmParams["year"] = DateTime.UtcNow.Year.ToString();
 
@@ -432,6 +433,19 @@ public sealed class ExternalApiService : IExternalApiService
             // Build URL — substitute {param} placeholders from llmParams + scope
             var path = SubstitutePath(apiCall.Path, llmParams, scope);
 
+            // Strip unresolved optional query-string params (e.g. ?siteName={siteName} when omitted).
+            // Required placeholders like {siteId} that remain are a genuine error.
+            var optionalParams = new[] { "siteName", "formStatus" };
+            foreach (var opt in optionalParams)
+            {
+                // Remove the entire key=value pair from the query string when placeholder is unresolved
+                path = System.Text.RegularExpressions.Regex.Replace(
+                    path,
+                    $@"[?&]{opt}=\{{{opt}\}}",
+                    "",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            }
+
             // If any {placeholder} remains unresolved, the call cannot proceed
             if (path.Contains('{') && path.Contains('}'))
             {
@@ -517,6 +531,15 @@ public sealed class ExternalApiService : IExternalApiService
             {
                 var rows2 = ParseComplianceStatsRows(json);
                 _log.Debug("ExternalApiService: compliance_stats → {Count} rows", rows2.Count);
+                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // priority_hotspots: parse Compliancestatas response → one row per critical site.
+            // criticalSiteDetails = [{ID, StationName}]. Returns site list with overall AQI context.
+            if (apiCall.ResponseShape == "priority_hotspots")
+            {
+                var rows2 = ParsePriorityHotspotRows(json);
+                _log.Information("ExternalApiService: priority_hotspots → {Count} hotspot sites", rows2.Count);
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
@@ -1628,6 +1651,70 @@ public sealed class ExternalApiService : IExternalApiService
                 ["AQICategory"]      = aqi.HasValue ? ClassifyAqi(aqi.Value) : null,
                 ["CriticalSiteCount"] = criticalCount
             }];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Parses Compliancestatas response → one row per critical/hotspot site.
+    /// Returns site name + overall network AQI context.
+    /// If criticalSiteDetails is empty, returns a single "no hotspots" row.
+    /// </summary>
+    private static List<Dictionary<string, object?>> ParsePriorityHotspotRows(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.ValueKind == JsonValueKind.String)
+                return ParsePriorityHotspotRows(root.GetString() ?? json);
+
+            if (root.ValueKind != JsonValueKind.Object) return [];
+
+            // Overall network AQI from dashboard
+            int? networkAqi = null;
+            if (root.TryGetProperty("aqi", out var aqiProp) && aqiProp.ValueKind == JsonValueKind.Number)
+                networkAqi = aqiProp.GetInt32();
+
+            var rows = new List<Dictionary<string, object?>>();
+
+            if (root.TryGetProperty("criticalSiteDetails", out var detailsProp)
+                && detailsProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var site in detailsProp.EnumerateArray())
+                {
+                    var id   = site.TryGetProperty("ID",          out var idProp)   ? idProp.GetInt32()     : (int?)null;
+                    var name = site.TryGetProperty("StationName", out var nameProp) ? nameProp.GetString()  : null;
+                    // Try camelCase too
+                    if (name is null && site.TryGetProperty("stationName", out var cn)) name = cn.GetString();
+
+                    rows.Add(new Dictionary<string, object?>
+                    {
+                        ["Site Name"]            = name,
+                        ["Site ID"]              = id,
+                        ["Air Quality Index"]    = networkAqi,
+                        ["Air Quality Category"] = networkAqi.HasValue ? ClassifyAqi(networkAqi.Value) : null
+                    });
+                }
+            }
+
+            // If no critical sites, return one informational row
+            if (rows.Count == 0)
+            {
+                rows.Add(new Dictionary<string, object?>
+                {
+                    ["Site Name"]            = "No priority hotspots",
+                    ["Site ID"]              = null,
+                    ["Air Quality Index"]    = networkAqi,
+                    ["Air Quality Category"] = networkAqi.HasValue ? ClassifyAqi(networkAqi.Value) : null
+                });
+            }
+
+            return rows;
         }
         catch
         {

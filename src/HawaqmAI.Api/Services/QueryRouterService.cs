@@ -1103,6 +1103,28 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
+        // Boost priority_hotspots when user asks for the hotspot site LIST (not just count).
+        var hotspotListPhrases = new[] {
+            "priority hotspot", "priority hotspots", "what are the hotspots", "show hotspots",
+            "list hotspots", "hotspot sites", "which sites are hotspot", "which sites are critical",
+            "show critical sites", "list critical sites", "sites flagged as critical",
+            "dashboard hotspot", "executive dashboard hotspot", "sites with critical aqi"
+        };
+        bool isHotspotList = hotspotListPhrases.Any(p => lowerQuestion.Contains(p));
+        if (template.Id == "priority_hotspots" && isHotspotList)
+            maxScore = Math.Max(maxScore, 0.97);
+        // Boost data_success_rate for overall AQI / network AQI questions from dashboard
+        var overallAqiPhrases = new[] {
+            "overall aqi", "network aqi", "aqi for the application", "aqi from dashboard",
+            "executive dashboard aqi", "current aqi overview", "current overall aqi"
+        };
+        bool isOverallAqi = overallAqiPhrases.Any(p => lowerQuestion.Contains(p));
+        if (template.Id == "data_success_rate" && isOverallAqi)
+            maxScore = Math.Max(maxScore, 0.97);
+        // When user asks for hotspot LIST, penalise data_success_rate (gives only count) and site_aqi_by_category
+        if (isHotspotList && template.Id is "data_success_rate" or "site_aqi_by_category" or "faq_answer")
+            maxScore *= 0.05;
+
         // Boost mold_reports for any question about mold tests, biological reports, or mold status.
         var moldPhrases = new[] {
             "mold report", "mold test", "mold status", "biological report", "biological test",

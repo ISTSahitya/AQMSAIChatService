@@ -652,6 +652,16 @@ public sealed class ChatController : ControllerBase
 
             // ── Multi-region handling for region-filtered templates ────────────────
             // When regionName contains multiple regions (e.g. "Al Ain and Al Dhafra"),
+            // For sites_by_sector: default regionName to "Abu Dhabi" when the user didn't specify one.
+            // This matches the Executive Dashboard default view which shows Abu Dhabi sector breakdown.
+            if (template.Id == "sites_by_sector"
+                && (!llmParams.TryGetValue("regionName", out var sectorRegion)
+                    || string.IsNullOrWhiteSpace(sectorRegion)))
+            {
+                llmParams["regionName"] = "Abu Dhabi";
+                _log.Information("sites_by_sector: no region specified — defaulting to Abu Dhabi");
+            }
+
             // run one query per region and merge the results.
             var multiRegionTemplates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {

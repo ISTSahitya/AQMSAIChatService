@@ -107,6 +107,21 @@ public sealed class AzureAIService : IAzureAIService
             If DataSuccessRate is null: "Data Success Rate information is not available at this time."
             """,
 
+        // Priority hotspots from Executive Dashboard — columns: Site Name, Site ID, Air Quality Index, Air Quality Category
+        ["priority_hotspots"] = """
+            Data columns: "Site Name", "Site ID", "Air Quality Index", "Air Quality Category".
+            Each row is one priority hotspot site flagged as critical in the Executive Dashboard.
+            "Air Quality Index" is the overall average AQI across all monitored sites for the year.
+
+            If rows contain real site names (not "No priority hotspots"):
+            FORMAT: "There are {count} priority hotspot site(s) for {year}. The overall Air Quality Index is {Air Quality Index} ({Air Quality Category}). The following sites are flagged as critical:" then list the site names.
+
+            If the only row has Site Name = "No priority hotspots":
+            FORMAT: "There are currently no priority hotspot sites for {year}. The overall Air Quality Index is {Air Quality Index} ({Air Quality Category})."
+
+            NEVER output placeholder text — always use actual values from the data.
+            """,
+
         // AQI category filter — columns: SiteName, RegionName, AQI, AQICategory, LastUpdated
         ["site_aqi_by_category"] = """
             Data columns: "SiteName", "RegionName", "AQI", "AQICategory", "LastUpdated".
@@ -1254,6 +1269,7 @@ public sealed class AzureAIService : IAzureAIService
             IMPORTANT: "public & Gov School", "Public and Government School", "Public & Government school", "gov school", "govt school" ALL map to "Public & Govt-School".
             IMPORTANT: When the template is "site_aqi_by_category" and the user mentions "schools" or "school sites", ALWAYS extract sectorName="Public & Govt-School".
             IMPORTANT: When the template is "sites_by_sector" and the user mentions "schools", "school", "different schools", "schools present", "which schools", "list schools" → ALWAYS extract sectorName="Public & Govt-School".
+            IMPORTANT: When the template is "sites_by_sector" and the user does NOT mention any specific region (Abu Dhabi, Al Ain, Al Dhafra), ALWAYS default regionName="Abu Dhabi". Only use a different region when the user explicitly names one.
             If the user says something that doesn't match any of these three, omit sectorName.
             For parameterName: map common user words to the allowed parameter name — "co2", "carbon dioxide" → "CO2"; "pm2.5", "fine particles", "fine dust" → "PM2.5"; "pm10", "coarse particles", "coarse dust" → "PM10"; "co", "carbon monoxide" → "CO"; "aqi", "air quality index" → "AQI Index"; "no2", "nitrogen dioxide" → "NO2"; "so2", "sulphur dioxide", "sulfur dioxide" → "SO2"; "o3", "ozone" → "O3"; "tvoc", "voc", "volatile organic" → "VOC"; "ch2o", "formaldehyde" → "CH2O"; "temperature", "temp" → "Temperature"; "humidity" → "Humidity"; "noise", "sound" → "Noise".
             IMPORTANT — pollutant groups: if the user asks for "physical" readings/pollutants/parameters, do NOT extract a single parameterName — omit it (the system will filter to physical group: PM2.5, PM10, Temperature, Humidity, Noise). If the user asks for "chemical" readings/pollutants/parameters, omit parameterName as well (system filters to chemical group: CO, CO2, NO2, SO2, O3, CH2O, VOC). Only extract a specific parameterName when the user names ONE specific pollutant.
