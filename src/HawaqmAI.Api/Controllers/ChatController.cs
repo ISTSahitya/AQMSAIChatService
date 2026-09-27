@@ -513,7 +513,42 @@ public sealed class ChatController : ControllerBase
             // API path — forward the user's JWT token
             var apiResult = await _externalApi.CallAsync(template.ApiCall, llmParams, scope, bearerToken, user, template.Id, ct);
             if (!apiResult.Success)
-                return Ok(_formatter.FormatError(session.SessionId, apiResult.Error!, "API_ERROR"));
+            {
+                // Render as a friendly white assistant bubble (Success=true, text type)
+                // so the user sees a calm message, not a red technical error.
+                var errMsgId = Guid.NewGuid();
+                const string friendlyMsg = "Sorry, I'm unable to retrieve that information right now. Please try again in a moment.";
+                await _sessionService.SaveBothMessagesAsync(
+                    sessionId: session.SessionId,
+                    userContent: request.Message,
+                    assistantMessageId: errMsgId,
+                    assistantContent: friendlyMsg,
+                    sql: null,
+                    responseType: "text",
+                    chartType: null,
+                    chartDataJson: null,
+                    dataSource: null,
+                    dateRange: null,
+                    modelUsed: null,
+                    executionTimeMs: (int)apiResult.ExecutionTimeMs,
+                    tokenCount: 0,
+                    ct: ct);
+                var savedRtErr = template.ResponseType;
+                template.ResponseType = "text";
+                var errResponse = _formatter.Format(
+                    sessionId: session.SessionId,
+                    messageId: errMsgId,
+                    template: template,
+                    llmSummary: friendlyMsg,
+                    rows: [],
+                    rowCount: 0,
+                    executionTimeMs: (int)(apiResult.ExecutionTimeMs),
+                    scope: scope,
+                    modelUsed: null,
+                    tokenCount: 0);
+                template.ResponseType = savedRtErr;
+                return Ok(errResponse);
+            }
 
             resultRows = apiResult.Rows;
             executionTimeMs = apiResult.ExecutionTimeMs;
@@ -805,7 +840,7 @@ public sealed class ChatController : ControllerBase
 
                 var devLookup = await _sqlExecutor.ExecuteAsync(
                     """
-                    SELECT TOP 1 d.ID AS DeviceId, d.DeviceName, d.StationID
+                    SELECT TOP 1 d.DeviceId, d.ID AS DevicePk, d.DeviceName, d.StationID
                     FROM DMN_Devices d
                     WHERE d.Status = 1
                       AND ISNULL(d.IsDeleted, 0) = 0
@@ -832,7 +867,8 @@ public sealed class ChatController : ControllerBase
                         $"No device found matching '{devName}'. Please check the device name (e.g. 'BA 0010', 'SEI100M 0014').", "DEVICE_NOT_FOUND"));
                 }
 
-                var resolvedDeviceId   = devLookup.Rows[0]["DeviceId"]?.ToString() ?? "";
+                var resolvedDeviceId   = devLookup.Rows[0]["DeviceId"]?.ToString() ?? "";  // DMN_Devices.DeviceId — FK used by DMN_Parameters.DeviceID
+                var resolvedDevicePk   = devLookup.Rows[0]["DevicePk"]?.ToString() ?? resolvedDeviceId; // DMN_Devices.ID — used by API calls
                 var resolvedDeviceName = devLookup.Rows[0]["DeviceName"]?.ToString() ?? devName;
                 var resolvedStationId  = devLookup.Rows[0]["StationID"]?.ToString() ?? "";
 
@@ -880,48 +916,156 @@ public sealed class ChatController : ControllerBase
                     };
                 }
 
+                // Also scan the raw message for explicit interval words the LLM may have missed.
+                // This catches "1-hour average", "8 hour", "24-hour" etc. in the user's phrasing.
+                static string DetectIntervalInMessage(string msg)
+                {
+                    var m = msg.ToLowerInvariant();
+                    if (System.Text.RegularExpressions.Regex.IsMatch(m, @"\b8.?hour\b|\b8h\b")) return "8hour";
+                    if (System.Text.RegularExpressions.Regex.IsMatch(m, @"\b24.?hour\b|\bdaily\b|\b24h\b")) return "24hour";
+                    if (System.Text.RegularExpressions.Regex.IsMatch(m, @"\b1.?hour\b|\bhourly\b|\b1h\b")) return "1hour";
+                    if (System.Text.RegularExpressions.Regex.IsMatch(m, @"\bmonthly\b|\bmonth\b")) return "monthly";
+                    if (System.Text.RegularExpressions.Regex.IsMatch(m, @"\byearly\b|\bannual\b")) return "yearly";
+                    if (System.Text.RegularExpressions.Regex.IsMatch(m, @"\b5.?min\b|\b5m\b")) return "5min";
+                    return "";
+                }
+
                 var normalisedInterval = string.IsNullOrWhiteSpace(rawInterval) ? "" : NormaliseInterval(rawInterval);
+
+                // Priority: LLM-extracted interval → raw message keyword → span-based inference
                 if (!string.IsNullOrWhiteSpace(normalisedInterval))
                 {
                     interval = normalisedInterval;
                 }
                 else
                 {
+                    // Check raw message before falling back to span inference
+                    var msgInterval = DetectIntervalInMessage(request.Message);
+
                     // Parse the date range the LLM extracted to determine span
                     DateTime.TryParse(llmParams.GetValueOrDefault("startDate"), out iStart);
                     DateTime.TryParse(llmParams.GetValueOrDefault("endDate"),   out var iEnd);
 
-                    // For "yesterday", "last 2 days" etc. the LLM gives startDate but no interval.
-                    // Compute span in hours; use endDate=now if not set.
                     var spanEnd   = iEnd   == default ? DateTime.UtcNow : iEnd;
                     var spanStart = iStart == default ? spanEnd.AddDays(-1) : iStart;
                     var spanHours = (spanEnd - spanStart).TotalHours;
 
-                    // Special case: user asked for a specific past day (e.g. "Sep 19th", "on Monday")
-                    // where startDate is a calendar day >24h ago and endDate = startDate+1 or unset.
-                    // The span would be 0–24h, but the correct interval is 24hour (daily average),
-                    // not 1hour — because the user wants the full-day summary, not hourly breakdown.
                     isSpecificPastDay = iStart != default
-                        && (DateTime.UtcNow - iStart).TotalHours > 24   // the day is >24h in the past
-                        && spanHours <= 25;                               // span is one calendar day
+                        && (DateTime.UtcNow - iStart).TotalHours > 24
+                        && spanHours <= 25;
 
-                    interval = isSpecificPastDay ? "24hour" : spanHours switch
+                    if (!string.IsNullOrWhiteSpace(msgInterval))
                     {
-                        < 2    => "5min",
-                        < 48   => "1hour",   // up to 2 days → 1H averages
-                        < 1440 => "24hour",  // up to 60 days → daily averages
-                        < 8760 => "monthly", // up to 1 year → monthly averages
-                        _      => "yearly"
-                    };
-
-                    _log.Information(
-                        "device_reading_history: no interval extracted, span={Hours:F1}h pastDay={PastDay} → defaulted to '{Interval}'",
-                        spanHours, isSpecificPastDay, interval);
+                        // User explicitly named the interval in the message — always respect it.
+                        // Clear isSpecificPastDay so the full-day date override doesn't run.
+                        interval = msgInterval;
+                        isSpecificPastDay = false;
+                        _log.Information("device_reading_history: interval detected from message text → '{Interval}'", interval);
+                    }
+                    else
+                    {
+                        interval = isSpecificPastDay ? "24hour" : spanHours switch
+                        {
+                            < 2    => "5min",
+                            < 48   => "1hour",
+                            < 1440 => "24hour",
+                            < 8760 => "monthly",
+                            _      => "yearly"
+                        };
+                        _log.Information(
+                            "device_reading_history: no interval extracted, span={Hours:F1}h pastDay={PastDay} → defaulted to '{Interval}'",
+                            spanHours, isSpecificPastDay, interval);
+                    }
                 }
 
                 var paramName = llmParams.GetValueOrDefault("parameterName");
                 var paramFilter = string.IsNullOrWhiteSpace(paramName)
                     ? "" : " AND p.ParameterName = @parameterName";
+
+                bool intervalSnappedToPoint = false; // set true when 1H/8H is snapped to exact timestamp
+
+                // ── 1H / 8H: detect time from message and snap to exact interval boundary ──
+                // The LLM often puts time directly into startDate (e.g. "2026-09-21 02:05:00")
+                // rather than targetTime, so we can't rely on llmParams["targetTime"].
+                // For 1H/8H we always want a single reading, not a range:
+                //   1. Try to extract a clock time from the raw message using regex.
+                //   2. If found: snap startDate/endDate to the exact interval timestamp.
+                //   3. If not found: ask the user for a specific time.
+                if (interval is "1hour" or "8hour")
+                {
+                    // Extract clock time from raw message. Must be one of:
+                    //   "2:05 AM", "14:30" (colon form), or "2AM"/"9PM" (digit+am/pm, no space ambiguity)
+                    // Plain bare numbers like "21" (from "Sep 21st") are NOT matched.
+                    var timeMatch = System.Text.RegularExpressions.Regex.Match(
+                        request.Message,
+                        @"\b(\d{1,2}):(\d{2})\s*(am|pm)?\b|\b(\d{1,2})\s*(am|pm)\b",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                    // Also check if LLM put a non-midnight time in startDate
+                    DateTime.TryParse(llmParams.GetValueOrDefault("startDate"), out var llmStart);
+                    bool llmHasTime = llmStart != default && (llmStart.Hour != 0 || llmStart.Minute != 0);
+
+                    if (!timeMatch.Success && !llmHasTime)
+                    {
+                        // No time found anywhere — ask for clarification
+                        var intervalLabel = interval == "1hour" ? "1-hour" : "8-hour";
+                        var example       = interval == "1hour" ? "2 AM or 14:00" : "8 AM or midnight";
+                        await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
+                        return Ok(_formatter.FormatError(
+                            session.SessionId,
+                            $"To show you the {intervalLabel} average for that device, I need to know which specific time you want. " +
+                            $"Please tell me the time (e.g. '{example}') and I'll give you the reading for that exact hour.",
+                            "CLARIFY"));
+                    }
+
+                    // Determine the hour to snap to
+                    int snapHour;
+                    int snapMinute = 0;
+                    if (timeMatch.Success)
+                    {
+                        // Group 1+2+3 = colon form "2:05 AM"; Group 4+5 = ampm-only "2AM"
+                        bool colonForm = timeMatch.Groups[1].Success;
+                        snapHour   = int.Parse(colonForm ? timeMatch.Groups[1].Value : timeMatch.Groups[4].Value);
+                        snapMinute = colonForm && timeMatch.Groups[2].Success ? int.Parse(timeMatch.Groups[2].Value) : 0;
+                        var ampm   = (colonForm ? timeMatch.Groups[3].Value : timeMatch.Groups[5].Value).ToLowerInvariant();
+                        if (ampm == "pm" && snapHour < 12) snapHour += 12;
+                        if (ampm == "am" && snapHour == 12) snapHour = 0;
+                    }
+                    else
+                    {
+                        // Use the time from LLM's startDate
+                        snapHour   = llmStart.Hour;
+                        snapMinute = llmStart.Minute;
+                    }
+
+                    // Anchor date: from LLM startDate if valid, else yesterday
+                    var anchorDay = llmStart != default ? llmStart.Date : DateTime.UtcNow.Date.AddDays(-1);
+
+                    DateTime snappedPt;
+                    if (interval == "8hour")
+                    {
+                        // Backward 8H average stored at end of block (0, 8, 16)
+                        // User says "9 AM" → block ending at 8 AM → snap to 8:00
+                        var blockEnd = ((snapHour + (snapMinute > 0 ? 1 : 0)) / 8) * 8;
+                        if (blockEnd == 0 && snapHour >= 16) blockEnd = 24; // edge: after 16:00 → next block end
+                        snappedPt = anchorDay.AddHours(blockEnd == 0 ? 8 : blockEnd); // avoid midnight ambiguity
+                    }
+                    else
+                    {
+                        // Backward 1H average stored at end of hour: user says "2:05" → record at 3:00
+                        // Floor to hour, if minutes > 0 the record is at next whole hour boundary
+                        var snappedHour = snapMinute > 0 ? snapHour + 1 : snapHour;
+                        snappedPt = anchorDay.AddHours(snappedHour);
+                    }
+
+                    llmParams["startDate"]     = snappedPt.ToString("yyyy-MM-dd HH:mm:ss");
+                    llmParams["endDate"]       = snappedPt.ToString("yyyy-MM-dd HH:mm:ss");
+                    intervalSnappedToPoint     = true;  // skip isSpecificPastDay override below
+
+                    _log.Information(
+                        "device_reading_history: {Interval} snapped from raw='{Raw}' llmStart={LlmStart} → exact point {Point}",
+                        interval, request.Message, llmStart, snappedPt);
+                }
 
                 // ── targetTime snapping ──────────────────────────────────────────────────
                 // If the user asked for a specific clock time (e.g. "at 4AM", "at 3:03AM",
@@ -931,7 +1075,7 @@ public sealed class ChatController : ControllerBase
                 // The anchor date (day) comes from startDate if already set, else "yesterday"
                 // (since users asking "yesterday at 4AM" trigger this path most often).
                 var rawTargetTime = llmParams.GetValueOrDefault("targetTime");
-                if (!string.IsNullOrWhiteSpace(rawTargetTime))
+                if (!string.IsNullOrWhiteSpace(rawTargetTime) && !intervalSnappedToPoint)
                 {
                     // Parse the time portion — accept both 12-hour (3:03AM) and 24-hour (13:00)
                     static DateTime? TryParseTime(string s)
@@ -969,18 +1113,30 @@ public sealed class ChatController : ControllerBase
                         var m = parsedTime.Value.Minute;
 
                         DateTime snappedStart, snappedEnd;
-                        if (interval == "5min" || interval == "5min" || (interval != "1hour" && interval != "8hour" && interval != "24hour"))
+                        if (interval == "5min")
                         {
-                            // Floor to nearest 5-minute boundary
+                            // Floor to nearest 5-minute boundary (e.g. 2:37 → 2:35)
                             var snappedMinute = (m / 5) * 5;
                             snappedStart = anchorDate.AddHours(h).AddMinutes(snappedMinute);
                             snappedEnd   = snappedStart.AddMinutes(5);
                         }
+                        else if (interval == "8hour")
+                        {
+                            // Floor to nearest 8-hour block: 0, 8, 16
+                            // Averages are stored at the END of the window (backward average):
+                            // e.g. user says "8 AM" → 8-hour average ending at 8:00 → Interval = 08:00:00
+                            // user says "9 AM" → still the 8 AM block → Interval = 08:00:00
+                            var blockStart = (h / 8) * 8;
+                            snappedStart = anchorDate.AddHours(blockStart);
+                            snappedEnd   = snappedStart; // exact point match — same timestamp
+                        }
                         else
                         {
-                            // Floor to nearest whole hour
+                            // 1hour: average stored at the END of the window (backward average).
+                            // e.g. user says "2:30 AM" → floor to 2 AM → Interval = 02:00:00
+                            // Query exact timestamp: startDate = endDate = 02:00:00
                             snappedStart = anchorDate.AddHours(h);
-                            snappedEnd   = snappedStart.AddHours(1);
+                            snappedEnd   = snappedStart; // exact point match — one record only
                         }
 
                         llmParams["startDate"] = snappedStart.ToString("yyyy-MM-dd HH:mm:ss");
@@ -1014,7 +1170,8 @@ public sealed class ChatController : ControllerBase
                 }
                 // When a specific past day was requested, ensure endDate covers the full day
                 // (LLM often sets endDate = startDate with no time, so the window is 0 seconds).
-                else if (isSpecificPastDay && iStart != default)
+                // Skip this when 1H/8H has already snapped to an exact timestamp.
+                else if (isSpecificPastDay && iStart != default && !intervalSnappedToPoint)
                 {
                     llmParams["startDate"] = iStart.Date.ToString("yyyy-MM-dd HH:mm:ss");
                     llmParams["endDate"]   = iStart.Date.AddDays(1).AddSeconds(-1).ToString("yyyy-MM-dd HH:mm:ss");
@@ -1027,6 +1184,11 @@ public sealed class ChatController : ControllerBase
                 // 24hour  → ParameterAverages Type=24  (24-hour / daily averages)
                 // monthly → ParameterAveragesMonth     (monthly averages)
                 // yearly  → ParameterAveragesYear      (yearly averages)
+                //
+                // ParameterAverages.DeviceID is nvarchar and stores DMN_Devices.DeviceId as a string.
+                // Filter by pa.DeviceID = @deviceId (nvarchar=nvarchar) — exactly like the web API does:
+                //   a.DeviceID=" + objfilter.DeviceID
+                // This avoids the int-conversion error caused by dirty nvarchar values in that column.
 
                 _log.Information("ChatController: device_reading_history deviceId={Id} interval={Interval} param={Param}",
                     resolvedDeviceId, interval, paramName ?? "all");
@@ -1052,38 +1214,20 @@ public sealed class ChatController : ControllerBase
                 if (safeEndDate <= safeStartDate)
                     safeEndDate = safeStartDate.Date.AddDays(1).AddSeconds(-1);
 
-                // ParameterAverages.DeviceID and DMN_Parameters.DeviceID both have dirty nvarchar
-                // data (e.g. '1H') that causes conversion errors when compared with an int param.
-                // Safest approach: pre-fetch the list of DMN_Parameters.ID for this device using
-                // TRY_CAST to skip bad rows, then filter averages/readings by ParameterID IN (...).
-                var paramIdLookup = await _sqlExecutor.ExecuteAsync(
-                    "SELECT p.ID FROM DMN_Parameters p WHERE TRY_CAST(p.DeviceID AS INT) = @deviceIntId AND p.Status = 1",
-                    new Dictionary<string, object> { ["deviceIntId"] = resolvedDeviceId }, ct);
+                // ParameterAverages columns (confirmed from DB):
+                //   DeviceID    = int    → pass @deviceId as int
+                //   ParameterID = int    → join pa.ParameterID = p.ID (both int, no conversion)
+                //   Type        = nvarchar ('1H', '8H', '24H') → filter pa.Type = '1H' etc.
+                //   TypeID      = int (60) → unrelated, do NOT use for interval filtering
+                int.TryParse(resolvedDeviceId, out var deviceIdInt);
 
-                var parameterIds = paramIdLookup.Success
-                    ? paramIdLookup.Rows
-                        .Select(r => r.GetValueOrDefault("ID")?.ToString() ?? "")
-                        .Where(id => !string.IsNullOrWhiteSpace(id))
-                        .ToList()
-                    : new List<string>();
-
-                if (parameterIds.Count == 0)
-                {
-                    _log.Warning("device_reading_history: no parameters found for deviceId={Id}", resolvedDeviceId);
-                    resultRows = [];
-                    executionTimeMs = 0;
-                    dataSourceLabel = "ParameterAverages";
-                    goto afterSqlExecution;
-                }
-
-                // Build an inline IN list (safe — all values are int IDs from DB, not user input)
-                var paramIdList = string.Join(",", parameterIds);
                 var paramNameFilter2 = string.IsNullOrWhiteSpace(paramName)
                     ? "" : " AND p.ParameterName = @parameterName";
 
                 string historySql;
                 var historyParams = new Dictionary<string, object>
                 {
+                    ["deviceId"]           = deviceIdInt,
                     ["resolvedDeviceName"] = resolvedDeviceName,
                     ["startDate"]          = safeStartDate.ToString("yyyy-MM-dd HH:mm:ss"),
                     ["endDate"]            = safeEndDate.ToString("yyyy-MM-dd HH:mm:ss")
@@ -1104,8 +1248,7 @@ public sealed class ChatController : ControllerBase
                             FROM ParameterAverages pa
                             JOIN DMN_Parameters p ON pa.ParameterID = p.ID
                             JOIN ReportedUnits u ON p.UnitID = u.ID
-                            WHERE pa.ParameterID IN ({paramIdList}) AND pa.Type = 1
-                              AND pa.Status = 1{paramNameFilter2}
+                            WHERE pa.DeviceID = @deviceId AND pa.TypeID = 60{paramNameFilter2}
                               AND pa.Interval >= @startDate AND pa.Interval <= @endDate
                             ORDER BY pa.Interval DESC
                             """;
@@ -1123,8 +1266,7 @@ public sealed class ChatController : ControllerBase
                             FROM ParameterAverages pa
                             JOIN DMN_Parameters p ON pa.ParameterID = p.ID
                             JOIN ReportedUnits u ON p.UnitID = u.ID
-                            WHERE pa.ParameterID IN ({paramIdList}) AND pa.Type = 8
-                              AND pa.Status = 1{paramNameFilter2}
+                            WHERE pa.DeviceID = @deviceId AND pa.TypeID = 480{paramNameFilter2}
                               AND pa.Interval >= @startDate AND pa.Interval <= @endDate
                             ORDER BY pa.Interval DESC
                             """;
@@ -1142,8 +1284,7 @@ public sealed class ChatController : ControllerBase
                             FROM ParameterAverages pa
                             JOIN DMN_Parameters p ON pa.ParameterID = p.ID
                             JOIN ReportedUnits u ON p.UnitID = u.ID
-                            WHERE pa.ParameterID IN ({paramIdList}) AND pa.Type = 24
-                              AND pa.Status = 1{paramNameFilter2}
+                            WHERE pa.DeviceID = @deviceId AND pa.TypeID = 1440{paramNameFilter2}
                               AND pa.Interval >= @startDate AND pa.Interval <= @endDate
                             ORDER BY pa.Interval DESC
                             """;
@@ -1161,8 +1302,7 @@ public sealed class ChatController : ControllerBase
                             FROM ParameterAveragesMonth pam
                             JOIN DMN_Parameters p ON pam.ParameterID = p.ID
                             JOIN ReportedUnits u ON p.UnitID = u.ID
-                            WHERE pam.ParameterID IN ({paramIdList})
-                              AND pam.Status = 1{paramNameFilter2}
+                            WHERE pam.DeviceID = @deviceId{paramNameFilter2}
                               AND pam.Interval >= @startDate AND pam.Interval <= @endDate
                             ORDER BY pam.Interval DESC
                             """;
@@ -1180,8 +1320,7 @@ public sealed class ChatController : ControllerBase
                             FROM ParameterAveragesYear pay
                             JOIN DMN_Parameters p ON pay.ParameterID = p.ID
                             JOIN ReportedUnits u ON p.UnitID = u.ID
-                            WHERE pay.ParameterID IN ({paramIdList})
-                              AND pay.Status = 1{paramNameFilter2}
+                            WHERE pay.DeviceID = @deviceId{paramNameFilter2}
                               AND pay.Interval >= @startDate AND pay.Interval <= @endDate
                             ORDER BY pay.Interval DESC
                             """;
@@ -1206,8 +1345,7 @@ public sealed class ChatController : ControllerBase
                                 FROM ParameterReadings pr
                                 JOIN DMN_Parameters p ON pr.ParameterID = p.ID
                                 JOIN ReportedUnits u ON p.UnitID = u.ID
-                                WHERE pr.ParameterID IN ({paramIdList})
-                                  AND pr.Status = 1{paramNameFilter2}
+                                WHERE pr.DeviceID = @deviceId{paramNameFilter2}
                                   AND pr.CreatedTime >= @windowStart AND pr.CreatedTime <= @windowEnd
                                 ORDER BY ABS(DATEDIFF(SECOND, CAST(@targetDateTime AS DATETIME), pr.CreatedTime)),
                                          p.ParameterName
@@ -1225,8 +1363,7 @@ public sealed class ChatController : ControllerBase
                                 FROM ParameterReadings pr
                                 JOIN DMN_Parameters p ON pr.ParameterID = p.ID
                                 JOIN ReportedUnits u ON p.UnitID = u.ID
-                                WHERE pr.ParameterID IN ({paramIdList})
-                                  AND pr.Status = 1{paramNameFilter2}
+                                WHERE pr.DeviceID = @deviceId{paramNameFilter2}
                                   AND pr.CreatedTime >= @startDate AND pr.CreatedTime <= @endDate
                                 ORDER BY pr.CreatedTime DESC
                                 """;
@@ -1374,7 +1511,24 @@ public sealed class ChatController : ControllerBase
             if (session.MessageCount <= 1)
                 _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
 
-            return Ok(_formatter.FormatError(session.SessionId, noDataMessage, "NO_DATA"));
+            // Use Format (not FormatError) so the no-data message renders as a normal
+            // white assistant bubble, not a red error. Success=true, rows=[], type=text.
+            // Temporarily override ResponseType to "text" so the formatter skips table rendering.
+            var savedResponseType = template.ResponseType;
+            template.ResponseType = "text";
+            var noDataResponse = _formatter.Format(
+                sessionId: session.SessionId,
+                messageId: noDataMsgId,
+                template: template,
+                llmSummary: noDataMessage,
+                rows: [],
+                rowCount: 0,
+                executionTimeMs: (int)Math.Min(executionTimeMs, int.MaxValue),
+                scope: scope,
+                modelUsed: modelUsed,
+                tokenCount: tokensUsed);
+            template.ResponseType = savedResponseType;
+            return Ok(noDataResponse);
         }
 
         // For table/chart responses the data is rendered visually — skip LLM summarization.
@@ -1465,6 +1619,12 @@ public sealed class ChatController : ControllerBase
 
             "top_polluted_sites" =>
                 $"No pollution data is available for {region} at the moment. Devices may still be syncing. Please try again shortly.",
+
+            "device_reading_history" =>
+                $"No readings were found for that device on the requested date. The device may not have recorded data for that period, or the date may be outside the available history. Try a different date or interval.",
+
+            "device_last_reading" =>
+                "No current readings are available for that device. It may be offline or still syncing. Please try again shortly.",
 
             _ =>
                 $"No data was found for your query in {region} for {date}. The devices may be syncing or no readings match the selected filters. Please try adjusting your filters or check back shortly."

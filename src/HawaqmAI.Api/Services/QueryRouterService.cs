@@ -1103,6 +1103,17 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
+        // Boost mold_reports for any question about mold tests, biological reports, or mold status.
+        var moldPhrases = new[] {
+            "mold report", "mold test", "mold status", "biological report", "biological test",
+            "mold result", "mold reports", "mold testing", "show mold", "site mold"
+        };
+        bool isMoldQuestion = moldPhrases.Any(p => lowerQuestion.Contains(p));
+        if (template.Id == "mold_reports" && isMoldQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
+        if (template.Id != "mold_reports" && isMoldQuestion)
+            maxScore *= 0.05;
+
         // Penalise ALL SQL templates (not faq_answer) when the question asks about
         // historical site-level data — HAWAQM does not store historical site-level records.
         // Historical questions must route to faq_answer which returns a "not available" response.

@@ -582,6 +582,17 @@ public sealed class ExternalApiService : IExternalApiService
                 return new ApiCallResult { Success = true, Rows = pieRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
+            // mold_reports: parse GetMoldReportsBySiteName response → flat rows for table display.
+            // Each row = one mold test at the site with key metadata (TestName, SampleNo, ReportNo,
+            // SamplingTime, FormSubmisionStatus, Remarks). Parameters listed in a sub-column.
+            if (apiCall.ResponseShape == "mold_reports")
+            {
+                var moldRows = ParseMoldReportRows(json);
+                _log.Information("ExternalApiService: mold_reports → {Count} rows for siteName='{Site}'",
+                    moldRows.Count, llmParams.GetValueOrDefault("siteName") ?? "(all)");
+                return new ApiCallResult { Success = true, Rows = moldRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
             // schools_pollutant: filter API results to sites whose name contains "school",
             // extract requested parameter, and optionally filter by min/max value threshold.
             if (apiCall.ResponseShape == "schools_pollutant")
@@ -2626,6 +2637,56 @@ public sealed class ExternalApiService : IExternalApiService
         catch (Exception ex)
         {
             _log.Error(ex, "ParseDeviceLatestDataRows: parse failed");
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Flattens GetMoldReportsBySiteName JSON response into one row per mold test.
+    /// Columns match the UI table: Site Name, Test Name, Sampling Date, Report Number, Result, Status.
+    /// Result is derived from SampleNo (pass/fail value stored there in existing data).
+    /// </summary>
+    private static List<Dictionary<string, object?>> ParseMoldReportRows(string json)
+    {
+        // Helper: reads a string property trying both PascalCase and camelCase
+        static string? GetStr(JsonElement el, string name)
+        {
+            if (el.TryGetProperty(name, out var v)) return v.GetString();
+            var camel = char.ToLowerInvariant(name[0]) + name[1..];
+            if (el.TryGetProperty(camel, out var v2)) return v2.GetString();
+            return null;
+        }
+
+        var rows = new List<Dictionary<string, object?>>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return rows;
+
+            foreach (var test in doc.RootElement.EnumerateArray())
+            {
+                // Newtonsoft serializes DTO PascalCase properties as-is (no camelCase conversion)
+                var siteName     = GetStr(test, "StationName");
+                var testName     = GetStr(test, "TestName");
+                var reportNo     = GetStr(test, "ReportNo");
+                var sampleNo     = GetStr(test, "SampleNo");
+                var samplingTime = GetStr(test, "SamplingTime");
+                var formStatus   = GetStr(test, "FormSubmisionStatus");
+
+                rows.Add(new Dictionary<string, object?>
+                {
+                    ["Site Name"]     = siteName,
+                    ["Test Name"]     = testName,
+                    ["Sampling Date"] = samplingTime,
+                    ["Report Number"] = reportNo,
+                    ["Result"]        = sampleNo,   // UI shows sampleNo in the Result column
+                    ["Status"]        = formStatus
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "ParseMoldReportRows: failed to parse mold reports JSON");
         }
         return rows;
     }

@@ -4156,6 +4156,50 @@
       "responseType": "table",
       "tableUsed": "DMN_Devices",
       "skipSiteFilter": false
+    },
+    {
+      "id": "mold_reports",
+      "description": "Get mold test reports for a specific site by name. Returns test metadata: Site Name, Test Name, Sampling Date, Report Number, Result (pass/fail from SampleNo field), and Status. Use when the user asks about mold reports, mold test status, biological reports, or mold test results at a site.",
+      "patterns": [
+        "mold report",
+        "mold reports",
+        "mold test",
+        "mold test status",
+        "mold report status",
+        "biological report",
+        "biological test",
+        "mold test results",
+        "mold reports for",
+        "mold report at",
+        "mold status at",
+        "show mold",
+        "mold tests at",
+        "what is the mold report",
+        "what is the mold status",
+        "mold report status at",
+        "site mold reports",
+        "check mold report",
+        "mold testing"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        {
+          "name": "siteName",
+          "type": "string",
+          "source": "question",
+          "optional": true
+        }
+      ],
+      "responseType": "table",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetMoldReportsBySiteName?siteName={siteName}",
+        "responseShape": "mold_reports"
+      }
     }
   ]
 }
