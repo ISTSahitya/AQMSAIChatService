@@ -1029,9 +1029,9 @@ public sealed class ExternalApiService : IExternalApiService
             .Select(el =>
             {
                 var regionName = el.TryGetProperty("RegionName", out var rn) ? rn.GetString() ?? "" : "";
-                var aqi        = el.TryGetProperty("AQI",        out var aq) ? (object?)aq.GetDouble() : null;
-                var active     = el.TryGetProperty("ActiveStationsCount",   out var ac) ? (object?)ac.GetInt32() : null;
-                var pct        = el.TryGetProperty("ActiveStationsPercent", out var ap) ? (object?)Math.Round(ap.GetDouble(), 2) : null;
+                var aqi        = el.TryGetProperty("AQI",        out var aq) && aq.ValueKind == JsonValueKind.Number ? (object?)aq.GetDouble() : null;
+                var active     = el.TryGetProperty("ActiveStationsCount",   out var ac) && ac.ValueKind == JsonValueKind.Number ? (object?)ac.GetInt32() : null;
+                var pct        = el.TryGetProperty("ActiveStationsPercent", out var ap) && ap.ValueKind == JsonValueKind.Number ? (object?)Math.Round(ap.GetDouble(), 2) : null;
 
                 return new Dictionary<string, object?>
                 {
@@ -1077,7 +1077,7 @@ public sealed class ExternalApiService : IExternalApiService
 
     private static DeviceReading ParseDevice(JsonElement el)
     {
-        var stationId   = el.TryGetProperty("StationId",   out var sid)  ? sid.GetInt32()        : 0;
+        var stationId   = el.TryGetProperty("StationId",   out var sid) && sid.ValueKind == JsonValueKind.Number ? sid.GetInt32() : 0;
         var stationName =
             (el.TryGetProperty("StationName", out var sn)  ? sn.GetString()  : null) ??
             (el.TryGetProperty("stationName", out var sn2) ? sn2.GetString() : null) ??
@@ -1111,7 +1111,7 @@ public sealed class ExternalApiService : IExternalApiService
             foreach (var p in dtos.EnumerateArray())
             {
                 var name  = p.TryGetProperty("ParameterName",  out var pn) ? pn.GetString() ?? "" : "";
-                var value = p.TryGetProperty("ParameterValue", out var pv) ? pv.GetDouble() : 0;
+                var value = p.TryGetProperty("ParameterValue", out var pv) && pv.ValueKind == JsonValueKind.Number ? pv.GetDouble() : 0;
                 var unit  = p.TryGetProperty("Unit",           out var pu) ? pu.GetString() ?? "" : "";
 
                 // Pick up timestamp from parameter level if not found at device level
@@ -1687,7 +1687,7 @@ public sealed class ExternalApiService : IExternalApiService
             {
                 foreach (var site in detailsProp.EnumerateArray())
                 {
-                    var id   = site.TryGetProperty("ID",          out var idProp)   ? idProp.GetInt32()     : (int?)null;
+                    var id   = site.TryGetProperty("ID",          out var idProp) && idProp.ValueKind == JsonValueKind.Number ? idProp.GetInt32() : (int?)null;
                     var name = site.TryGetProperty("StationName", out var nameProp) ? nameProp.GetString()  : null;
                     // Try camelCase too
                     if (name is null && site.TryGetProperty("stationName", out var cn)) name = cn.GetString();
