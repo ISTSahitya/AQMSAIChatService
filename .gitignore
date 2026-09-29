@@ -9,9 +9,7 @@ obj/
 logs/
 *.log
 
-# Secrets - never commit these
-appsettings.Development.json
-appsettings.Production.json
+  
 
 # NuGet
 .nuget/
