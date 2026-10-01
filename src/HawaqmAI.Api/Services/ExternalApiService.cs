@@ -649,6 +649,19 @@ public sealed class ExternalApiService : IExternalApiService
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
+            // site_main_pollutant: find the dominant pollutant per device at a named site.
+            // Uses the last 1H ParameterAverages reading per device × pollutant, then ranks
+            // by (value / threshold) ratio from Parameters_Excedence_Values.  This mirrors what
+            // the device detail bar chart shows — the pollutant with the highest exceedance ratio
+            // is the "main" (worst) pollutant for that device right now.
+            if (apiCall.ResponseShape == "site_main_pollutant")
+            {
+                var rows2 = await BuildSiteMainPollutantRows(json, nameToResolve ?? "", user, ct);
+                _log.Information("ExternalApiService: site_main_pollutant → {Count} rows for site='{Site}'",
+                    rows2.Count, nameToResolve ?? "(none)");
+                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
             // indoor_ambient_compare: compare indoor site AQI with the nearest outdoor ambient station.
             // 1. Finds the indoor site in the GetAllSiteData response.
             // 2. Fetches its coordinates from DMN_Stations.
@@ -2033,6 +2046,138 @@ public sealed class ExternalApiService : IExternalApiService
             row["SiteName"] = matched.StationName;
 
         return yearRows;
+    }
+
+    /// <summary>
+    /// For each active device at the named site, finds the pollutant with the highest
+    /// (last-1H-value / exceedance-threshold) ratio — i.e. the "main pollutant" shown
+    /// in the device detail bar chart.  Returns one row per device:
+    ///   DeviceName, Location, MainPollutant, Value, Unit, Threshold, ExceedanceRatio, LastUpdated
+    /// Excludes AQI Index itself (it is the aggregated score, not a raw pollutant).
+    /// If a pollutant has no threshold entry it is ranked by absolute value as fallback.
+    /// </summary>
+    private async Task<List<Dictionary<string, object?>>> BuildSiteMainPollutantRows(
+        string allSiteJson,
+        string stationName,
+        UserContext? user,
+        CancellationToken ct)
+    {
+        // ── 1. Match site from GetAllSiteData ────────────────────────────────
+        var allDevices = ParseDevicesFromJson(allSiteJson);
+        var query = NormaliseQuery(stationName.Trim().ToLowerInvariant());
+
+        var allStations = allDevices
+            .GroupBy(d => d.StationId)
+            .Select(g => new { g.First().StationId, g.First().StationName, Devices = g.ToList() })
+            .Where(s => !string.IsNullOrWhiteSpace(s.StationName))
+            .ToList();
+
+        var permitted = (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+            ? allStations.Where(s => user.PermittedSiteIds.Contains(s.StationId)).ToList()
+            : allStations;
+
+        var matched = permitted
+            .Select(s =>
+            {
+                var norm = NormaliseQuery(s.StationName.ToLowerInvariant());
+                var score = norm == query ? 1.0 : norm.Contains(query) || query.Contains(norm) ? 0.9 : 0.0;
+                return new { s.StationId, s.StationName, s.Devices, Score = score };
+            })
+            .Where(s => s.Score > 0)
+            .OrderByDescending(s => s.Score)
+            .FirstOrDefault();
+
+        if (matched is null)
+        {
+            _log.Warning("site_main_pollutant: no site matched '{Name}'", stationName);
+            return [new Dictionary<string, object?> { ["Error"] = $"No site found matching '{stationName}'." }];
+        }
+
+        // ── 2. Query last 1H ParameterAverages per device × pollutant ───────
+        // Join Parameters_Excedence_Values (interval=1 for 1H) to get the threshold.
+        // Exclude AQI Index — it is derived, not a raw pollutant.
+        // RANK() picks the single latest record per device×pollutant combination.
+        var sql = $"""
+            WITH Ranked AS (
+                SELECT
+                    dev.DeviceName,
+                    dev.Location,
+                    p.ParameterName,
+                    pa.Parametervalue          AS [Value],
+                    p.Unit,
+                    ev.ExcedenceValue          AS Threshold,
+                    CASE
+                        WHEN ev.ExcedenceValue IS NOT NULL AND ev.ExcedenceValue > 0
+                        THEN CAST(pa.Parametervalue AS FLOAT) / ev.ExcedenceValue
+                        ELSE NULL
+                    END                        AS ExceedanceRatio,
+                    pa.Interval                AS LastUpdated,
+                    RANK() OVER (
+                        PARTITION BY dev.DeviceId, p.ID
+                        ORDER BY pa.Interval DESC
+                    )                          AS rn
+                FROM ParameterAverages pa
+                JOIN DMN_Parameters   p   ON pa.ParameterID = p.ID
+                JOIN DMN_Devices      dev ON p.DeviceID     = dev.DeviceId
+                JOIN DMN_Stations     s   ON dev.StationID  = s.ID
+                LEFT JOIN Parameters_Excedence_Values ev
+                    ON ev.Parameter = p.ParameterName
+                    AND ev.Interval = 1
+                WHERE s.ID             = {matched.StationId}
+                  AND pa.Status        = 1
+                  AND p.ParameterName  <> 'AQI Index'
+                  AND pa.Interval     >= DATEADD(HOUR, -2, GETDATE())
+            ),
+            Latest AS (
+                SELECT * FROM Ranked WHERE rn = 1
+            ),
+            BestPerDevice AS (
+                SELECT *,
+                    RANK() OVER (
+                        PARTITION BY DeviceName
+                        ORDER BY
+                            COALESCE(ExceedanceRatio, 0) DESC,
+                            CAST([Value] AS FLOAT) DESC
+                    ) AS deviceRank
+                FROM Latest
+            )
+            SELECT
+                DeviceName,
+                Location,
+                ParameterName  AS MainPollutant,
+                [Value],
+                Unit,
+                Threshold,
+                ROUND(ExceedanceRatio, 3) AS ExceedanceRatio,
+                LastUpdated
+            FROM BestPerDevice
+            WHERE deviceRank = 1
+            ORDER BY DeviceName
+            """;
+
+        try
+        {
+            var result = await _sqlExecutor.ExecuteAsync(sql, new Dictionary<string, object>(), ct);
+            if (!result.Success || result.Rows.Count == 0)
+            {
+                _log.Warning("site_main_pollutant: no 1H data for stationId={Id}", matched.StationId);
+                return [new Dictionary<string, object?>
+                {
+                    ["SiteName"] = matched.StationName,
+                    ["Error"]    = $"No recent 1-hour averaged data found for {matched.StationName}. Devices may be offline or data is still aggregating."
+                }];
+            }
+
+            foreach (var row in result.Rows)
+                row["SiteName"] = matched.StationName;
+
+            return result.Rows;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "site_main_pollutant: SQL failed for stationId={Id}", matched.StationId);
+            return [new Dictionary<string, object?> { ["Error"] = "Could not retrieve pollutant data for that site." }];
+        }
     }
 
     // ── Abu Dhabi SDI ArcGIS REST endpoints (public, no auth) ───────────────

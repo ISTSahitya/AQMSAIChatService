@@ -204,6 +204,13 @@ public sealed class QueryRouterService : IQueryRouterService
         return templates.Where(t => user.PermittedCategories.Contains(t.Category)).ToList();
     }
 
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ApprovedQuery>> GetPermittedTemplatesAsync(UserContext user, CancellationToken ct = default)
+    {
+        var templates = await LoadTemplatesAsync(ct);
+        return templates.Where(t => user.PermittedCategories.Contains(t.Category)).ToList();
+    }
+
     // ── Private helpers ──────────────────────────────────────────────────────
 
     private async Task<List<ApprovedQuery>> LoadTemplatesAsync(CancellationToken ct)

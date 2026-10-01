@@ -193,15 +193,26 @@ public sealed class AzureAIService : IAzureAIService
             If "Last Updated" is "N/A" or empty, omit the timestamp. If Unit is empty or null, omit it.
             Output plain text only. No bullets. No markdown. No table.
 
+            GOOD OR BAD / QUALITY JUDGEMENT QUESTION — if the user asks whether the air is good or bad, good or poor, how is the air, is the air quality good, is the AQI good/bad, is it ok/fine/healthy/unhealthy at a site:
+            Find the AQI Index row. Use the AQI value to give a direct verdict based on MOCCAE categories, then state the value.
+            AQI verdict map: 0–50 = "good" | 51–100 = "acceptable" | 101–150 = "a concern for sensitive groups" | 151–200 = "unhealthy" | 201–300 = "very unhealthy" | 301+ = "hazardous"
+            FORMAT: "The air at {Site Name} is currently {verdict} — AQI {Value} ({AQI category}) as of {Last Updated}."
+            Examples:
+              "The air at Latifa Mohammed Ahmed Al Dhaheri is currently good — AQI 38 (Good) as of 2026-10-01 14:35:00."
+              "The air at Al Reyada School is currently a concern for sensitive groups — AQI 118 (Unhealthy for Sensitive Groups) as of 2026-10-01 09:10:00."
+              "The air at Al Bateen School is currently unhealthy — AQI 165 (Unhealthy) as of 2026-10-01 11:25:00."
+            If no AQI data: "No current AQI reading is available for {Site Name}. The device may be offline."
+            Keywords that trigger this format: good or bad, is it good, is it bad, is the air good, is the air bad, how is the air, air quality good, air quality bad, is the aqi good, is it healthy, is it ok, is it fine.
+
             SAFETY / HEALTH / ATTENDANCE QUESTION — if the user asks whether the site is safe, good for health, safe for children/elderly/disabled/vulnerable/sensitive groups, or whether people should attend, go, visit, or use the space:
             Find the AQI Index row and 1–2 key pollutant readings (e.g. PM2.5, CO2) from the data.
             FORMAT (use actual values — never placeholder text):
             "I can share the measurements: AQI {AQI_VALUE} ({AQI_LEVEL}) as of {Last Updated}, with PM2.5 at {PM2.5_VALUE} µg/m³ and CO2 at {CO2_VALUE} PPM. Whether the building is safe to attend is a decision for the responsible health authority — the data alone cannot decide that. I can prepare the full data picture to support the decision."
             If PM2.5 or CO2 is not available, omit that pollutant and use whatever key pollutant IS available.
             If no AQI data at all: "No current readings are available for {Site Name}. The device may be offline. Whether the building is safe to attend is a decision for the responsible health authority."
-            Keywords that trigger this format: safe, safety, attend, attendance, suitable, healthy, unhealthy for, good for children, good for elderly, good for disabled, can children, should children, can people, should people, is it ok, is it fine, is it good.
+            Keywords that trigger this format: safe, safety, attend, attendance, suitable, good for children, good for elderly, good for disabled, can children, should children, can people, should people.
 
-            User asked for AQI or air quality category (NOT a safety question) → find the row where Parameter = "AQI Index":
+            User asked for AQI or air quality category (NOT a safety/quality question) → find the row where Parameter = "AQI Index":
             FORMAT: "The current AQI at {Site Name} is {Value}, classified as {AQI category}, last updated at {Last Updated}."
             Example: "The current AQI at Al Saad Indian School is 72, classified as Moderate, last updated at 2026-09-15 18:45:00."
 
@@ -842,6 +853,29 @@ public sealed class AzureAIService : IAzureAIService
             If no rows: "No AQI data found for that site and month. The devices may have been offline or the site name may not match."
             NEVER output placeholder text — always use actual values from the data.
             """,
+
+        // Main pollutant at a site — one row per device, ranked by last 1H exceedance ratio
+        ["main_pollutant_at_station"] = """
+            Data columns: "SiteName", "DeviceName", "Location", "MainPollutant", "Value", "Unit", "Threshold", "ExceedanceRatio", "LastUpdated".
+            One row per device at the site, ordered by DeviceName.
+
+            ExceedanceRatio: ratio of the pollutant value to its exceedance threshold (e.g. 1.2 = 20% above limit). null = no threshold defined.
+
+            FORMAT:
+            Line 1: "The main pollutant at {SiteName} based on the last 1-hour average is:"
+            Then one line per device:
+              "• {DeviceName} ({Location}): {MainPollutant} — {Value} {Unit} (threshold: {Threshold} {Unit}, ratio: {ExceedanceRatio}x) as of {LastUpdated}"
+              If Threshold is null: omit the threshold/ratio part — just "{Value} {Unit} as of {LastUpdated}"
+              If Location is empty or null: omit it — just use "{DeviceName}: …"
+            Final closing sentence:
+              - If any ExceedanceRatio >= 1.0: "One or more pollutants exceed their 1-hour threshold — ventilation or source investigation may be warranted."
+              - If all ExceedanceRatio < 1.0 (or all null): "All pollutants are currently within their 1-hour limits."
+              - If ExceedanceRatio is null for all: "No exceedance thresholds are configured for the detected pollutants."
+
+            If "Error" is present in the data, output the error message.
+            NEVER output placeholder text — always use actual values from the data.
+            NEVER omit any device row — list every device.
+            """,
     };
 
     /// <inheritdoc/>
@@ -1157,6 +1191,7 @@ public sealed class AzureAIService : IAzureAIService
             9h. If the user asks what drove the worst air-quality month at a specific site in a given year (e.g. "What drove the worst air-quality month at Al Saad Indian School in 2025?") → select "worst_month_pollutants". Extract stationName and year. NEVER select faq_answer or site_aqi_trend_yearly for this.
             9g. If the user asks whether air quality at a specific site has improved or worsened over the last N years, or asks for a yearly AQI trend/history at a site (e.g. "Has air quality at Al Saad Indian School improved or worsened over the last three years?") → select "site_aqi_trend_yearly". Extract stationName and years (default 3). NEVER select faq_answer or top_sites_aqi_yearly for this — those do not give a per-site trend.
             9f. If the user asks to compare the indoor AQI at a site with the nearest ambient (outdoor) station (e.g. "Compare the current indoor AQI at Al Saad Indian School with the nearest ambient station") → select "indoor_ambient_compare". Extract stationName. The system fetches the nearest ambient station automatically from Abu Dhabi SDI. NEVER select region_aqi_geographical or site_aqi_single for this.
+            9k. If the user asks what the main, dominant, primary, worst, or highest pollutant is at a specific named site RIGHT NOW (e.g. "What is the main pollutant at Al Reyada School?", "Which pollutant is driving the AQI at Al Saad Indian School?", "What is the dominant pollutant at Kaltham Hasan Al Obeidli?") → select "main_pollutant_at_station". Extract stationName only. This uses the last 1-hour averaged readings to rank pollutants by their exceedance ratio. NEVER select site_aqi_single or faq_answer for this — those do not return pollutant ranking data.
             9e. If the user asks which devices had the lowest Data Success Rate last month (e.g. "which devices had the lowest DSR last month?", "worst data success rate last month") → select "lowest_dsr_devices". Extract topN if mentioned (default 10). NEVER select data_success_rate (that returns overall network DSR, not per-device) or device_compliance_rate (that requires a specific stationId).
             9d. If the user asks which device contributed most to the highest site AQI at a school or site last month (e.g. "which device contributed most to the highest site AQI at Al Saad Indian School last month?") → select "device_peak_aqi_contribution". Extract stationName only — the date range is always last month (hardcoded in SQL). NEVER select device_last_reading, compare_two_stations, or schools_latest_pollutant for this.
             9c. If the user asks to compare the two devices at a specific school or site for a specific month (e.g. "compare the two devices at Al Saad Indian School for September 2026", "device comparison at Al Naeem School for August") → select "compare_devices_monthly". Extract stationName (site/school name), month (as integer 1–12), and year (4-digit). NEVER select compare_two_stations or device_last_reading for this — those do not group by device per month.

@@ -252,15 +252,36 @@ public sealed class ChatController : ControllerBase
             "if the nearest ambient station"
         };
         // Safety/health questions about a NAMED site must NOT go to FAQ — they need live data.
-        // Detect if the question is a site-specific safety question by looking for safety words + site indicators.
-        var safetyWords = new[] { "safe", "safety", "attend", "suitable", "healthy", "unhealthy for", "good for children", "good for elderly", "good for disabled", "can children", "should children", "can people", "should people" };
-        var siteWords = new[] { "school", "residential", "commercial", "institutional", "site", "reyada", "saad", "naeem", "bateen", "khalifa", "kaltham", "gems" };
-        bool isSiteSafetyQuestion = safetyWords.Any(s => lowerMsg.Contains(s)) && siteWords.Any(s => lowerMsg.Contains(s));
+        // Detect if the question is a site-specific safety/quality question by looking for:
+        //   (a) safety or quality-judgement words, AND
+        //   (b) a site reference — either a known site-type word OR the pattern "at <Name>" (e.g. "at Latifa Mohammed")
+        var safetyWords = new[]
+        {
+            // explicit safety/attendance
+            "safe", "safety", "attend", "suitable",
+            "can children", "should children", "can people", "should people",
+            "good for children", "good for elderly", "good for disabled",
+            // quality judgement — "is the air good or bad", "is it good", "how is the air"
+            "good or bad", "is it good", "is it bad", "is the air good", "is the air bad",
+            "how is the air", "how is the quality", "air quality good", "air quality bad",
+            "is the aqi good", "is the aqi bad", "is it healthy", "is it unhealthy",
+            "is the air ok", "is it ok to", "is it fine", "is it safe",
+            "unhealthy for"
+        };
+        var siteTypeWords = new[] { "school", "residential", "commercial", "institutional", "site", "station",
+                                     "reyada", "saad", "naeem", "bateen", "khalifa", "kaltham", "gems" };
+        // Detect "at <ProperName>" pattern — "at Latifa", "at Al Reyada", "at Emirates" etc.
+        // Matches: "at " followed by one or more capitalised or Arabic-name words (2+ chars)
+        bool hasAtSitePattern = System.Text.RegularExpressions.Regex.IsMatch(
+            request.Message,  // use original case for "at Capital Word" detection
+            @"\bat\s+[A-Z][a-zA-Z]{1,}(\s+[A-Za-z]{2,}){0,5}");
+        bool isSiteSafetyQuestion = safetyWords.Any(s => lowerMsg.Contains(s))
+            && (siteTypeWords.Any(s => lowerMsg.Contains(s)) || hasAtSitePattern);
 
         if (!isSiteSafetyQuestion && aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k)))
         {
             _log.Debug("ChatController: AQI range-definition pre-check fired → forcing faq_answer");
-            var faqTemplatePre = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "faq_answer");
+            var faqTemplatePre = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "faq_answer");
             if (faqTemplatePre is not null)
             {
                 var faqPathPre = Path.Combine(AppContext.BaseDirectory, "Knowledge", "faq.json");
@@ -316,12 +337,12 @@ public sealed class ChatController : ControllerBase
                 "CLARIFY"));
         }
 
-        // ── 2c. Hard pre-check: safety/health questions about a named site → force site_aqi_single ──
-        // These questions need live AQI data, not the generic FAQ "consult health authority" entry.
+        // ── 2c. Hard pre-check: safety/health/quality questions about a named site → force site_aqi_single ──
+        // These questions need live AQI data. This block always returns — never falls through to routing.
         if (isSiteSafetyQuestion)
         {
-            _log.Debug("ChatController: site safety pre-check fired → forcing site_aqi_single");
-            var safetyTemplate = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "site_aqi_single");
+            _log.Debug("ChatController: site safety/quality pre-check fired → forcing site_aqi_single");
+            var safetyTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_aqi_single");
             if (safetyTemplate is not null && safetyTemplate.ApiCall is not null)
             {
                 var safetyBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
@@ -361,7 +382,234 @@ public sealed class ChatController : ControllerBase
                         modelUsed: safetyParamResult.ModelUsed,
                         tokenCount: safetyParamResult.TokensUsed));
                 }
+
+                // API call failed — return error, do NOT fall through to routing
+                _log.Warning("ChatController: site safety pre-check API call failed for message: {Msg}", request.Message);
+                await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
+                return Ok(_formatter.FormatError(session.SessionId,
+                    "I wasn't able to retrieve current air quality data for that site. The device may be offline. Please try again shortly.",
+                    "API_ERROR"));
             }
+
+            // Template not found — return error, do NOT fall through to routing
+            _log.Warning("ChatController: site_aqi_single template not found or has no ApiCall for safety pre-check");
+            await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
+            return Ok(_formatter.FormatError(session.SessionId,
+                "I wasn't able to retrieve current air quality data for that site. Please try again shortly.",
+                "API_ERROR"));
+        }
+
+        // ── 2d. Hard pre-check: parameter reading at a named site → force site_aqi_single ──
+        // Questions like "What is the latest PM2.5 at AL Saad Indian School?" must never
+        // be routed to faq_answer. Detect: pollutant/parameter keyword + site reference (at <Name>).
+        var parameterKeywords = new[]
+        {
+            "pm2.5", "pm 2.5", "pm10", "pm 10", "co2", "carbon dioxide", "carbon monoxide",
+            "no2", "nitrogen dioxide", "o3", "ozone", "tvoc", "voc", "ch2o", "formaldehyde",
+            "temperature", "humidity", "noise", "aqi", "air quality index",
+            "reading", "readings", "level", "levels", "value", "concentration"
+        };
+        bool hasParameterKeyword = parameterKeywords.Any(p => lowerMsg.Contains(p));
+        bool hasAtSiteRef = hasAtSitePattern                          // "at <CapitalName>"
+            || siteTypeWords.Any(s => lowerMsg.Contains(s));         // or "school", "site", etc.
+        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion;
+
+        if (isParameterAtSiteQuestion)
+        {
+            _log.Debug("ChatController: parameter-at-site pre-check fired → forcing site_aqi_single");
+            var paramTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_aqi_single");
+            if (paramTemplate is not null && paramTemplate.ApiCall is not null)
+            {
+                var paramBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var paramFillResult = await _azureAI.FillParametersAsync(request.Message, paramTemplate, history, scope, ct);
+                var paramApiResult = await _externalApi.CallAsync(paramTemplate.ApiCall, paramFillResult.Parameters, scope, paramBearerToken, user, paramTemplate.Id, ct);
+                if (paramApiResult.Success)
+                {
+                    var paramMsgId = Guid.NewGuid();
+                    var paramSummary = await _azureAI.SummarizeResultsAsync(request.Message, paramTemplate, paramApiResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: paramMsgId,
+                        assistantContent: paramSummary,
+                        sql: null,
+                        responseType: "text",
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: "API",
+                        dateRange: null,
+                        modelUsed: paramFillResult.ModelUsed,
+                        executionTimeMs: (int)paramApiResult.ExecutionTimeMs,
+                        tokenCount: paramFillResult.TokensUsed,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: paramMsgId,
+                        template: paramTemplate,
+                        llmSummary: paramSummary,
+                        rows: paramApiResult.Rows,
+                        rowCount: paramApiResult.Rows.Count,
+                        executionTimeMs: (int)paramApiResult.ExecutionTimeMs,
+                        scope: scope,
+                        modelUsed: paramFillResult.ModelUsed,
+                        tokenCount: paramFillResult.TokensUsed));
+                }
+                // API failed — fall through to normal routing so user still gets a response
+                _log.Warning("ChatController: parameter-at-site pre-check API call failed, falling through to routing");
+            }
+        }
+
+        // ── 2e. Hard pre-check: offline/inactive device questions → force offline_devices ──
+        // Scope-bar enrichment appends "in Abudhabi" to the message, causing these questions to
+        // match devices_by_filter (which requires BOTH regionName AND sectorName → returns nothing).
+        // Detect offline-device intent and route directly to the offline_devices template,
+        // which runs a standalone SQL with no region/sector requirement.
+        var offlineKeywords = new[]
+        {
+            "offline", "not sending", "not reporting", "no data", "inactive device",
+            "inactive devices", "stopped sending", "stopped reporting", "not transmitting",
+            "lost connection", "lost connectivity", "disconnected device", "disconnected devices",
+            "devices offline", "devices not sending", "devices not reporting",
+            "which devices are offline", "which device is offline",
+            "how many devices are offline", "list offline", "show offline",
+            "active or inactive", "active and inactive",
+            // "connected" / "not connected" — connectivity language maps to online/offline status
+            "not connected", "disconnected", "devices that are not connected",
+            "which devices are not connected", "are there any devices that are not connected",
+            "inactive sensor", "inactive sensors", "not transmitting",
+            "devices not transmitting", "which devices are inactive", "devices that are inactive",
+            "devices currently inactive", "show inactive", "list inactive"
+        };
+        bool isOfflineDeviceQuestion = offlineKeywords.Any(k => lowerMsg.Contains(k))
+            && !lowerMsg.Contains("should be checked first")   // FAQ advisory → already handled above
+            && !lowerMsg.Contains("when is a device considered");  // FAQ definition → already handled above
+
+        if (isOfflineDeviceQuestion)
+        {
+            _log.Debug("ChatController: offline-device pre-check fired → forcing offline_devices");
+            var offlineTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "offline_devices");
+            if (offlineTemplate is not null && !string.IsNullOrWhiteSpace(offlineTemplate.Sql))
+            {
+                // No extra params needed — offline_devices SQL uses only the 15-min cutoff
+                var emptyParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var (offlineSafeSql, offlineSqlParams) = _rbac.BuildSafeQuery(offlineTemplate, emptyParams, user, scope);
+                var (offlineValid, offlineError) = SqlValidator.Validate(offlineSafeSql);
+                if (offlineValid)
+                {
+                    var offlineResult = await _sqlExecutor.ExecuteAsync(offlineSafeSql, offlineSqlParams, ct);
+                    if (offlineResult.Success)
+                    {
+                        var offlineMsgId = Guid.NewGuid();
+                        var offlineSummary = await _azureAI.SummarizeResultsAsync(request.Message, offlineTemplate, offlineResult.Rows, scope, ct);
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: offlineMsgId,
+                            assistantContent: offlineSummary,
+                            sql: offlineSafeSql,
+                            responseType: offlineTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: null,
+                            dataSource: offlineTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: null,
+                            executionTimeMs: (int)offlineResult.ExecutionTimeMs,
+                            tokenCount: 0,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: offlineMsgId,
+                            template: offlineTemplate,
+                            llmSummary: offlineSummary,
+                            rows: offlineResult.Rows,
+                            rowCount: offlineResult.Rows.Count,
+                            executionTimeMs: (int)offlineResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: null,
+                            tokenCount: 0));
+                    }
+                    _log.Warning("ChatController: offline_devices SQL execution failed: {Error}", offlineResult.Error);
+                }
+                else
+                {
+                    _log.Warning("ChatController: offline_devices SQL validation failed: {Error}", offlineError);
+                }
+            }
+            // If template missing or SQL failed, fall through to normal routing
+        }
+
+        // ── 2f. Hard pre-check: online/connected device questions → force online_devices ──
+        // Same scope-bar issue as 2e — "connected devices in Abudhabi" hits devices_by_filter.
+        var onlineKeywords = new[]
+        {
+            "connected device", "connected devices", "which devices are connected",
+            "devices that are connected", "devices currently connected",
+            "show connected", "list connected", "which sensors are connected",
+            "connected sensors", "devices transmitting", "which devices are transmitting",
+            "devices that are transmitting", "are there any devices that are connected",
+            "which devices are online right now", "which devices are active right now",
+            "devices online right now", "devices active right now"
+        };
+        bool isOnlineDeviceQuestion = onlineKeywords.Any(k => lowerMsg.Contains(k))
+            && !isOfflineDeviceQuestion;  // don't double-fire if somehow both match
+
+        if (isOnlineDeviceQuestion)
+        {
+            _log.Debug("ChatController: online-device pre-check fired → forcing online_devices");
+            var onlineTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "online_devices");
+            if (onlineTemplate is not null && !string.IsNullOrWhiteSpace(onlineTemplate.Sql))
+            {
+                var emptyParams2 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var (onlineSafeSql, onlineSqlParams) = _rbac.BuildSafeQuery(onlineTemplate, emptyParams2, user, scope);
+                var (onlineValid, onlineError) = SqlValidator.Validate(onlineSafeSql);
+                if (onlineValid)
+                {
+                    var onlineResult = await _sqlExecutor.ExecuteAsync(onlineSafeSql, onlineSqlParams, ct);
+                    if (onlineResult.Success)
+                    {
+                        var onlineMsgId = Guid.NewGuid();
+                        var onlineSummary = await _azureAI.SummarizeResultsAsync(request.Message, onlineTemplate, onlineResult.Rows, scope, ct);
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: onlineMsgId,
+                            assistantContent: onlineSummary,
+                            sql: onlineSafeSql,
+                            responseType: onlineTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: null,
+                            dataSource: onlineTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: null,
+                            executionTimeMs: (int)onlineResult.ExecutionTimeMs,
+                            tokenCount: 0,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: onlineMsgId,
+                            template: onlineTemplate,
+                            llmSummary: onlineSummary,
+                            rows: onlineResult.Rows,
+                            rowCount: onlineResult.Rows.Count,
+                            executionTimeMs: (int)onlineResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: null,
+                            tokenCount: 0));
+                    }
+                    _log.Warning("ChatController: online_devices SQL execution failed: {Error}", onlineResult.Error);
+                }
+                else
+                {
+                    _log.Warning("ChatController: online_devices SQL validation failed: {Error}", onlineError);
+                }
+            }
+            // If template missing or SQL failed, fall through to normal routing
         }
 
         // ── 3. Route the question to an approved template ───────────────────

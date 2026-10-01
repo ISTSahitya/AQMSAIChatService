@@ -15,8 +15,11 @@ public interface IQueryRouterService
     /// </summary>
     Task<QueryRouterResult> RouteAsync(string question, UserContext user, IReadOnlyList<ConversationTurn>? history = null, CancellationToken ct = default);
 
-    /// <summary>Returns all templates the given user role is permitted to see.</summary>
+    /// <summary>Returns all templates the given user role is permitted to see (sync — cache must already be warm).</summary>
     IReadOnlyList<ApprovedQuery> GetPermittedTemplates(UserContext user);
+
+    /// <summary>Returns all templates the given user role is permitted to see, loading from disk if cache is cold.</summary>
+    Task<IReadOnlyList<ApprovedQuery>> GetPermittedTemplatesAsync(UserContext user, CancellationToken ct = default);
 }
 
 /// <summary>Result of the query routing step.</summary>
