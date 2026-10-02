@@ -2449,12 +2449,12 @@
     },
     {
       "id": "list_devices",
-      "description": "Count the total number of registered devices in HAWAQM. Admin role only.",
+      "description": "Count the TOTAL number of registered devices in HAWAQM system-wide — NOT for a specific site or school. Admin role only. If a site name is mentioned, use devices_with_readings instead.",
       "patterns": [
         "how many devices are registered",
         "how many devices are currently registered",
         "total registered devices",
-        "total number of devices",
+        "total number of devices in hawaqm",
         "total devices in hawaqm",
         "how many devices in hawaqm",
         "how many sensors are registered",
@@ -4334,6 +4334,194 @@
         "method": "GET",
         "path": "/api/AirQuality/GetMoldReportsBySiteName?siteName={siteName}",
         "responseShape": "mold_reports"
+      }
+    },
+    {
+      "id": "sites_by_region_chart",
+      "description": "Show a chart (pie or bar) of how many sites/stations are in each region. Use when the user asks for a pie chart, bar chart, or count/distribution of sites broken down by region. Does NOT show AQI data — just site counts per region.",
+      "patterns": [
+        "pie chart of sites by region",
+        "pie chart showing sites in each region",
+        "pie chart showing number of sites in each region",
+        "number of sites in each region",
+        "sites per region pie chart",
+        "sites by region pie",
+        "bar chart of sites by region",
+        "bar chart showing sites in each region",
+        "sites per region bar chart",
+        "how many sites in each region",
+        "count of sites per region",
+        "site count by region",
+        "sites in each region chart",
+        "distribution of sites by region",
+        "breakdown of sites by region",
+        "sites across regions",
+        "sites per region",
+        "number of sites per region",
+        "chart of sites by region",
+        "chart showing number of sites in each region",
+        "sites breakdown by region"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [],
+      "responseType": "chart",
+      "chartType": "pie",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "sites_by_region_chart"
+      }
+    },
+    {
+      "id": "sites_by_sector_chart",
+      "description": "Show a chart (pie or bar) of how many sites/stations are in each sector. Use when the user asks for a pie chart, bar chart, or count/distribution of sites broken down by sector.",
+      "patterns": [
+        "pie chart of sites by sector",
+        "pie chart showing sites in each sector",
+        "sites per sector pie chart",
+        "sites by sector pie",
+        "bar chart of sites by sector",
+        "sites per sector bar chart",
+        "how many sites in each sector",
+        "count of sites per sector",
+        "site count by sector",
+        "sites in each sector chart",
+        "distribution of sites by sector",
+        "breakdown of sites by sector",
+        "sites per sector",
+        "number of sites per sector",
+        "chart of sites by sector",
+        "sites breakdown by sector"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [],
+      "responseType": "chart",
+      "chartType": "pie",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "sites_by_sector_chart"
+      }
+    },
+    {
+      "id": "aqi_by_region_chart",
+      "description": "Show a bar or pie chart of average AQI value per region. Use when the user asks for a chart/graph of AQI levels by region, AQI per region, or average AQI across regions.",
+      "patterns": [
+        "aqi by region chart",
+        "aqi per region chart",
+        "average aqi by region",
+        "average aqi per region",
+        "aqi chart by region",
+        "aqi bar chart by region",
+        "aqi pie chart by region",
+        "bar chart of aqi by region",
+        "bar chart of aqi per region",
+        "pie chart of aqi by region",
+        "aqi levels by region",
+        "aqi across regions chart",
+        "region aqi chart",
+        "region aqi bar chart",
+        "region aqi comparison",
+        "compare aqi across regions",
+        "aqi distribution by region"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "aqi_by_region_chart"
+      }
+    },
+    {
+      "id": "sites_by_status_chart",
+      "description": "Show a pie or bar chart of how many sites are Active vs Offline/Inactive. Use when the user asks for a chart of site status, active vs offline sites, or site availability breakdown.",
+      "patterns": [
+        "sites by status chart",
+        "site status chart",
+        "site status pie chart",
+        "site status bar chart",
+        "active vs offline sites",
+        "active vs inactive sites chart",
+        "pie chart of site status",
+        "bar chart of site status",
+        "how many sites are active vs offline",
+        "sites online vs offline chart",
+        "site availability chart",
+        "site availability breakdown",
+        "chart of active and inactive sites",
+        "distribution of site status",
+        "breakdown of sites by status"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [],
+      "responseType": "chart",
+      "chartType": "pie",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "sites_by_status_chart"
+      }
+    },
+    {
+      "id": "pollutant_by_sector_chart",
+      "description": "Show a bar chart of average pollutant (PM2.5, PM10, AQI, etc.) value per sector. Use when the user asks for a chart of pollutant levels by sector.",
+      "patterns": [
+        "pollutant by sector chart",
+        "pm2.5 by sector chart",
+        "pm10 by sector chart",
+        "aqi by sector chart",
+        "average pollutant by sector",
+        "average pm2.5 by sector",
+        "average aqi by sector",
+        "bar chart of pollutant by sector",
+        "bar chart of aqi by sector",
+        "pollutant levels by sector",
+        "pollutant across sectors",
+        "sector pollutant comparison",
+        "compare pollutant across sectors",
+        "aqi per sector chart",
+        "pm2.5 per sector chart",
+        "sector aqi bar chart",
+        "sector pollutant chart"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "required": false,
+          "description": "The pollutant parameter to chart (e.g. PM2.5, PM10, AQI Index). Defaults to AQI Index."
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "AirQuality API",
+      "skipSiteFilter": true,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "pollutant_by_sector_chart"
       }
     }
   ]

@@ -77,23 +77,12 @@ public sealed class ChatController : ControllerBase
         var session = await _sessionService.GetOrCreateSessionAsync(request.SessionId, user.UserId, ct);
         var history = await _sessionService.GetConversationHistoryAsync(session.SessionId, ct: ct);
 
-        // ── 2a. Enrich message with scope-bar context for routing and LLM ──
-        // When the user has a sector selected in the filter bar, append it to the message
-        // so the query router picks sector-aware templates (e.g. sites_by_sector) even when
-        // the user's phrasing doesn't mention the sector explicitly.
+        // ── 2a. Message enrichment ──────────────────────────────────────────
+        // Do NOT append scope filter-bar values to the message — the filter bar
+        // selections (region, sector) are only applied when the user explicitly
+        // mentions them in their question. Broad questions ("chart of all schools")
+        // should return all data regardless of what the filter bar shows.
         var enrichedMessage = request.Message;
-        if (!string.IsNullOrWhiteSpace(scope.Sector))
-        {
-            var sectorLower = scope.Sector.ToLowerInvariant();
-            if (!enrichedMessage.ToLowerInvariant().Contains(sectorLower))
-                enrichedMessage = $"{enrichedMessage} in the {scope.Sector} sector";
-        }
-        if (!string.IsNullOrWhiteSpace(scope.Region))
-        {
-            var regionLower = scope.Region.ToLowerInvariant();
-            if (!enrichedMessage.ToLowerInvariant().Contains(regionLower))
-                enrichedMessage = $"{enrichedMessage} in {scope.Region}";
-        }
 
         // ── 2a-ii. Follow-up reference resolution ──────────────────────────
         // When the user uses pronouns or positional references ("the above site",
@@ -412,7 +401,22 @@ public sealed class ChatController : ControllerBase
         bool hasParameterKeyword = parameterKeywords.Any(p => lowerMsg.Contains(p));
         bool hasAtSiteRef = hasAtSitePattern                          // "at <CapitalName>"
             || siteTypeWords.Any(s => lowerMsg.Contains(s));         // or "school", "site", etc.
-        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion;
+        // Exclude distribution/chart questions — "pie chart of schools by AQI category" is NOT a site reading lookup
+        var chartDistributionKeywords = new[] { "pie chart", "pie graph", "bar chart", "bar graph", "by aqi category", "by category", "distribution", "breakdown", "chart of schools", "chart of sites", "chart of devices" };
+        bool isChartDistribution = chartDistributionKeywords.Any(k => lowerMsg.Contains(k));
+        // Detect whether user asked for a bar chart (vs pie) so pre-checks can honour the request
+        bool userWantsBar = lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph");
+        // Schools AQI pie: only force schools_aqi_pie when the question is specifically about
+        // schools/sites broken down BY AQI category — NOT generic pie charts about regions/sectors/counts.
+        var aqiCategoryWords = new[] { "aqi category", "aqi level", "aqi categories", "aqi levels", "by category", "by aqi" };
+        var schoolSiteWords  = new[] { "school", "schools", "sites", "site" };
+        bool isSchoolsAqiPie = isChartDistribution
+            && aqiCategoryWords.Any(k => lowerMsg.Contains(k))
+            && schoolSiteWords.Any(k => lowerMsg.Contains(k));
+        // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
+        var deviceCountKeywords = new[] { "devices per site", "device per site", "devices at each site", "number of devices", "device count", "total devices", "devices in the application", "devices in the system" };
+        bool isDeviceCountQuestion = deviceCountKeywords.Any(k => lowerMsg.Contains(k));
+        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion && !isChartDistribution && !isDeviceCountQuestion;
 
         if (isParameterAtSiteQuestion)
         {
@@ -458,6 +462,307 @@ public sealed class ChatController : ControllerBase
                 }
                 // API failed — fall through to normal routing so user still gets a response
                 _log.Warning("ChatController: parameter-at-site pre-check API call failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre. Hard pre-check: schools-by-AQI-category pie → force schools_aqi_pie ──
+        // "Create a pie chart of schools by AQI category" scores 1.0 on schools_latest_pollutant
+        // because of the word "schools". Only intercept when BOTH a school/site word AND an AQI
+        // category word are present — generic pie charts (by region, sector, count) fall through
+        // to normal routing so the LLM can pick the right template.
+        if (isSchoolsAqiPie)
+        {
+            _log.Debug("ChatController: chart-distribution pre-check fired → forcing schools_aqi_pie");
+            var pieTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "schools_aqi_pie");
+            _log.Debug("ChatController: schools_aqi_pie template={Found} apiCall={HasApiCall} chartType={ChartType}",
+                pieTemplate?.Id ?? "(null)", pieTemplate?.ApiCall?.ResponseShape ?? "(null)", pieTemplate?.ChartType ?? "(null)");
+            if (pieTemplate is not null && pieTemplate.ApiCall is not null)
+            {
+                // Honour the user's chart-type preference (bar vs pie)
+                var effectiveSchoolChartType = userWantsBar ? "bar" : "pie";
+                pieTemplate.ChartType = effectiveSchoolChartType;
+
+                var pieBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var pieFillResult = await _azureAI.FillParametersAsync(request.Message, pieTemplate, history, scope, ct);
+                var pieApiResult = await _externalApi.CallAsync(pieTemplate.ApiCall, pieFillResult.Parameters, scope, pieBearerToken, user, pieTemplate.Id, ct);
+                if (pieApiResult.Success)
+                {
+                    var pieMsgId = Guid.NewGuid();
+                    var pieSummary = await _azureAI.SummarizeResultsAsync(request.Message, pieTemplate, pieApiResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: pieMsgId,
+                        assistantContent: pieSummary,
+                        sql: null,
+                        responseType: pieTemplate.ResponseType,
+                        chartType: effectiveSchoolChartType,
+                        chartDataJson: null,
+                        dataSource: pieTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: pieFillResult.ModelUsed,
+                        executionTimeMs: (int)pieApiResult.ExecutionTimeMs,
+                        tokenCount: pieFillResult.TokensUsed,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: pieMsgId,
+                        template: pieTemplate,
+                        llmSummary: pieSummary,
+                        rows: pieApiResult.Rows,
+                        rowCount: pieApiResult.Rows.Count,
+                        executionTimeMs: (int)pieApiResult.ExecutionTimeMs,
+                        scope: scope,
+                        modelUsed: pieFillResult.ModelUsed,
+                        tokenCount: pieFillResult.TokensUsed));
+                }
+                _log.Warning("ChatController: schools_aqi_pie API call failed (error='{Err}'), falling through to routing", pieApiResult.Error ?? "(null)");
+            }
+            else if (pieTemplate is null)
+            {
+                _log.Warning("ChatController: schools_aqi_pie template not found in permitted templates — falling through to routing");
+            }
+        }
+
+        // ── 2e-pre2. Hard pre-check: "pie/bar chart of sites by region" → force sites_by_region_chart ──
+        // "number of sites in each region" scores 1.0 on count_sites_in_region which requires regionName.
+        // Detect explicit chart request about sites grouped by region, with no AQI/category content.
+        var chartByRegionKeywords = new[] { "sites in each region", "sites per region", "sites by region", "number of sites in each region", "count of sites per region", "site count by region", "sites across regions", "breakdown of sites by region", "distribution of sites by region", "region bar graph", "region bar chart", "by region bar", "region pie chart", "region pie graph" };
+        bool isSitesByRegionChart = isChartDistribution && chartByRegionKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isSitesByRegionChart)
+        {
+            var effectiveChartType = userWantsBar ? "bar" : "pie";
+            _log.Debug("ChatController: sites-by-region chart pre-check fired → forcing sites_by_region_chart (chartType={Type})", effectiveChartType);
+            var regionChartTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_region_chart");
+            if (regionChartTemplate is not null && regionChartTemplate.ApiCall is not null)
+            {
+                regionChartTemplate.ChartType = effectiveChartType;
+                var regionBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var regionApiResult = await _externalApi.CallAsync(regionChartTemplate.ApiCall, new Dictionary<string, string>(), scope, regionBearerToken, user, regionChartTemplate.Id, ct);
+                if (regionApiResult.Success)
+                {
+                    var regionMsgId = Guid.NewGuid();
+                    var regionSummary = await _azureAI.SummarizeResultsAsync(request.Message, regionChartTemplate, regionApiResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: regionMsgId,
+                        assistantContent: regionSummary,
+                        sql: null,
+                        responseType: regionChartTemplate.ResponseType,
+                        chartType: effectiveChartType,
+                        chartDataJson: null,
+                        dataSource: regionChartTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: null,
+                        executionTimeMs: (int)regionApiResult.ExecutionTimeMs,
+                        tokenCount: 0,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: regionMsgId,
+                        template: regionChartTemplate,
+                        llmSummary: regionSummary,
+                        rows: regionApiResult.Rows,
+                        rowCount: regionApiResult.Rows.Count,
+                        executionTimeMs: (int)regionApiResult.ExecutionTimeMs,
+                        scope: scope,
+                        modelUsed: null,
+                        tokenCount: 0));
+                }
+                _log.Warning("ChatController: sites_by_region_chart API call failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre3. Hard pre-check: "pie/bar chart of sites by sector" → force sites_by_sector_chart ──
+        var chartBySectorKeywords = new[] { "sites in each sector", "sites per sector", "sites by sector", "number of sites in each sector", "count of sites per sector", "site count by sector", "breakdown of sites by sector", "distribution of sites by sector", "sector bar graph", "sector bar chart", "by sector bar", "sector pie chart", "sector pie graph" };
+        bool isSitesBySectorChart = isChartDistribution && chartBySectorKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isSitesBySectorChart)
+        {
+            _log.Debug("ChatController: sites-by-sector chart pre-check fired → forcing sites_by_sector_chart");
+            var sectorChartTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_sector_chart");
+            if (sectorChartTemplate is not null && sectorChartTemplate.ApiCall is not null)
+            {
+                var sectorBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var sectorApiResult = await _externalApi.CallAsync(sectorChartTemplate.ApiCall, new Dictionary<string, string>(), scope, sectorBearerToken, user, sectorChartTemplate.Id, ct);
+                if (sectorApiResult.Success)
+                {
+                    var sectorMsgId = Guid.NewGuid();
+                    var sectorSummary = await _azureAI.SummarizeResultsAsync(request.Message, sectorChartTemplate, sectorApiResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: sectorMsgId,
+                        assistantContent: sectorSummary,
+                        sql: null,
+                        responseType: sectorChartTemplate.ResponseType,
+                        chartType: sectorChartTemplate.ChartType,
+                        chartDataJson: null,
+                        dataSource: sectorChartTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: null,
+                        executionTimeMs: (int)sectorApiResult.ExecutionTimeMs,
+                        tokenCount: 0,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: sectorMsgId,
+                        template: sectorChartTemplate,
+                        llmSummary: sectorSummary,
+                        rows: sectorApiResult.Rows,
+                        rowCount: sectorApiResult.Rows.Count,
+                        executionTimeMs: (int)sectorApiResult.ExecutionTimeMs,
+                        scope: scope,
+                        modelUsed: null,
+                        tokenCount: 0));
+                }
+                _log.Warning("ChatController: sites_by_sector_chart API call failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre4. Hard pre-check: "AQI by region chart" → force aqi_by_region_chart ──
+        var aqiByRegionKeywords = new[] {
+            "aqi by region", "aqi per region", "average aqi by region", "average aqi per region",
+            "aqi chart by region", "aqi bar chart by region", "aqi pie chart by region",
+            "bar chart of aqi by region", "pie chart of aqi by region",
+            "aqi levels by region", "aqi across regions", "region aqi chart",
+            "region aqi bar", "region aqi comparison", "compare aqi across regions",
+            "aqi distribution by region"
+        };
+        bool isAqiByRegionChart = isChartDistribution && aqiByRegionKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isAqiByRegionChart)
+        {
+            _log.Debug("ChatController: aqi-by-region chart pre-check fired → forcing aqi_by_region_chart");
+            var aqiRegionTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "aqi_by_region_chart");
+            if (aqiRegionTemplate is not null && aqiRegionTemplate.ApiCall is not null)
+            {
+                var effectiveAqiRegionType = userWantsBar ? "bar" : (lowerMsg.Contains("pie") ? "pie" : "bar");
+                aqiRegionTemplate.ChartType = effectiveAqiRegionType;
+                var aqiRegionBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var aqiRegionResult = await _externalApi.CallAsync(aqiRegionTemplate.ApiCall, new Dictionary<string, string>(), scope, aqiRegionBearer, user, aqiRegionTemplate.Id, ct);
+                if (aqiRegionResult.Success)
+                {
+                    var aqiRegionMsgId = Guid.NewGuid();
+                    var aqiRegionSummary = await _azureAI.SummarizeResultsAsync(request.Message, aqiRegionTemplate, aqiRegionResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId, userContent: request.Message,
+                        assistantMessageId: aqiRegionMsgId, assistantContent: aqiRegionSummary,
+                        sql: null, responseType: aqiRegionTemplate.ResponseType,
+                        chartType: effectiveAqiRegionType, chartDataJson: null,
+                        dataSource: aqiRegionTemplate.TableUsed, dateRange: null,
+                        modelUsed: null, executionTimeMs: (int)aqiRegionResult.ExecutionTimeMs,
+                        tokenCount: 0, ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId, messageId: aqiRegionMsgId,
+                        template: aqiRegionTemplate, llmSummary: aqiRegionSummary,
+                        rows: aqiRegionResult.Rows, rowCount: aqiRegionResult.Rows.Count,
+                        executionTimeMs: (int)aqiRegionResult.ExecutionTimeMs,
+                        scope: scope, modelUsed: null, tokenCount: 0));
+                }
+                _log.Warning("ChatController: aqi_by_region_chart API call failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre5. Hard pre-check: "sites by status chart" → force sites_by_status_chart ──
+        var siteStatusKeywords = new[] {
+            "sites by status", "site status chart", "site status pie", "site status bar",
+            "active vs offline", "active vs inactive sites", "online vs offline sites",
+            "site availability chart", "breakdown of sites by status",
+            "distribution of site status", "active and inactive sites chart"
+        };
+        bool isSitesByStatusChart = isChartDistribution && siteStatusKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isSitesByStatusChart)
+        {
+            _log.Debug("ChatController: sites-by-status chart pre-check fired → forcing sites_by_status_chart");
+            var statusTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_status_chart");
+            if (statusTemplate is not null && statusTemplate.ApiCall is not null)
+            {
+                var effectiveStatusType = userWantsBar ? "bar" : "pie";
+                statusTemplate.ChartType = effectiveStatusType;
+                var statusBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var statusResult = await _externalApi.CallAsync(statusTemplate.ApiCall, new Dictionary<string, string>(), scope, statusBearer, user, statusTemplate.Id, ct);
+                if (statusResult.Success)
+                {
+                    var statusMsgId = Guid.NewGuid();
+                    var statusSummary = await _azureAI.SummarizeResultsAsync(request.Message, statusTemplate, statusResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId, userContent: request.Message,
+                        assistantMessageId: statusMsgId, assistantContent: statusSummary,
+                        sql: null, responseType: statusTemplate.ResponseType,
+                        chartType: effectiveStatusType, chartDataJson: null,
+                        dataSource: statusTemplate.TableUsed, dateRange: null,
+                        modelUsed: null, executionTimeMs: (int)statusResult.ExecutionTimeMs,
+                        tokenCount: 0, ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId, messageId: statusMsgId,
+                        template: statusTemplate, llmSummary: statusSummary,
+                        rows: statusResult.Rows, rowCount: statusResult.Rows.Count,
+                        executionTimeMs: (int)statusResult.ExecutionTimeMs,
+                        scope: scope, modelUsed: null, tokenCount: 0));
+                }
+                _log.Warning("ChatController: sites_by_status_chart API call failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre6. Hard pre-check: "pollutant by sector chart" → force pollutant_by_sector_chart ──
+        var pollBySectorKeywords = new[] {
+            "pollutant by sector", "pm2.5 by sector", "pm10 by sector", "aqi by sector",
+            "average pollutant by sector", "average pm2.5 by sector", "average aqi by sector",
+            "bar chart of pollutant by sector", "bar chart of aqi by sector",
+            "pollutant levels by sector", "pollutant across sectors",
+            "sector pollutant comparison", "compare pollutant across sectors",
+            "aqi per sector chart", "pm2.5 per sector", "sector aqi bar", "sector pollutant chart",
+            "sector aqi chart", "aqi chart by sector", "sector pollutant bar"
+        };
+        bool isPollutantBySectorChart = isChartDistribution && pollBySectorKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isPollutantBySectorChart)
+        {
+            _log.Debug("ChatController: pollutant-by-sector chart pre-check fired → forcing pollutant_by_sector_chart");
+            var pollSectorTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "pollutant_by_sector_chart");
+            if (pollSectorTemplate is not null && pollSectorTemplate.ApiCall is not null)
+            {
+                var effectivePollType = lowerMsg.Contains("pie") ? "pie" : "bar";
+                pollSectorTemplate.ChartType = effectivePollType;
+                var pollBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var pollFillResult = await _azureAI.FillParametersAsync(request.Message, pollSectorTemplate, history, scope, ct);
+                var pollResult = await _externalApi.CallAsync(pollSectorTemplate.ApiCall, pollFillResult.Parameters, scope, pollBearer, user, pollSectorTemplate.Id, ct);
+                if (pollResult.Success)
+                {
+                    var pollMsgId = Guid.NewGuid();
+                    var pollSummary = await _azureAI.SummarizeResultsAsync(request.Message, pollSectorTemplate, pollResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId, userContent: request.Message,
+                        assistantMessageId: pollMsgId, assistantContent: pollSummary,
+                        sql: null, responseType: pollSectorTemplate.ResponseType,
+                        chartType: effectivePollType, chartDataJson: null,
+                        dataSource: pollSectorTemplate.TableUsed, dateRange: null,
+                        modelUsed: pollFillResult.ModelUsed, executionTimeMs: (int)pollResult.ExecutionTimeMs,
+                        tokenCount: pollFillResult.TokensUsed, ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId, messageId: pollMsgId,
+                        template: pollSectorTemplate, llmSummary: pollSummary,
+                        rows: pollResult.Rows, rowCount: pollResult.Rows.Count,
+                        executionTimeMs: (int)pollResult.ExecutionTimeMs,
+                        scope: scope, modelUsed: pollFillResult.ModelUsed, tokenCount: pollFillResult.TokensUsed));
+                }
+                _log.Warning("ChatController: pollutant_by_sector_chart API call failed, falling through to routing");
             }
         }
 

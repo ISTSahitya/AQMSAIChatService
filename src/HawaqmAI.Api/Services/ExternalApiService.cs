@@ -566,8 +566,11 @@ public sealed class ExternalApiService : IExternalApiService
             // Optional sectorName (e.g. "Public & Govt-School") and regionName filters.
             if (apiCall.ResponseShape == "aqi_category_pie")
             {
-                var pieSector = llmParams.GetValueOrDefault("sectorName");
-                var pieRegion = llmParams.GetValueOrDefault("regionName");
+                // Use explicit LLM param first; fall back to filter-bar scope selection.
+                var pieSector = llmParams.GetValueOrDefault("sectorName")
+                             ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null);
+                var pieRegion = llmParams.GetValueOrDefault("regionName")
+                             ?? (!string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : null);
 
                 _log.Information("ExternalApiService: aqi_category_pie — sector='{Sec}' region='{Reg}'",
                     pieSector ?? "(none)", pieRegion ?? "(none)");
@@ -603,6 +606,182 @@ public sealed class ExternalApiService : IExternalApiService
 
                 _log.Information("ExternalApiService: aqi_category_pie → {Count} category slices", pieRows.Count);
                 return new ApiCallResult { Success = true, Rows = pieRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // sites_by_region_chart: count sites per region → {Region, Count} rows for pie/bar chart.
+            if (apiCall.ResponseShape == "sites_by_region_chart")
+            {
+                var allDevices2 = ParseDevicesFromJson(json);
+                if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+                    allDevices2 = allDevices2.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
+                // Apply scope sector filter (filter-bar selection) when no explicit param
+                var rgnScopeSector = llmParams.GetValueOrDefault("sectorName") ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null);
+                if (!string.IsNullOrWhiteSpace(rgnScopeSector))
+                    allDevices2 = allDevices2.Where(d => d.SectorName.Contains(rgnScopeSector, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                var regionRows = allDevices2
+                    .GroupBy(d => d.StationId)
+                    .Select(g => new { Region = g.First().RegionName ?? "Unknown" })
+                    .GroupBy(s => s.Region)
+                    .OrderByDescending(g => g.Count())
+                    .Select(g => new Dictionary<string, object?> { ["Region"] = g.Key, ["Count"] = g.Count() })
+                    .ToList();
+
+                _log.Information("ExternalApiService: sites_by_region_chart → {Count} regions (scopeSector={Sec})", regionRows.Count, rgnScopeSector ?? "(none)");
+                return new ApiCallResult { Success = true, Rows = regionRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // sites_by_sector_chart: count sites per sector → {Sector, Count} rows for pie/bar chart.
+            if (apiCall.ResponseShape == "sites_by_sector_chart")
+            {
+                var allDevices3 = ParseDevicesFromJson(json);
+                if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+                    allDevices3 = allDevices3.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
+                // Apply scope region filter (filter-bar selection) when no explicit param
+                var secScopeRegion = llmParams.GetValueOrDefault("regionName") ?? (!string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : null);
+                if (!string.IsNullOrWhiteSpace(secScopeRegion))
+                    allDevices3 = allDevices3.Where(d => d.RegionName.Contains(secScopeRegion, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                var sectorRows = allDevices3
+                    .GroupBy(d => d.StationId)
+                    .Select(g => new { Sector = g.First().SectorName ?? "Unknown" })
+                    .GroupBy(s => s.Sector)
+                    .OrderByDescending(g => g.Count())
+                    .Select(g => new Dictionary<string, object?> { ["Sector"] = g.Key, ["Count"] = g.Count() })
+                    .ToList();
+
+                _log.Information("ExternalApiService: sites_by_sector_chart → {Count} sectors (scopeRegion={Reg})", sectorRows.Count, secScopeRegion ?? "(none)");
+                return new ApiCallResult { Success = true, Rows = sectorRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // aqi_by_region_chart: average AQI Index per region → {Region, AQI} rows for bar/pie chart.
+            if (apiCall.ResponseShape == "aqi_by_region_chart")
+            {
+                var allDevicesAqi = ParseDevicesFromJson(json);
+                if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+                    allDevicesAqi = allDevicesAqi.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
+                // Apply scope sector filter
+                var aqiRgnScopeSector = llmParams.GetValueOrDefault("sectorName") ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null);
+                if (!string.IsNullOrWhiteSpace(aqiRgnScopeSector))
+                    allDevicesAqi = allDevicesAqi.Where(d => d.SectorName.Contains(aqiRgnScopeSector, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                // One row per station (take first device), then average AQI per region
+                var aqiByRegion = allDevicesAqi
+                    .GroupBy(d => d.StationId)
+                    .Select(g => new
+                    {
+                        Region = g.First().RegionName ?? "Unknown",
+                        Aqi    = g.First().Params.TryGetValue("AQI Index", out var v) ? v.Value : (double?)null
+                    })
+                    .Where(x => x.Aqi.HasValue)
+                    .GroupBy(x => x.Region)
+                    .OrderBy(g => g.Key)
+                    .Select(g => new Dictionary<string, object?>
+                    {
+                        ["Region"] = g.Key,
+                        ["AQI"]    = Math.Round(g.Average(x => x.Aqi!.Value), 1)
+                    })
+                    .ToList();
+
+                _log.Information("ExternalApiService: aqi_by_region_chart → {Count} regions", aqiByRegion.Count);
+                return new ApiCallResult { Success = true, Rows = aqiByRegion, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // sites_by_status_chart: count sites as Active vs Inactive vs No Data → {Status, Count} for pie/bar.
+            // Uses the same DB-based active logic as site_list_with_status (24h parameter reading window).
+            if (apiCall.ResponseShape == "sites_by_status_chart")
+            {
+                var stScopeRegion = llmParams.GetValueOrDefault("regionName") ?? (!string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : null);
+                var stScopeSector = llmParams.GetValueOrDefault("sectorName") ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null);
+
+                // Query stations from DB (same as site_list_with_status)
+                var stStationsSql = """
+                    SELECT s.ID AS StationId, r.RegionName, sec.SectorName
+                    FROM DMN_Stations s
+                    JOIN Regions r ON r.Id = s.RegionID
+                    LEFT JOIN Sectors sec ON sec.Id = s.SectorID
+                    WHERE ISNULL(s.IsDeleted,0) = 0
+                    """;
+                var stStationsResult = await _sqlExecutor.ExecuteAsync(stStationsSql, new Dictionary<string, object>(), ct);
+
+                // Active = any device with parameter reading within 24h or LastCommunicationTime within 10min
+                var stDeviceStatusSql = """
+                    SELECT
+                        d.StationID,
+                        MAX(CASE
+                            WHEN p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
+                            WHEN p.LastCommunicationTime     >= DATEADD(MINUTE, -10,   GETDATE()) THEN 1
+                            ELSE 0
+                        END) AS HasActiveDevice
+                    FROM DMN_Devices d
+                    LEFT JOIN (
+                        SELECT DeviceID,
+                               MAX(ParameterReadingUpdateTime) AS ParameterReadingUpdateTime,
+                               MAX(LastCommunicationTime)      AS LastCommunicationTime
+                        FROM DMN_Parameters
+                        GROUP BY DeviceID
+                    ) p ON p.DeviceID = d.DeviceId
+                    WHERE ISNULL(d.IsDeleted, 0) = 0
+                    GROUP BY d.StationID
+                    """;
+                var stDeviceResult = await _sqlExecutor.ExecuteAsync(stDeviceStatusSql, new Dictionary<string, object>(), ct);
+                var stActiveByStation = stDeviceResult.Rows
+                    .ToDictionary(r => Convert.ToInt32(r["StationID"]), r => Convert.ToInt32(r["HasActiveDevice"]) == 1);
+
+                var stAllRows = stStationsResult.Rows;
+                if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+                    stAllRows = stAllRows.Where(r => user.PermittedSiteIds.Contains(Convert.ToInt32(r["StationId"]))).ToList();
+                if (!string.IsNullOrWhiteSpace(stScopeRegion))
+                    stAllRows = stAllRows.Where(r => (r["RegionName"]?.ToString() ?? "").Contains(stScopeRegion, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (!string.IsNullOrWhiteSpace(stScopeSector))
+                    stAllRows = stAllRows.Where(r => (r["SectorName"]?.ToString() ?? "").Contains(stScopeSector, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                var statusRows = stAllRows
+                    .GroupBy(r => {
+                        var sid = Convert.ToInt32(r["StationId"]);
+                        if (stActiveByStation.TryGetValue(sid, out var active))
+                            return active ? "Active" : "Inactive";
+                        return "No Data";
+                    })
+                    .OrderByDescending(g => g.Key)
+                    .Select(g => new Dictionary<string, object?> { ["Status"] = g.Key, ["Count"] = g.Count() })
+                    .ToList();
+
+                _log.Information("ExternalApiService: sites_by_status_chart → {Count} status groups (region={Reg} sector={Sec})", statusRows.Count, stScopeRegion ?? "(none)", stScopeSector ?? "(none)");
+                return new ApiCallResult { Success = true, Rows = statusRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
+            // pollutant_by_sector_chart: average pollutant value per sector → {Sector, Value} rows for bar chart.
+            if (apiCall.ResponseShape == "pollutant_by_sector_chart")
+            {
+                var paramName = llmParams.GetValueOrDefault("parameterName") ?? "AQI Index";
+                var allDevicesPol = ParseDevicesFromJson(json);
+                if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+                    allDevicesPol = allDevicesPol.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
+                // Apply scope region filter
+                var polScopeRegion = llmParams.GetValueOrDefault("regionName") ?? (!string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : null);
+                if (!string.IsNullOrWhiteSpace(polScopeRegion))
+                    allDevicesPol = allDevicesPol.Where(d => d.RegionName.Contains(polScopeRegion, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                var polBySector = allDevicesPol
+                    .GroupBy(d => d.StationId)
+                    .Select(g => new
+                    {
+                        Sector = g.First().SectorName ?? "Unknown",
+                        Value  = g.First().Params.TryGetValue(paramName, out var pv) ? pv.Value : (double?)null
+                    })
+                    .Where(x => x.Value.HasValue)
+                    .GroupBy(x => x.Sector)
+                    .OrderBy(g => g.Key)
+                    .Select(g => new Dictionary<string, object?>
+                    {
+                        ["Sector"] = g.Key,
+                        ["Value"]  = Math.Round(g.Average(x => x.Value!.Value), 1)
+                    })
+                    .ToList();
+
+                _log.Information("ExternalApiService: pollutant_by_sector_chart → {Count} sectors for param={Param}", polBySector.Count, paramName);
+                return new ApiCallResult { Success = true, Rows = polBySector, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
             // mold_reports: parse GetMoldReportsBySiteName response → flat rows for table display.
@@ -1086,7 +1265,8 @@ public sealed class ExternalApiService : IExternalApiService
         string LastUpdated,
         Dictionary<string, (double Value, string Unit)> Params,
         string RegionName = "",
-        bool HasDevices = true);
+        bool HasDevices = true,
+        string SectorName = "");
 
     private static DeviceReading ParseDevice(JsonElement el)
     {
@@ -1098,6 +1278,10 @@ public sealed class ExternalApiService : IExternalApiService
         var regionName =
             (el.TryGetProperty("RegionName",  out var rn)  ? rn.GetString()  : null) ??
             (el.TryGetProperty("regionName",  out var rn2) ? rn2.GetString() : null) ??
+            "";
+        var sectorName =
+            (el.TryGetProperty("SectorName",  out var sn3) ? sn3.GetString() : null) ??
+            (el.TryGetProperty("sectorName",  out var sn4) ? sn4.GetString() : null) ??
             "";
         var deviceName  =
             (el.TryGetProperty("DeviceName",  out var dn)  ? dn.GetString()  : null) ??
@@ -1146,7 +1330,7 @@ public sealed class ExternalApiService : IExternalApiService
         // A site with no devices has an empty paramaterDtos array — exclude it from AQI aggregation
         var hasDevices = parameters.Count > 0;
 
-        return new DeviceReading(stationId, stationName, deviceName, isOnline, lastUpdated, parameters, regionName, hasDevices);
+        return new DeviceReading(stationId, stationName, deviceName, isOnline, lastUpdated, parameters, regionName, hasDevices, sectorName);
     }
 
     private static List<Dictionary<string, object?>> DeviceRows(List<DeviceReading> devices)

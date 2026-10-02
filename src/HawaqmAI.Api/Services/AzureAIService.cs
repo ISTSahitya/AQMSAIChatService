@@ -177,6 +177,56 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual totals from the data.
             """,
 
+        // Sites by region pie/bar — columns: Region, Count
+        ["sites_by_region_chart"] = """
+            Data columns: "Region" (region name), "Count" (number of sites in that region).
+            The chart below will visualise the distribution — write ONE short summary sentence only.
+            FORMAT: "Here is the breakdown of {TotalCount} site(s) across {N} region(s). The chart below shows the count per region."
+            {TotalCount} = sum of all Count values. {N} = number of rows.
+            NEVER list individual sites or regions in text — the chart handles that.
+            NEVER output placeholder text — always use actual totals from the data.
+            """,
+
+        // Sites by sector pie/bar — columns: Sector, Count
+        ["sites_by_sector_chart"] = """
+            Data columns: "Sector" (sector name), "Count" (number of sites in that sector).
+            The chart below will visualise the distribution — write ONE short summary sentence only.
+            FORMAT: "Here is the breakdown of {TotalCount} site(s) across {N} sector(s). The chart below shows the count per sector."
+            {TotalCount} = sum of all Count values. {N} = number of rows.
+            NEVER list individual sites or sectors in text — the chart handles that.
+            NEVER output placeholder text — always use actual totals from the data.
+            """,
+
+        // AQI by region bar/pie — columns: Region, AQI (average)
+        ["aqi_by_region_chart"] = """
+            Data columns: "Region" (region name), "AQI" (average AQI index for that region).
+            The chart below will visualise the AQI comparison — write ONE short summary sentence only.
+            FORMAT: "Here is the average AQI across {N} region(s). The chart below shows the AQI level per region."
+            {N} = number of rows.
+            NEVER list individual regions or values in text — the chart handles that.
+            NEVER output placeholder text — always use actual counts from the data.
+            """,
+
+        // Sites by status pie/bar — columns: Status (Active/Offline), Count
+        ["sites_by_status_chart"] = """
+            Data columns: "Status" (Active or Offline), "Count" (number of sites with that status).
+            The chart below will visualise the breakdown — write ONE short summary sentence only.
+            FORMAT: "Here is the current status breakdown across {TotalCount} site(s). The chart below shows Active vs Offline counts."
+            {TotalCount} = sum of all Count values.
+            NEVER list individual sites in text — the chart handles that.
+            NEVER output placeholder text — always use actual totals from the data.
+            """,
+
+        // Pollutant by sector bar — columns: Sector, Value (average pollutant)
+        ["pollutant_by_sector_chart"] = """
+            Data columns: "Sector" (sector name), "Value" (average pollutant value for that sector).
+            The chart below will visualise the comparison — write ONE short summary sentence only.
+            FORMAT: "Here is the average {ParameterName} across {N} sector(s). The chart below shows the value per sector."
+            {N} = number of rows. {ParameterName} = the pollutant name from the user's question (e.g. PM2.5, AQI).
+            NEVER list individual values in text — the chart handles that.
+            NEVER output placeholder text — always use actual counts from the data.
+            """,
+
         // All sites AQI summary — columns: Site Name, AQI, AQI Category
         ["site_aqi_all"] = """
             Write one short intro sentence only — the table below will show the full data.
@@ -1196,14 +1246,20 @@ public sealed class AzureAIService : IAzureAIService
             9d. If the user asks which device contributed most to the highest site AQI at a school or site last month (e.g. "which device contributed most to the highest site AQI at Al Saad Indian School last month?") → select "device_peak_aqi_contribution". Extract stationName only — the date range is always last month (hardcoded in SQL). NEVER select device_last_reading, compare_two_stations, or schools_latest_pollutant for this.
             9c. If the user asks to compare the two devices at a specific school or site for a specific month (e.g. "compare the two devices at Al Saad Indian School for September 2026", "device comparison at Al Naeem School for August") → select "compare_devices_monthly". Extract stationName (site/school name), month (as integer 1–12), and year (4-digit). NEVER select compare_two_stations or device_last_reading for this — those do not group by device per month.
             9b. If the user asks which sites had the HIGHEST average AQI last year, in a specific year, or wants a worst/most-polluted year-based ranking (e.g. "which 10 sites had the highest average AQI last year?", "top sites by AQI in 2024", "worst sites AQI 2023") → select "top_sites_aqi_yearly". Extract topN (default 10) and year (default: current year minus 1). If the user asks for LOWEST or BEST average AQI last year (cleanest, safest, best air quality) → select "bottom_sites_aqi_yearly" instead. NEVER select faq_answer, site_aqi_ranking, or highest_aqi_today for year-based AQI ranking questions.
-            10. If the user asks to LIST or SHOW devices under a SPECIFIC SITE or SCHOOL name (e.g. "devices under Al Naeem School", "devices at Al Saad Indian School and Al Bateen School") → select "devices_with_readings". Extract stationName as the site name or a keyword from it (e.g. "Al Naeem" or "Naeem"). If the user names MULTIPLE sites, join them with a space so the LIKE filter catches any partial match (e.g. stationName="Naeem Saad" won't work — instead extract the FIRST site name only; the user will see all devices grouped by site). NEVER select sites_by_sector or list_stations for device listing questions.
+            10. If the user asks to LIST, SHOW, or COUNT devices under a SPECIFIC SITE or SCHOOL name (e.g. "devices under Al Naeem School", "devices at Al Saad Indian School", "total number of devices in Al Reyada School", "how many devices does Al Reyada School have", "number of devices at Al Saad") → select "devices_with_readings". Extract stationName as the site name or a keyword from it. NEVER select list_devices (that returns system-wide total with no site filter) for site-specific device count questions. NEVER select sites_by_sector or list_stations for device listing questions.
             If the user asks about devices in a REGION or SECTOR only (no specific site name) → select "devices_by_filter". Extract regionName and/or sectorName. This also handles "how many active devices in Abu Dhabi" — extract statusFilter if active/inactive is mentioned.
             11. If the user asks to LIST or SHOW sites/stations across ALL regions (e.g. "give me the sites under all regions", "show sites region wise", "sites in each region", "all sites by region") → select "sites_all_regions". NEVER select sites_count_by_region (that only shows counts), schools_latest_pollutant, or sector_latest_pollutant for this.
             11e. If the user asks HOW MANY sites are in ALL THREE regions together (e.g. "how many sites are there in Abu Dhabi, Al Ain and Al Dhafra?", "how many sites in Abu Dhabi, Al Ain and Al Dhafra", "total sites in all three regions") → select "sites_count_by_region". No params needed — it returns counts for all regions. NEVER select count_sites_in_region (that takes a single regionName and would need to run 3 times). NEVER select sites_all_regions (that lists site names, not counts).
             11a. If the user asks how many SECTORS exist, what sectors are in HAWAQM, or list of sectors (with NO specific sector name) → select "list_sectors". NEVER select sites_count_by_sector (that shows sites per sector, not the sector list).
             11b. If the user asks how many SUB-SECTORS exist, what sub-sectors are in HAWAQM, or list of sub-sectors → select "list_subsectors". NEVER select sites_by_sector or list_sectors for sub-sector questions.
             11c. If the user asks for a PIE CHART or DONUT CHART or DISTRIBUTION CHART of sites or schools by AQI category (e.g. "create a pie chart of schools by their current AQI category", "show me a pie chart of AQI distribution", "AQI category breakdown as a pie chart") → select "schools_aqi_pie". If the user mentions "schools" or "school sites", extract sectorName="Public & Govt-School". If a region is mentioned, extract regionName. NEVER select site_aqi_by_category or site_aqi_all for pie/donut/distribution chart questions.
-            11d. If the user asks about DEVICES PER SITE — including:
+            11c-ii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each REGION (e.g. "pie chart of sites by region", "how many sites per region as a chart", "show number of sites in each region") → select "sites_by_region_chart". No parameters needed.
+            11c-iii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each SECTOR (e.g. "pie chart of sites by sector", "how many sites per sector as a chart", "show number of sites in each sector") → select "sites_by_sector_chart". No parameters needed.
+            11c-iv. If the user asks for a chart of AVERAGE AQI by REGION (e.g. "bar chart of AQI by region", "average AQI per region chart", "AQI comparison across regions") → select "aqi_by_region_chart". No parameters needed.
+            11c-v. If the user asks for a chart of SITE STATUS (Active vs Offline/Inactive) (e.g. "pie chart of site status", "active vs offline sites chart", "site availability breakdown") → select "sites_by_status_chart". No parameters needed.
+            11c-vi. If the user asks for a chart of a POLLUTANT or AQI by SECTOR (e.g. "bar chart of PM2.5 by sector", "average AQI by sector", "pollutant levels per sector") → select "pollutant_by_sector_chart". Extract parameterName (e.g. "PM2.5", "PM10", "AQI Index"). Default to "AQI Index" if not specified.
+            11d. If the user asks about TOTAL DEVICES or DEVICES PER SITE across ALL sites (e.g. "total number of devices per site in the application", "how many devices does each site have", "device count per site", "total devices across all sites") — even without naming a specific site — select "site_device_summary". No parameters needed. NEVER select site_aqi_single for this type of question.
+            11d-i. If the user asks about DEVICES PER SITE — including:
               - Sites with no/zero devices ("which sites don't have any devices", "sites without devices", "sites with no devices")
               - Sites with more/fewer than N devices ("sites with more than 2 devices", "sites with at least 1 device")
               - Active/inactive device count per site ("active and inactive devices per site", "device status per site")
