@@ -51,10 +51,10 @@ public sealed class UserSiteService : IUserSiteService
 
             if (groupId is null)
             {
-                _log.Warning("UserSiteService: no active user found for UserId={UserId}", userId);
-                var empty = new List<int>();
-                _cache.Set(cacheKey, empty, CacheDuration);
-                return empty;
+                _log.Warning("UserSiteService: no active user found for UserId={UserId} — returning deny-all sentinel [-1]", userId);
+                var deny = new List<int> { -1 };
+                _cache.Set(cacheKey, deny, CacheDuration);
+                return deny;
             }
 
             // Step 2: get all StationIDs assigned to that group
@@ -73,10 +73,11 @@ public sealed class UserSiteService : IUserSiteService
         }
         catch (Exception ex)
         {
-            _log.Error(ex, "UserSiteService: failed to resolve sites for UserId={UserId}", userId);
-            // Return empty on failure — RBAC will treat as all-sites-access.
-            // Log is sufficient; don't break the request.
-            return new List<int>();
+            _log.Error(ex, "UserSiteService: failed to resolve sites for UserId={UserId} — returning deny-all sentinel [-1]", userId);
+            // Return sentinel [-1] so HasAllSitesAccess stays false and every downstream
+            // filter fires with a site ID that can never match a real station.
+            // An empty list would set HasAllSitesAccess=true, granting full access on DB failure.
+            return new List<int> { -1 };
         }
     }
 }

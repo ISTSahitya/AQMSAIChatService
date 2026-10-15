@@ -42,4 +42,11 @@ public sealed class AzureAIOptions
 
     /// <summary>Temperature for LLM responses (lower = more deterministic).</summary>
     public double Temperature { get; set; } = 0.1;
+
+    /// <summary>Per-call timeout in seconds for each individual LLM API request.
+    /// If Azure AI does not respond within this window, the call is cancelled and retried.</summary>
+    public int LlmTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>Number of LLM call retries before giving up and returning a timeout error.</summary>
+    public int MaxRetryAttempts { get; set; } = 2;
 }

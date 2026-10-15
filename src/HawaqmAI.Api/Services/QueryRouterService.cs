@@ -103,6 +103,10 @@ public sealed class QueryRouterService : IQueryRouterService
         _log.Debug("Query routing: question='{Q}', best='{Id}' score={Score:F2}",
             question[..Math.Min(80, question.Length)], best.Template?.Id, best.Score);
 
+        // Debug: log top-5 candidates to diagnose routing decisions
+        var top5 = scored.Take(5).Select(x => $"{x.Template?.Id}={x.Score:F4}");
+        _log.Debug("Top-5 candidates: {Candidates}", string.Join(", ", top5));
+
         if (best.Score >= high)
         {
             return new QueryRouterResult
@@ -291,7 +295,7 @@ public sealed class QueryRouterService : IQueryRouterService
         "abu dhabi schools", "al ain schools", "al dhafra schools", "abudhabi schools",
         "alain schools", "aldhafra schools", "show me schools", "table of schools",
         "list schools", "schools air quality", "school sites", "school co2", "school aqi",
-        "schools latest", "latest co2 reading", "latest aqi", "latest pm"
+        "schools latest", "latest co2 reading"
     ];
 
     /// <summary>
@@ -302,7 +306,22 @@ public sealed class QueryRouterService : IQueryRouterService
         SiteNameIndicators.Any(indicator => lowerQuestion.Contains(indicator));
 
     // Words that indicate a device status check (not an FAQ about rules)
-    private static readonly string[] DeviceStatusKeywords = ["active", "inactive", "online", "offline", "working", "sending"];
+    private static readonly string[] DeviceStatusKeywords = [
+        "active", "inactive", "online", "offline", "working", "sending", "send", "status",
+        "last send", "last report", "last active", "last update", "last transmit",
+        "last measured", "last data", "last communicated", "most recent data",
+        "most recent transmission", "recent data transmission", "last report"
+    ];
+
+    // Shared compiled regex for specific-date detection (ISO, slash, month-name, year-only, relative)
+    private static readonly System.Text.RegularExpressions.Regex _specificDateRegex =
+        new System.Text.RegularExpressions.Regex(
+            @"(yesterday|last\s+night|last\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|" +
+            @"jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|aug(ust)?|sep(tember)?|oct(ober)?|nov(ember)?|dec(ember)?|" +
+            @"\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}|\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}|" +
+            @"\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|" +
+            @"in\s+20\d{2}|on\s+20\d{2}|20\d{2})",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private static double ScoreTemplate(ApprovedQuery template, HashSet<string> questionTokens, string originalQuestion)
     {
@@ -310,6 +329,12 @@ public sealed class QueryRouterService : IQueryRouterService
 
         double maxScore = 0;
         var lowerQuestion = originalQuestion.ToLowerInvariant();
+
+        // Hard override: live-data site templates must never win when a specific past date is mentioned.
+        // Site historical data must always route to site_daily_averages / site_single_parameter_reading.
+        var liveOnlySiteTemplates = new[] { "site_aqi_single", "site_readings_all", "main_pollutant_at_station" };
+        if (liveOnlySiteTemplates.Contains(template.Id) && _specificDateRegex.IsMatch(lowerQuestion))
+            return 0.0;
 
         // Detect if question contains a pollutant parameter token
         bool questionHasPollutant = questionTokens.Any(t => PollutantTokens.Contains(t));
@@ -390,13 +415,56 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore = Math.Max(maxScore, 0.92);
         }
 
+        // Boost device_status decisively when device name + status/timestamp question word is present.
+        // Must beat offline_devices/online_devices which can score 0.95 via substring match.
+        // Also covers "when did X last send/report/update" — timestamp questions about a specific device.
+        if (template.Id == "device_status"
+            && QuestionHasDeviceName(lowerQuestion)
+            && DeviceStatusKeywords.Any(k => lowerQuestion.Contains(k)))
+        {
+            maxScore = Math.Max(maxScore, 0.97);
+        }
+
+        // Penalise device_info for "last send/report/update/active" questions with a device name —
+        // those are timestamp questions that device_status answers, not metadata questions.
+        var lastTimestampPhrases = new[] {
+            "last send", "last report", "last active", "last update", "last transmit",
+            "last measured", "last data", "last communicated", "most recent data",
+            "most recent transmission", "when did", "when was"
+        };
+        if (template.Id == "device_info"
+            && QuestionHasDeviceName(lowerQuestion)
+            && lastTimestampPhrases.Any(p => lowerQuestion.Contains(p)))
+        {
+            maxScore *= 0.1;
+        }
+
+        // Boost devices_with_readings when a site/school name is present + device listing intent.
+        // Covers: "which devices are installed at X", "list devices for X", "how many devices does X have"
+        var deviceAtSitePhrases = new[] {
+            "devices at", "devices for", "devices installed at", "devices under",
+            "sensors at", "sensors for", "sensors installed at", "sensors under",
+            "devices available at", "list devices", "which devices are",
+            "how many devices does", "how many devices at", "how many sensors does",
+            "what devices are", "what sensors are", "device count at", "device count for"
+        };
+        bool isDeviceAtSiteQuestion = deviceAtSitePhrases.Any(p => lowerQuestion.Contains(p))
+            && !QuestionHasDeviceName(lowerQuestion)
+            && (QuestionHasSiteName(lowerQuestion) || lowerQuestion.Contains("school") || lowerQuestion.Contains("site") || lowerQuestion.Contains("station"));
+
+        if (template.Id == "devices_with_readings" && isDeviceAtSiteQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // Penalise list_devices (system-wide count, admin only) for site-specific device questions
+        if (template.Id == "list_devices" && isDeviceAtSiteQuestion)
+            maxScore *= 0.05;
+
         // Route device_info when question has device name + metadata keywords (site/region/sector/deployed etc.)
         var deviceMetaKeywords = new[] {
             "which site", "what site", "site name", "which station", "what station",
             "which region", "what region", "which sector", "what sector",
-            "deployed", "created", "installed", "when was", "registration date",
+            "deployed", "created", "installed", "registration date",
             "device model", "device type", "details", "info about", "tell me about",
-            "last measured time", "last data time", "last measurement time",
             "where is", "belong to"
         };
         if (template.Id == "device_info"
@@ -445,9 +513,15 @@ public sealed class QueryRouterService : IQueryRouterService
         var currentReadingWords = new[] { "current", "now", "latest", "live", "right now", "at this moment", "today's reading", "present" };
         bool isCurrentReading = currentReadingWords.Any(w => lowerQuestion.Contains(w));
 
-        // Detect specific date mentions (e.g. "11-aug-2026", "2026-08-11", "yesterday", "on monday")
+        // Detect specific date mentions in any common format:
+        // "2026-09-25", "25/09/2026", "25-09-2026", "Sep 25", "25 Sep 2026",
+        // "yesterday", "last Monday", "on the 25th", year-only "in 2025"
         var hasSpecificDate = System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
-            @"\b(yesterday|last\s+night|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})\b");
+            @"\b(yesterday|last\s+night|last\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)|" +
+            @"jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|jun(e)?|jul(y)?|aug(ust)?|sep(tember)?|oct(ober)?|nov(ember)?|dec(ember)?|" +
+            @"\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}|\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}|" +
+            @"\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|" +
+            @"in\s+20\d{2}|on\s+20\d{2}|20\d{2})\b");
         // Detect specific time mentions (e.g. "2:02am", "4am", "13:00")
         var hasSpecificTime = System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
             @"\b(\d{1,2}:\d{2}\s*(am|pm)?|\d{1,2}\s*(am|pm))\b");
@@ -493,6 +567,15 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.02;
         }
 
+        // Penalise offline_devices and online_devices when a specific device name is present —
+        // those templates list ALL offline/online devices with no per-device filter.
+        // A question like "Is SEI100M 0008 active or inactive?" must route to device_status.
+        if ((template.Id == "offline_devices" || template.Id == "online_devices")
+            && QuestionHasDeviceName(lowerQuestion))
+        {
+            maxScore *= 0.02;
+        }
+
         // Penalise ALL device templates when there is NO device name in the question —
         // without a BA/SEI100M code the device templates cannot resolve and will error.
         var deviceTemplates = new[] {
@@ -517,14 +600,22 @@ public sealed class QueryRouterService : IQueryRouterService
         if (template.Id == "site_aqi_all" && hasSiteName)
             maxScore *= 0.02;
 
+
         // Boost site_aqi_single when the question contains a specific site name and asks for AQI or readings.
         // Generic school questions (e.g. "Abu Dhabi schools CO2") must NOT trigger this boost —
         // they route to schools_latest_pollutant instead.
         bool isAqiOrReadingQuestion = lowerQuestion.Contains("aqi") || lowerQuestion.Contains("air quality")
             || lowerQuestion.Contains("reading") || lowerQuestion.Contains("co2")
             || lowerQuestion.Contains("pm2.5") || lowerQuestion.Contains("pm10")
-            || lowerQuestion.Contains("temperature") || lowerQuestion.Contains("humidity");
-        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion)
+            || lowerQuestion.Contains("temperature") || lowerQuestion.Contains("humidity")
+            || lowerQuestion.Contains("categor") || lowerQuestion.Contains("fall under")
+            || lowerQuestion.Contains("good or bad") || lowerQuestion.Contains("bad or good")
+            || lowerQuestion.Contains("how is the air") || lowerQuestion.Contains("tell me the air")
+            || lowerQuestion.Contains("air quality today") || lowerQuestion.Contains("quality today")
+            || lowerQuestion.Contains("current air") || lowerQuestion.Contains("air today");
+        // Do NOT boost site_aqi_single when a past date is present — historical site data
+        // must route to site_daily_averages / site_single_parameter_reading instead.
+        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion && !hasSpecificDate)
             maxScore = Math.Max(maxScore, 0.96);
 
         // Boost schools_latest_pollutant for generic school questions with a pollutant signal.
@@ -545,6 +636,11 @@ public sealed class QueryRouterService : IQueryRouterService
         // Penalise site_aqi_all when a region keyword is present — region queries must go to region_aqi_geographical
         if (template.Id == "site_aqi_all" && hasRegionKeyword && isAqiQuestion && !hasSiteName)
             maxScore *= 0.1;
+
+        // Penalise site_aqi_single when the question mentions a region explicitly —
+        // "Abu Dhabi region", "Al Ain region" etc. are region queries, not named-site queries.
+        if (template.Id == "site_aqi_single" && hasRegionKeyword && !hasSiteName)
+            maxScore *= 0.05;
 
         // Boost list_stations / sites_filtered when question asks for a SITE LIST (not readings).
         // "what are the sites under X", "sites in X and Y", "sites under X region" etc.
@@ -953,6 +1049,15 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.02;
         }
 
+        // Penalise schools_latest_pollutant when the question mentions a region + AQI but
+        // has NO school/sector context — it's a regional AQI question, not a school query.
+        if (template.Id == "schools_latest_pollutant"
+            && hasRegionKeyword && isAqiQuestion
+            && !lowerQuestion.Contains("school") && !lowerQuestion.Contains("sector"))
+        {
+            maxScore *= 0.02;
+        }
+
         // Penalise schools_latest_pollutant when the question contains a NUMERIC AQI threshold —
         // "how many schools have an AQI above 30" is a filter question → site_aqi_by_category.
         // schools_latest_pollutant returns all schools' raw readings, not filtered by threshold.
@@ -1110,6 +1215,67 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
+        // Boost priority_hotspots for any question about critical/hotspot sites or their count.
+        // These always want the list (which also gives the count) — never just the stats number.
+        var hotspotCriticalPhrases = new[] {
+            "hotspot", "critical site", "critical air quality", "critical air-quality",
+            "any critical", "total critical", "number of critical", "how many critical",
+            "how many hotspot", "critical category", "classified as critical",
+            "currently critical", "critical right now", "critical today"
+        };
+        bool isHotspotCriticalQuestion = hotspotCriticalPhrases.Any(p => lowerQuestion.Contains(p));
+
+        if (template.Id == "priority_hotspots" && isHotspotCriticalQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // Penalise data_success_rate when the user wants critical site NAMES or a count of hotspots —
+        // data_success_rate only returns a number, not the list. priority_hotspots returns both.
+        if (template.Id == "data_success_rate" && isHotspotCriticalQuestion
+            && !lowerQuestion.Contains("dsr") && !lowerQuestion.Contains("data success")
+            && !lowerQuestion.Contains("data availability") && !lowerQuestion.Contains("active device"))
+            maxScore *= 0.1;
+
+        // Boost highest_aqi_today for "worst/highest AQI right now / currently" questions —
+        // these ask for the single site with the peak AQI at this moment, not a category filter.
+        var highestAqiNowPhrases = new[] {
+            "worst aqi", "highest aqi", "most polluted site", "worst air quality",
+            "highest air quality index", "peak aqi", "maximum aqi", "max aqi",
+            "aqi at its worst", "aqi currently worst", "currently worst",
+            "currently highest", "currently reporting the highest", "identify the site with the highest",
+            "identify the site with the worst", "where is the aqi highest", "where is the aqi worst",
+            "where is air quality worst"
+        };
+        bool isHighestAqiNow = highestAqiNowPhrases.Any(p => lowerQuestion.Contains(p))
+            && (lowerQuestion.Contains("site") || lowerQuestion.Contains("location") || lowerQuestion.Contains("where") || lowerQuestion.Contains("which"))
+            && !isYearlyAqiRanking && !isWorstMonth && !isRegionTrend && !isRegionSingleYear;
+
+        if (template.Id == "highest_aqi_today" && isHighestAqiNow)
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // Boost lowest_aqi_today for "best/lowest/cleanest AQI right now / currently" questions —
+        // these ask for the single site with the lowest AQI at this moment, not a category filter.
+        var lowestAqiNowPhrases = new[] {
+            "lowest aqi", "best aqi", "cleanest site", "best air quality", "least polluted site",
+            "lowest air quality level", "best air today", "best air right now",
+            "currently lowest", "currently best", "currently reporting the lowest",
+            "currently reporting the best", "identify the site with the lowest",
+            "identify the site with the best", "where is the aqi lowest", "where is the aqi best",
+            "where is air quality best", "recording the best air quality"
+        };
+        bool isLowestAqiNow = lowestAqiNowPhrases.Any(p => lowerQuestion.Contains(p))
+            && (lowerQuestion.Contains("site") || lowerQuestion.Contains("location") || lowerQuestion.Contains("where") || lowerQuestion.Contains("which"))
+            && !isYearlyAqiRanking && !isWorstMonth && !isRegionTrend && !isRegionSingleYear;
+
+        if (template.Id == "lowest_aqi_today" && isLowestAqiNow)
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // Penalise site_aqi_by_category for "which single site is worst/highest/best/lowest right now" —
+        // these are point queries, not category-grouped lists.
+        if (template.Id == "site_aqi_by_category" && (isHighestAqiNow || isLowestAqiNow)
+            && !lowerQuestion.Contains("unhealthy") && !lowerQuestion.Contains("hazardous")
+            && !lowerQuestion.Contains("good") && !lowerQuestion.Contains("moderate"))
+            maxScore *= 0.1;
+
         // Boost priority_hotspots when user asks for the hotspot site LIST (not just count).
         var hotspotListPhrases = new[] {
             "priority hotspot", "priority hotspots", "what are the hotspots", "show hotspots",
@@ -1132,6 +1298,79 @@ public sealed class QueryRouterService : IQueryRouterService
         if (isHotspotList && template.Id is "data_success_rate" or "site_aqi_by_category" or "faq_answer")
             maxScore *= 0.05;
 
+        // Boost active_device_count for "how many devices are online/active" questions —
+        // these are count-only questions that must NOT route to data_success_rate (which returns DSR stats)
+        // or online_devices (which lists devices). Respects user's site/region scope filter.
+        var activeDeviceCountPhrases = new[] {
+            "how many devices are online", "how many devices are active", "how many devices online",
+            "how many active devices", "how many online devices", "how many devices currently",
+            "how many sensors are online", "how many sensors are active", "how many sensors online",
+            "devices online at the moment", "devices active at the moment",
+            "tell me how many devices", "can you tell me how many devices",
+            "active devices count", "active device count", "device online count", "device active count",
+            "devices online count", "devices active count", "number of active devices", "number of online devices",
+            "count of active devices", "count active devices", "total active devices", "total online devices"
+        };
+        bool isActiveDeviceCountQuestion = activeDeviceCountPhrases.Any(p => lowerQuestion.Contains(p))
+            && !lowerQuestion.Contains("dsr") && !lowerQuestion.Contains("data success")
+            && !lowerQuestion.Contains("which device") && !lowerQuestion.Contains("list device")
+            && !lowerQuestion.Contains("show device") && !lowerQuestion.Contains("show me device");
+
+        if (template.Id == "active_device_count" && isActiveDeviceCountQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // Penalise data_success_rate for pure active-device count questions — that template returns DSR %,
+        // not a device count. active_device_count returns the count directly from the DB with scope filter.
+        if (template.Id == "data_success_rate" && isActiveDeviceCountQuestion
+            && !lowerQuestion.Contains("dsr") && !lowerQuestion.Contains("data success")
+            && !lowerQuestion.Contains("data availability") && !lowerQuestion.Contains("compliance"))
+            maxScore *= 0.1;
+
+        // Penalise online_devices for count-only questions — that template returns a list, not a count.
+        if (template.Id == "online_devices" && isActiveDeviceCountQuestion)
+            maxScore *= 0.1;
+
+        // Boost devices_by_model_chart for device model distribution chart questions
+        var deviceModelChartPhrases = new[] {
+            "distribution of devices by model", "devices by model", "device model distribution",
+            "device model breakdown", "device model pie", "device model bar",
+            "chart of device models", "devices grouped by model", "devices based on the model",
+            "how many devices of each model", "devices by type", "device type distribution"
+        };
+        bool isDeviceModelChart = (deviceModelChartPhrases.Any(p => lowerQuestion.Contains(p))
+            || (lowerQuestion.Contains("device") && lowerQuestion.Contains("model")
+                && (lowerQuestion.Contains("pie") || lowerQuestion.Contains("bar") || lowerQuestion.Contains("chart") || lowerQuestion.Contains("distribution"))));
+        if (template.Id == "devices_by_model_chart" && isDeviceModelChart)
+            maxScore = Math.Max(maxScore, 0.97);
+        if (template.Id != "devices_by_model_chart" && isDeviceModelChart)
+            maxScore *= 0.05;
+
+        // Boost sites_by_subsector_chart for school subsector / type-of-school chart questions
+        var subsectorChartPhrases = new[] {
+            "school subsector", "subsector chart", "type of school", "private and public school",
+            "private vs public school", "school type distribution", "subsectors pie", "subsectors bar",
+            "pie chart based on school subsector", "pie chart based on type of school",
+            "plot pie chart based on school", "plot a pie chart based on school"
+        };
+        bool isSubsectorChart = subsectorChartPhrases.Any(p => lowerQuestion.Contains(p))
+            && (lowerQuestion.Contains("pie") || lowerQuestion.Contains("bar") || lowerQuestion.Contains("chart") || lowerQuestion.Contains("plot"));
+        if (template.Id == "sites_by_subsector_chart" && isSubsectorChart)
+            maxScore = Math.Max(maxScore, 0.97);
+        if (template.Id != "sites_by_subsector_chart" && isSubsectorChart)
+            maxScore *= 0.05;
+
+        // Boost sites_aqi_level_chart for AQI level distribution chart questions
+        var aqiLevelChartPhrases = new[] {
+            "sites based on aqi level", "aqi level distribution", "sites by aqi level",
+            "aqi level chart", "aqi level pie", "aqi level bar", "sites aqi level"
+        };
+        bool isAqiLevelChart = aqiLevelChartPhrases.Any(p => lowerQuestion.Contains(p))
+            && (lowerQuestion.Contains("pie") || lowerQuestion.Contains("bar") || lowerQuestion.Contains("chart") || lowerQuestion.Contains("distribution"));
+        if (template.Id == "sites_aqi_level_chart" && isAqiLevelChart)
+            maxScore = Math.Max(maxScore, 0.97);
+        if (template.Id != "sites_aqi_level_chart" && isAqiLevelChart)
+            maxScore *= 0.05;
+
         // Boost mold_reports for any question about mold tests, biological reports, or mold status.
         var moldPhrases = new[] {
             "mold report", "mold test", "mold status", "biological report", "biological test",
@@ -1143,10 +1382,91 @@ public sealed class QueryRouterService : IQueryRouterService
         if (template.Id != "mold_reports" && isMoldQuestion)
             maxScore *= 0.05;
 
-        // Penalise ALL SQL templates (not faq_answer) when the question asks about
-        // historical site-level data — HAWAQM does not store historical site-level records.
-        // Historical questions must route to faq_answer which returns a "not available" response.
-        if (template.Id != "faq_answer" && IsHistoricalSiteLevelQuestion(lowerQuestion))
+        // Shared: named-site detection (used by both complex-query boosts and site_daily_averages boost below)
+        bool isNamedSiteQuestion = hasSiteName || NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k));
+
+        // ── indoor_source_analysis: pollutant source (indoor vs outdoor) over a date range ──────
+        // Signals: source/indoor/bakhoor/cooking phrase + any pollutant name + date range
+        var indoorSourcePhrases = new[] {
+            "more likely coming from", "coming from indoors", "coming from outdoor",
+            "indoor source", "outdoor source", "source analysis", "pm2.5 source",
+            "pm10 source", "co2 source", "co source", "no2 source", "tvoc source",
+            "bakhoor", "cooking", "incense", "indoor dust", "outdoor dust",
+            "indoor or outdoor", "indoors or outdoor", "from indoor", "from outdoor",
+            "is the pm2.5", "is the pm10", "is the co2", "is the co ",
+            "source of pm2.5", "source of pm10", "source of co2", "source of the pollutant",
+            "what is causing elevated", "indoor outdoor ratio for"
+        };
+        var indoorSourcePollutants = new[] {
+            "pm2.5", "pm 2.5", "pm10", "pm 10", "co2", "co₂", "co ", "no2", "no₂",
+            "so2", "so₂", "o3", "o₃", "tvoc", "voc", "ch2o", "formaldehyde"
+        };
+        bool isIndoorSourceAnalysis = indoorSourcePhrases.Any(p => lowerQuestion.Contains(p))
+            && indoorSourcePollutants.Any(p => lowerQuestion.Contains(p))
+            && (lowerQuestion.Contains("from") || lowerQuestion.Contains("over the last") || lowerQuestion.Contains("between") || lowerQuestion.Contains("period"));
+
+        if (template.Id == "indoor_source_analysis" && isIndoorSourceAnalysis)
+            maxScore = 1.0; // always wins — unambiguous signal
+
+        if (template.Id != "indoor_source_analysis" && isIndoorSourceAnalysis)
+            maxScore *= 0.02; // crush every competitor
+
+        // ── dust_event_response: how indoor AQ responded during a dust event on a specific date ──
+        var dustEventPhrases = new[] {
+            "dust event", "dust storm", "sandstorm", "sand storm",
+            "respond during", "responded during", "response during",
+            "during the dust", "during a dust"
+        };
+        bool isDustEventResponse = dustEventPhrases.Any(p => lowerQuestion.Contains(p))
+            && isNamedSiteQuestion;
+
+        if (template.Id == "dust_event_response" && isDustEventResponse)
+            maxScore = 1.0; // always wins — unambiguous signal
+
+        if (template.Id != "dust_event_response" && isDustEventResponse)
+            maxScore *= 0.02; // crush every competitor
+
+        // SiteParameterAverages templates handle all historical site-level data.
+        // When user mentions a past date (specific date, year, or past phrase) + site reference,
+        // force route to site average templates and block all live-data templates.
+        var siteAvgTemplates = new HashSet<string>
+        {
+            "site_daily_averages", "site_single_parameter_reading",
+            "site_compare_two_sites", "site_monthly_averages",
+            "site_yearly_averages", "site_parameter_trend"
+        };
+        var liveDataTemplates = new HashSet<string>
+        {
+            "site_aqi_single", "site_readings_all", "site_aqi_all",
+            "site_aqi_by_category", "main_pollutant_at_station", "faq_answer"
+        };
+        bool isHistoricalSite = IsHistoricalSiteLevelQuestion(lowerQuestion);
+
+        // Hard-penalize live-data templates when a specific past date is detected
+        if (hasSpecificDate && liveDataTemplates.Contains(template.Id) && template.Id != "faq_answer")
+        {
+            maxScore = 0.0;
+        }
+
+        // Hard-boost site_daily_averages when past date + site name both present —
+        // overrides all other scoring so this always wins over site_aqi_single.
+        // EXCEPTION: must not override indoor_source_analysis or dust_event_response which also
+        // mention dates + site names but are entirely different query types.
+        if (template.Id == "site_daily_averages" && hasSpecificDate && isNamedSiteQuestion
+            && !isIndoorSourceAnalysis && !isDustEventResponse)
+        {
+            maxScore = 0.99;
+        }
+
+        // Strongly boost site average templates when a past date is detected
+        // (but not when indoor_source_analysis or dust_event_response already won)
+        if (hasSpecificDate && siteAvgTemplates.Contains(template.Id) && !isIndoorSourceAnalysis && !isDustEventResponse)
+        {
+            maxScore = Math.Max(maxScore, Math.Min(maxScore * 5.0, 0.98));
+        }
+
+        // Original historical penalty for non-site-avg templates (covers "last year", "what was" etc.)
+        if (template.Id != "faq_answer" && !siteAvgTemplates.Contains(template.Id) && isHistoricalSite && !hasSpecificDate)
         {
             maxScore *= 0.05;
         }

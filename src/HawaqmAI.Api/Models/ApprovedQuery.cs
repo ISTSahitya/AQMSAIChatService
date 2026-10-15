@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace HawaqmAI.Api.Models;
 
 /// <summary>
@@ -98,6 +101,36 @@ public sealed class QueryParam
 
     /// <summary>Whether the parameter is optional.</summary>
     public bool Optional { get; set; } = false;
+
+    /// <summary>Default value used when the parameter is optional and not extracted from the question.</summary>
+    [JsonConverter(typeof(AnyTokenToStringConverter))]
+    public string? Default { get; set; }
+}
+
+/// <summary>
+/// Reads any JSON token (string, number, bool) as a string.
+/// Needed because some query defaults are written as numbers in JSON (e.g. "default": 30).
+/// </summary>
+internal sealed class AnyTokenToStringConverter : JsonConverter<string?>
+{
+    public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        return reader.TokenType switch
+        {
+            JsonTokenType.String => reader.GetString(),
+            JsonTokenType.Number => reader.TryGetInt64(out var l) ? l.ToString() : reader.GetDouble().ToString(),
+            JsonTokenType.True   => "true",
+            JsonTokenType.False  => "false",
+            JsonTokenType.Null   => null,
+            _                    => reader.GetString()
+        };
+    }
+
+    public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+    {
+        if (value is null) writer.WriteNullValue();
+        else writer.WriteStringValue(value);
+    }
 }
 
 /// <summary>Root wrapper for approved-queries.json deserialization.</summary>

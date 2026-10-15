@@ -5,6 +5,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using HawaqmAI.Api.Configuration;
 using HawaqmAI.Api.Models;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
 using OaiChatMessage = OpenAI.Chat.ChatMessage;
@@ -20,12 +21,14 @@ public sealed class AzureAIService : IAzureAIService
 {
     private static readonly Serilog.ILogger _log = Log.ForContext<AzureAIService>();
     private readonly AzureAIOptions _options;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ChatClient _chatClient;      // large model — summarization
     private readonly ChatClient _fastChatClient;  // fast/cheap model — routing, param extraction
 
-    public AzureAIService(IOptions<AzureAIOptions> options)
+    public AzureAIService(IOptions<AzureAIOptions> options, IHttpContextAccessor httpContextAccessor)
     {
         _options = options.Value;
+        _httpContextAccessor = httpContextAccessor;
         _chatClient = BuildChatClient(_options.DeploymentName);
 
         // If a separate fast model is configured, build a second client for it.
@@ -227,6 +230,36 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual counts from the data.
             """,
 
+        // Devices by model pie/bar — columns: Model, DeviceCount
+        ["devices_by_model_chart"] = """
+            Data columns: "Model", "DeviceCount".
+            The chart below will visualise the distribution — write ONE short summary sentence only.
+            FORMAT: "Here is the distribution of {TotalCount} device(s) across {N} model(s). The chart below shows the count per model."
+            {TotalCount} = sum of all DeviceCount values. {N} = number of rows.
+            NEVER list individual models in text — the chart handles that.
+            NEVER output placeholder text — always use actual totals from the data.
+            """,
+
+        // Sites by sub-sector pie/bar — columns: SubSector, SiteCount
+        ["sites_by_subsector_chart"] = """
+            Data columns: "SubSector", "SiteCount".
+            The chart below will visualise the distribution — write ONE short summary sentence only.
+            FORMAT: "Here is the breakdown of {TotalCount} school site(s) across {N} sub-sector(s). The chart below shows the count per sub-sector."
+            {TotalCount} = sum of all SiteCount values. {N} = number of rows.
+            NEVER list individual sub-sectors in text — the chart handles that.
+            NEVER output placeholder text — always use actual totals from the data.
+            """,
+
+        // Sites by AQI level pie — columns: Category, Count
+        ["sites_aqi_level_chart"] = """
+            Data columns: "Category" (AQI category name), "Count" (number of sites in that category).
+            The chart below will visualise the AQI level distribution — write ONE short summary sentence only.
+            FORMAT: "Here is the current AQI level distribution across {TotalCount} site(s). The chart below shows the count per AQI category."
+            {TotalCount} = sum of all Count values.
+            NEVER list individual sites or categories in text — the chart handles that.
+            NEVER output placeholder text — always use actual totals from the data.
+            """,
+
         // All sites AQI summary — columns: Site Name, AQI, AQI Category
         ["site_aqi_all"] = """
             Write one short intro sentence only — the table below will show the full data.
@@ -272,7 +305,7 @@ public sealed class AzureAIService : IAzureAIService
 
             User asked for TWO or THREE specific parameters (e.g. temperature and humidity, NO2 and O3 and CO, PM10 and PM2.5):
             CRITICAL: For EACH parameter, find the row where the "Parameter" column EXACTLY matches the parameter name.
-            PM2.5 value must come from the row where Parameter = "PM2.5". PM10 value must come from the row where Parameter = "PM10". Never swap or guess values.
+            Parameter name aliases: "temp" or "temperature" → row where Parameter = "Temperature". "humidity" → row where Parameter = "Humidity". "PM2.5" → row where Parameter = "PM2.5". "PM10" → row where Parameter = "PM10". Never swap or guess values.
             FORMAT: "At {Site Name} (as of {Last Updated}): {Parameter1} is {Value1} {Unit1}, {Parameter2} is {Value2} {Unit2}, and {Parameter3} is {Value3} {Unit3}."
             Example: "At Al Bateen School (as of 2026-09-15 18:45:00): Temperature is 28.4 °C, and Humidity is 61.2 %."
             Example: "At Al Saad Indian School (as of 2026-09-15 17:25:00): PM10 is 36.96 µg/m³, and PM2.5 is 42.82 µg/m³."
@@ -293,6 +326,22 @@ public sealed class AzureAIService : IAzureAIService
             Note: the table rows do NOT include a Site Name column — the site is named in the intro sentence above.
 
             If no data rows: "No current readings are available for that site. The device may be offline."
+            """,
+
+        // Historical daily averages for a specific site on a past date
+        ["site_daily_averages"] = """
+            Data columns: "StationName", "ParameterName", "DailyAverage", "DeviceCount", "Date".
+            NEVER show StationName, Date, or DeviceCount in the table — those go in the intro sentence only.
+            NEVER output placeholder text — always use actual values from the data.
+
+            Write ONE intro sentence:
+            FORMAT: "Here are the 24-hour average readings at {StationName} on {Date}. The table below shows all available parameters."
+            Example: "Here are the 24-hour average readings at Al Saad Indian School on 2026-03-20. The table below shows all available parameters."
+
+            The table must have exactly two columns: Parameter | Daily Average
+            Fill one row per data row using ParameterName and DailyAverage only.
+
+            If no rows: "No daily average readings found for that site on the selected date."
             """,
 
         // School / sector pollutant queries — data columns: Site Name, Region, Parameter, Value, Unit, Last Updated
@@ -926,6 +975,78 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual values from the data.
             NEVER omit any device row — list every device.
             """,
+
+        // Indoor PM2.5 source analysis — indoor vs outdoor ratio (single day or period)
+        ["indoor_source_analysis"] = """
+            Data columns: "ResidenceName", "NearestAmbientStation", "Distance_km", "Parameter", "PeriodStart", "PeriodEnd", "DayCount", "IndoorVal", "OutdoorVal", "IORatio".
+            There is exactly 1 row. All values are 24-hour daily averages.
+            Units: µg/m³ for PM2.5/PM10/SO2/NO2/O3; ppm for CO; ppm for CO2; µg/m³ for TVOC. IORatio = IndoorVal / OutdoorVal.
+            NEVER mention hourly peaks, peak times, or short-duration spikes — only 24-hour averages are available.
+            NEVER show raw column names or table data in the response.
+
+            STEP 1 — Missing data (output this and stop):
+            If IndoorVal is null OR OutdoorVal is null:
+              "Not enough data to compare indoor and outdoor {Parameter} for {ResidenceName} on the selected date. Indoor or outdoor readings are unavailable."
+
+            STEP 2 — Fact sentence (always output):
+            If PeriodStart equals PeriodEnd (single day):
+              "On {PeriodStart}, indoor {Parameter} at {ResidenceName} was {IndoorVal} µg/m³. The nearest outdoor station, {NearestAmbientStation} ({Distance_km} km away), recorded {OutdoorVal} µg/m³. The indoor/outdoor ratio was {IORatio}."
+            If PeriodStart differs from PeriodEnd (multi-day):
+              "Over the {DayCount}-day period from {PeriodStart} to {PeriodEnd}, indoor {Parameter} at {ResidenceName} averaged {IndoorVal} µg/m³. The nearest outdoor station, {NearestAmbientStation} ({Distance_km} km away), averaged {OutdoorVal} µg/m³. The indoor/outdoor ratio was {IORatio}."
+
+            STEP 3 — Interpretation (pick ONE based on IORatio, append after fact sentence):
+            - If IORatio > 1.0:
+              "An indoor/outdoor ratio above 1.0 suggests indoor sources are more likely contributing to the elevated {Parameter}. Common indoor sources in residential settings include bakhoor, incense, cooking, and poor ventilation."
+            - If IORatio >= 0.7 AND IORatio <= 1.0:
+              "An indoor/outdoor ratio between 0.7 and 1.0 is unclear — the result could reflect a mix of outdoor infiltration and minor indoor sources. No single source can be identified from this data alone."
+            - If IORatio < 0.7:
+              "An indoor/outdoor ratio below 0.7 suggests outdoor sources are the more likely driver. Indoor {Parameter} is lower than ambient, indicating the building is providing some protection."
+
+            Always end with:
+            "Note: this is based on a 24-hour daily average. Short-duration indoor activities are smoothed out and cannot be individually detected from daily data alone."
+
+            NEVER output placeholder text — always use actual values from the data.
+            """,
+
+        // Dust event indoor vs outdoor pollutant analysis (24-hour averages)
+        ["dust_event_response"] = """
+            Data columns: "IndoorSite", "NearestAmbientStation", "Distance_km", "EventDate", "Parameter",
+            "IndoorAvg", "OutdoorAvg", "OutdoorBaseline30", "BaselineIORatio", "DayOfWeek", "IORatio".
+            There is exactly 1 row. All values are 24-hour averages. Units: µg/m³ for PM10/PM2.5/SO2/NO2/CO.
+            NEVER show raw column names, table data, or placeholder text in the response.
+            NEVER make up values — use only what is in the data.
+
+            STEP 1 — Missing data check (output this and stop if true):
+            If IndoorAvg is null OR OutdoorAvg is null:
+              "Indoor or outdoor {Parameter} data for {EventDate} is unavailable, so a comparison cannot be made."
+
+            STEP 2 — Fact sentence (always output):
+            "On {EventDate}, {NearestAmbientStation} ({Distance_km} km away) recorded a 24-hour average {Parameter} of {OutdoorAvg} µg/m³. Indoor {Parameter} at {IndoorSite} averaged {IndoorAvg} µg/m³ (indoor/outdoor ratio {IORatio})."
+
+            STEP 3 — Event classification (pick ONE, append immediately after fact sentence):
+            A. If OutdoorAvg >= 150 OR (OutdoorBaseline30 is not null AND OutdoorAvg >= OutdoorBaseline30 * 2):
+               This IS a dust event. Now pick interpretation sub-case:
+               - If BaselineIORatio is not null AND IORatio <= BaselineIORatio * 1.15:
+                 "This qualifies as a dust event. The indoor/outdoor ratio ({IORatio}) is close to the school's typical ratio over the previous 14 school days ({BaselineIORatio}), suggesting the building's protection held at its usual level during the event."
+               - If BaselineIORatio is not null AND IORatio > BaselineIORatio * 1.15:
+                 "This qualifies as a dust event. The indoor/outdoor ratio ({IORatio}) is higher than the school's typical ratio of {BaselineIORatio}, suggesting more outdoor dust than usual reached indoors. Possible factors include ventilation settings or doors and windows being opened during the event."
+               - If BaselineIORatio is null:
+                 "This qualifies as a dust event. No baseline ratio is available for comparison."
+
+            B. If OutdoorAvg < 150 AND (OutdoorBaseline30 is null OR OutdoorAvg < OutdoorBaseline30 * 2):
+               This is NOT a dust event.
+               "Outdoor {Parameter} of {OutdoorAvg} µg/m³ is below dust-event levels (150 µg/m³{baseline_clause}). No dust event is indicated on this date."
+               Where {baseline_clause} = " and less than twice the 30-day station average of {OutdoorBaseline30} µg/m³" if OutdoorBaseline30 is not null, otherwise omit.
+
+            STEP 4 — School closed note (append as a separate sentence if DayOfWeek is Saturday or Sunday):
+            "Note: {EventDate} was a {DayOfWeek}, so the school was likely unoccupied. Indoor levels reflect the building without normal occupant activity."
+
+            STEP 5 — Distance caveat (append as a separate sentence if Distance_km > 10):
+            "As {NearestAmbientStation} is {Distance_km} km away, local outdoor conditions at {IndoorSite} may differ from station readings."
+
+            NEVER mention hourly peaks, delays, the dust mix (no PM2.5 comparison available for PM10 queries), or ventilation causes.
+            NEVER output PeakPercent, ProtectionLevel, OutdoorBaseline30, BaselineIORatio, or DayOfWeek as column labels.
+            """,
     };
 
     /// <inheritdoc/>
@@ -1051,6 +1172,39 @@ public sealed class AzureAIService : IAzureAIService
         if (string.IsNullOrWhiteSpace(_options.Endpoint))
             throw new InvalidOperationException("AzureAI:Endpoint must be configured.");
 
+        var clientOptions = new AzureOpenAIClientOptions();
+        if (!string.IsNullOrWhiteSpace(_options.ApiVersion))
+        {
+            // Map the configured API version string to the SDK enum value.
+            // Unrecognised versions fall back to the SDK default.
+            clientOptions = _options.ApiVersion switch
+            {
+                "2025-01-01-preview" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2025_01_01_Preview),
+                "2024-12-01-preview" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_12_01_Preview),
+                "2024-10-01-preview" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_10_01_Preview),
+                "2024-09-01-preview" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_09_01_Preview),
+                "2024-08-01-preview" => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_08_01_Preview),
+                "2024-06-01"         => new AzureOpenAIClientOptions(AzureOpenAIClientOptions.ServiceVersion.V2024_06_01),
+                _                    => new AzureOpenAIClientOptions()
+            };
+        }
+
+        // Core42/G42 Compass uses a non-Azure endpoint (api.core42.ai).
+        // OpenAI-compatible APIs hosted outside Azure must use OpenAI.OpenAIClient
+        // with a custom endpoint — AzureOpenAIClient only works with *.openai.azure.com
+        // or *.inference.ai.azure.com and will fail with DefaultAzureCredential otherwise.
+        bool isNonAzureEndpoint = !string.IsNullOrWhiteSpace(_options.Endpoint)
+            && !_options.Endpoint.Contains(".openai.azure.com", StringComparison.OrdinalIgnoreCase)
+            && !_options.Endpoint.Contains(".inference.ai.azure.com", StringComparison.OrdinalIgnoreCase);
+
+        if (isNonAzureEndpoint && !string.IsNullOrWhiteSpace(_options.ApiKey))
+        {
+            _log.Information("Azure AI: using OpenAI-compatible client for non-Azure endpoint {E}", _options.Endpoint);
+            var openAiOptions = new OpenAI.OpenAIClientOptions { Endpoint = new Uri(_options.Endpoint) };
+            var openAiClient = new OpenAI.OpenAIClient(new System.ClientModel.ApiKeyCredential(_options.ApiKey), openAiOptions);
+            return openAiClient.GetChatClient(deploymentName);
+        }
+
         AzureOpenAIClient client;
 
         if (_options.AuthMethod == "certificate" && !string.IsNullOrWhiteSpace(_options.CertificateThumbprint))
@@ -1064,15 +1218,15 @@ public sealed class AzureAIService : IAzureAIService
                 throw new InvalidOperationException($"Certificate with thumbprint {_options.CertificateThumbprint} not found in LocalMachine\\My store.");
 
             var credential = new ClientCertificateCredential(_options.TenantId, _options.ClientId, certs[0]);
-            client = new AzureOpenAIClient(new Uri(_options.Endpoint), credential);
+            client = new AzureOpenAIClient(new Uri(_options.Endpoint), credential, clientOptions);
         }
         else if (!string.IsNullOrWhiteSpace(_options.ApiKey))
         {
-            client = new AzureOpenAIClient(new Uri(_options.Endpoint), new System.ClientModel.ApiKeyCredential(_options.ApiKey));
+            client = new AzureOpenAIClient(new Uri(_options.Endpoint), new System.ClientModel.ApiKeyCredential(_options.ApiKey), clientOptions);
         }
         else
         {
-            client = new AzureOpenAIClient(new Uri(_options.Endpoint), new DefaultAzureCredential());
+            client = new AzureOpenAIClient(new Uri(_options.Endpoint), new DefaultAzureCredential(), clientOptions);
         }
 
         return client.GetChatClient(deploymentName);
@@ -1097,16 +1251,41 @@ public sealed class AzureAIService : IAzureAIService
                 completionOptions.Temperature = (float)_options.Temperature;
             }
 
-            var completion = await activeClient.CompleteChatAsync(messages, completionOptions, ct);
+            // Apply a per-call timeout so a hung Azure AI request doesn't block the thread indefinitely.
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.LlmTimeoutSeconds));
+
+            var completion = await activeClient.CompleteChatAsync(messages, completionOptions, timeoutCts.Token);
 
             var content = completion.Value.Content.FirstOrDefault()?.Text ?? string.Empty;
-            var tokens = completion.Value.Usage?.TotalTokenCount ?? 0;
-            var model = _options.DeploymentName;
+            var usage   = completion.Value.Usage;
+            var tokens  = usage?.TotalTokenCount ?? 0;
+            var model   = _options.DeploymentName;
+            var traceId = _httpContextAccessor.HttpContext?.TraceIdentifier ?? "-";
 
-            _log.Debug("Azure AI response: {Tokens} tokens, {Length} chars", tokens, content.Length);
+            _log.Information(
+                "Azure AI response: traceId={TraceId} model={Model} inputTokens={Input} outputTokens={Output} totalTokens={Total} chars={Length}",
+                traceId, model,
+                usage?.InputTokenCount ?? 0,
+                usage?.OutputTokenCount ?? 0,
+                tokens,
+                content.Length);
             return (content, tokens, model);
         }
-        catch (Exception ex) when (attempt < _options.MaxTokens && attempt < 2)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Per-call timeout fired (not the request's own cancellation).
+            _log.Warning("Azure AI call timed out after {Timeout}s (attempt {Attempt})",
+                _options.LlmTimeoutSeconds, attempt + 1);
+            if (attempt < _options.MaxRetryAttempts - 1)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
+                return await CallWithRetryAsync(messages, ct, attempt + 1, activeClient);
+            }
+            throw new TimeoutException(
+                $"The AI service did not respond within {_options.LlmTimeoutSeconds} seconds after {_options.MaxRetryAttempts} attempts.");
+        }
+        catch (Exception ex) when (attempt < _options.MaxRetryAttempts - 1)
         {
             _log.Warning(ex, "Azure AI call failed (attempt {Attempt}), retrying...", attempt + 1);
             await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
@@ -1192,14 +1371,28 @@ public sealed class AzureAIService : IAzureAIService
             - "CO2 at Abu Dhabi Residential" → stationName="Abu Dhabi Residential" → site_aqi_single
             - "readings at Al Ain Commercial Institutional" → stationName="Al Ain Commercial Institutional" → site_readings_all
             - "AQI in Abu Dhabi" (only a region word, no other name) → region query
+            - "current AQI at Al Reyada School yesterday" → site_daily_averages (past date overrides "current"), stationName="Al Reyada School", date=yesterday
+            - "AQI at Al Saad Indian School on 2026-09-10" → site_daily_averages, stationName="Al Saad Indian School", date="2026-09-10"
             NEVER return a list of all sites when the user has named a specific site.
 
-            1. If the user mentions a SPECIFIC site or station name AND asks for ONE value (AQI, AQI category, or a specific pollutant like CO2, PM2.5, NO2, temperature, humidity) OR asks a safety/health/attendance question about that site → select "site_aqi_single". Returns a single sentence — NOT a table.
+            0. PAST-DATE OVERRIDE (highest priority for site questions): If the user mentions a SPECIFIC site or station name AND the question contains ANY past-date reference — including "yesterday", "last Monday", "previous day", "day before", "on [date]", "on 2026-…", "on [month] [day]", a specific calendar date, or any phrase implying a historical/past reading — ALWAYS select "site_daily_averages". Extract stationName and date. NEVER select site_aqi_single for past-date site questions. This rule overrides rules 1 and 2 whenever a past date is present.
+               CRITICAL: The word "yesterday" ALWAYS triggers this rule, even if the question also contains words like "current", "AQI", or a specific pollutant name. Past-date signal beats everything else.
+               Examples:
+               - "current AQI at Al Reyada School yesterday" → site_daily_averages (NOT site_aqi_single), stationName="Al Reyada School", date=yesterday
+               - "what is the current AQI at Al Saad Indian School yesterday?" → site_daily_averages, stationName="Al Saad Indian School", date=yesterday
+               - "what were the readings at Al Reyada School yesterday?" → site_daily_averages, stationName="Al Reyada School", date=yesterday
+               - "air quality at Al Saad Indian School on 2026-09-25" → site_daily_averages, stationName="Al Saad Indian School", date="2026-09-25"
+               - "what was the AQI at Kaltham Hasan Al Obeidli last Monday?" → site_daily_averages, stationName="Kaltham Hasan Al Obeidli", date=last Monday
+               - "show me the readings at Al Naeem School on October 5" → site_daily_averages, stationName="Al Naeem School", date="2026-10-05"
+               - "previous day readings at Abu Dhabi Residential" → site_daily_averages, stationName="Abu Dhabi Residential", date=yesterday
+               - "what was the PM2.5 at Al Reyada School yesterday?" → site_daily_averages (NOT site_aqi_single), stationName="Al Reyada School", date=yesterday
+               - "AQI at Al Naeem School last Monday" → site_daily_averages, stationName="Al Naeem School", date=last Monday
+            1. If the user mentions a SPECIFIC site or station name AND asks for ONE value (AQI, AQI category, or a specific pollutant like CO2, PM2.5, NO2, temperature, humidity) OR asks a safety/health/attendance question about that site — AND the question does NOT contain a past date reference — → select "site_aqi_single". Returns a single sentence — NOT a table.
                When extracting stationName: use ONLY the site name itself — strip any trailing region qualifier like "in Al Ain", "in Abu Dhabi", "in Al Dhafra". Strip trailing words like "site", "station", "location". Example: "Kaltham Hasan AL Obeidli site" → stationName = "Kaltham Hasan AL Obeidli".
             2. If the user mentions a SPECIFIC site or station name AND asks for ALL readings, ALL parameters, ALL current data, or the last 24 hours of readings → select "site_readings_all". Returns a table.
                Same stationName rule: strip region qualifier and trailing generic words from the extracted name.
             3. Only select "schools_latest_pollutant" when the user says "schools" generically with a GENERIC plural reference (e.g. "all schools", "schools in Al Ain", "what is the AQI at schools") with NO specific school name mentioned AND is asking for a specific POLLUTANT reading (CO2, PM2.5, AQI value, etc.) WITHOUT an AQI quality level filter. NEVER select schools_latest_pollutant when: (a) a specific school or site name is mentioned, or (b) the user is asking about AQI category/quality level (good, moderate, unhealthy, etc.) — use site_aqi_by_category with sectorName="Public & Govt-School" instead.
-            4. If the user asks an AQI question that mentions ONLY a region name (Abu Dhabi, Abudhabi, Al Ain, Alain, Al Dhafra, Aldhafra) with NO specific site name, OR asks for "all regions", "by region", "region wise" → select "region_aqi_geographical". Extract regionName if one specific region is mentioned; omit it if all regions are requested. NEVER select region_aqi_geographical when a specific site name is also present — rule 1 takes priority.
+            4. If the user asks an AQI question that mentions ONLY a region name (Abu Dhabi, Abudhabi, Al Ain, Alain, Al Dhafra, Aldhafra) with NO specific site name, OR asks for "all regions", "by region", "region wise" → select "region_aqi_geographical". Extract regionName ONLY if exactly ONE specific region is mentioned and the user is asking about that region alone. OMIT regionName (return all regions) when: the user names TWO OR MORE regions (e.g. "Abu Dhabi, Al Ain, and Al Dhafra"), says "each region", "all regions", "every region", "each of the regions", "all three regions", "region wise", or any phrasing that implies the complete set. NEVER extract regionName when the question implies all three. NEVER select region_aqi_geographical when a specific site name is also present — rule 1 takes priority.
             4b. If the user asks a generic AQI question with NO specific site name AND NO region AND NO quality level word → select "site_aqi_all". Examples: "show me the AQI", "what is the AQI", "show the AQI", "current AQI", "display AQI", "AQI at my sites". NEVER select site_aqi_all when: (a) the question names a specific site or person → use site_aqi_single (rule 1), or (b) the question contains a quality word like good, bad, poor, unhealthy, moderate, hazardous, safe, harmful, vulnerable, critical → use site_aqi_by_category (rule 8).
             5. If the user asks to LIST or SHOW which schools/sites exist (no pollutant reading requested) — with or without a region filter — → ALWAYS select "sites_by_sector". Extract sectorName ("Public & Govt-School" for any school/govt/public question) and regionName if mentioned. This covers questions like "what are the different schools in Abu Dhabi?", "list schools in Al Ain", "schools present in Abudhabi", "which schools are in Al Dhafra", "commercial sites in Abu Dhabi". NEVER select schools_latest_pollutant or sites_by_region for these — those don't show school type breakdown.
                EXCEPTION to rule 5: if the user says "schools" generically AND asks for a specific pollutant reading or data (e.g. "show me a table of all Abu Dhabi schools with their latest CO2 reading", "Abu Dhabi schools CO2", "schools in Al Ain with AQI") → select "schools_latest_pollutant" (rule 3), NOT sites_by_sector. Rule 3 wins when a pollutant/reading is explicitly requested.
@@ -1241,6 +1434,8 @@ public sealed class AzureAIService : IAzureAIService
             9h. If the user asks what drove the worst air-quality month at a specific site in a given year (e.g. "What drove the worst air-quality month at Al Saad Indian School in 2025?") → select "worst_month_pollutants". Extract stationName and year. NEVER select faq_answer or site_aqi_trend_yearly for this.
             9g. If the user asks whether air quality at a specific site has improved or worsened over the last N years, or asks for a yearly AQI trend/history at a site (e.g. "Has air quality at Al Saad Indian School improved or worsened over the last three years?") → select "site_aqi_trend_yearly". Extract stationName and years (default 3). NEVER select faq_answer or top_sites_aqi_yearly for this — those do not give a per-site trend.
             9f. If the user asks to compare the indoor AQI at a site with the nearest ambient (outdoor) station (e.g. "Compare the current indoor AQI at Al Saad Indian School with the nearest ambient station") → select "indoor_ambient_compare". Extract stationName. The system fetches the nearest ambient station automatically from Abu Dhabi SDI. NEVER select region_aqi_geographical or site_aqi_single for this.
+            9f-iii. If the user asks whether any pollutant (PM2.5, PM10, CO2, CO, NO2, O3, TVOC, etc.) at a residential or indoor site is coming from indoor sources (bakhoor, cooking, incense, ventilation) or from outdoor infiltration/dust, or asks for a source analysis of any parameter over a period (e.g. "Is the PM2.5 at Al Reem Residence more likely coming from indoors or outdoor dust over the last 30 days?", "Is the PM10 at Al Reem Residence from indoor or outdoor sources from 2026-03-01?", "What is causing elevated CO2 at the residence from 2026-02-01 to 2026-02-28?") → select "indoor_source_analysis". Extract stationName, parameterName (default PM2.5; use exactly as stated by user, e.g. PM10, PM2.5, CO2, CO, NO2, O3, TVOC), startDate and endDate (as YYYY-MM-DD). The query compares indoor 24-hour average (SiteParameterAverages) against the nearest outdoor ambient station (AmbientData) and computes an I/O ratio. NEVER select dust_event_response (that is for dust events on a specific date), site_aqi_single, or faq_answer for this.
+            9f-ii. If the user asks how indoor air quality at a specific school or site responded during a dust event, dust storm, or sandstorm on a specific date (e.g. "How did indoor air quality at Al Saad Indian School respond during the dust event on 2026-03-15?") → select "dust_event_response". Extract stationName and date (as YYYY-MM-DD). Optionally extract parameterName (default PM10; allowed: PM10, PM25, O3, SO2, NO2, CO, AQI). The key signals are: a site name + a specific date + the words "dust event", "dust storm", "sandstorm", or "respond during". NEVER select indoor_ambient_compare (that is live/current only), site_parameter_trend (that shows multi-day history with no outdoor comparison), site_aqi_single, or faq_answer for this.
             9k. If the user asks what the main, dominant, primary, worst, or highest pollutant is at a specific named site RIGHT NOW (e.g. "What is the main pollutant at Al Reyada School?", "Which pollutant is driving the AQI at Al Saad Indian School?", "What is the dominant pollutant at Kaltham Hasan Al Obeidli?") → select "main_pollutant_at_station". Extract stationName only. This uses the last 1-hour averaged readings to rank pollutants by their exceedance ratio. NEVER select site_aqi_single or faq_answer for this — those do not return pollutant ranking data.
             9e. If the user asks which devices had the lowest Data Success Rate last month (e.g. "which devices had the lowest DSR last month?", "worst data success rate last month") → select "lowest_dsr_devices". Extract topN if mentioned (default 10). NEVER select data_success_rate (that returns overall network DSR, not per-device) or device_compliance_rate (that requires a specific stationId).
             9d. If the user asks which device contributed most to the highest site AQI at a school or site last month (e.g. "which device contributed most to the highest site AQI at Al Saad Indian School last month?") → select "device_peak_aqi_contribution". Extract stationName only — the date range is always last month (hardcoded in SQL). NEVER select device_last_reading, compare_two_stations, or schools_latest_pollutant for this.
@@ -1258,6 +1453,9 @@ public sealed class AzureAIService : IAzureAIService
             11c-iv. If the user asks for a chart of AVERAGE AQI by REGION (e.g. "bar chart of AQI by region", "average AQI per region chart", "AQI comparison across regions") → select "aqi_by_region_chart". No parameters needed.
             11c-v. If the user asks for a chart of SITE STATUS (Active vs Offline/Inactive) (e.g. "pie chart of site status", "active vs offline sites chart", "site availability breakdown") → select "sites_by_status_chart". No parameters needed.
             11c-vi. If the user asks for a chart of a POLLUTANT or AQI by SECTOR (e.g. "bar chart of PM2.5 by sector", "average AQI by sector", "pollutant levels per sector") → select "pollutant_by_sector_chart". Extract parameterName (e.g. "PM2.5", "PM10", "AQI Index"). Default to "AQI Index" if not specified.
+            11c-vii. If the user asks for a pie or bar chart of devices grouped by model/type (e.g. "show me the distribution of devices by model", "pie chart of device models", "how many devices of each model") → select "devices_by_model_chart". No parameters needed. NEVER select site_device_summary or list_devices for this.
+            11c-viii. If the user asks for a pie or bar chart based on school sub-sectors or type of school (private/public/government) (e.g. "plot a pie chart based on school subsectors", "pie chart of type of school", "private vs public school chart") → select "sites_by_subsector_chart". No parameters needed. NEVER select sites_by_sector_chart (that groups by main sector, not sub-sector).
+            11c-ix. If the user asks for a pie or bar chart of sites based on AQI levels/categories (e.g. "sites based on AQI levels", "AQI level distribution chart", "pie chart of sites by AQI category") → select "sites_aqi_level_chart". No parameters needed. NEVER select schools_aqi_pie (that is school-sector only) or site_aqi_by_category (that returns a filtered table, not a chart) for this.
             11d. If the user asks about TOTAL DEVICES or DEVICES PER SITE across ALL sites (e.g. "total number of devices per site in the application", "how many devices does each site have", "device count per site", "total devices across all sites") — even without naming a specific site — select "site_device_summary". No parameters needed. NEVER select site_aqi_single for this type of question.
             11d-i. If the user asks about DEVICES PER SITE — including:
               - Sites with no/zero devices ("which sites don't have any devices", "sites without devices", "sites with no devices")
@@ -1349,6 +1547,10 @@ public sealed class AzureAIService : IAzureAIService
               - "this month"                      → startDate = first day of current month, endDate = today
               - "this year"                       → startDate = Jan 1 of current year, endDate = today
               - "this week"                       → startDate = most recent Monday, endDate = today
+              - "from YYYY-MM-DD to YYYY-MM-DD"  → startDate = first date, endDate = second date (extract both exactly)
+              - "from YYYY-MM-DD" (no end date)  → startDate = that date, endDate = that same date (single-day query)
+              - "since YYYY-MM-DD" (no end date) → startDate = that date, endDate = that same date
+              CRITICAL: NEVER invent or guess an endDate beyond the stated date. If only one date is given with no range, startDate = endDate = that date.
               Always compute using the "Today's date" provided in the user message.
             For columns: use lowercase snake_case (e.g. pm25, not PM2.5).
             For year: extract a 4-digit year if the user mentions one (e.g. "2025", "last year"). If no year is mentioned, omit it — the system will default to the current year automatically.

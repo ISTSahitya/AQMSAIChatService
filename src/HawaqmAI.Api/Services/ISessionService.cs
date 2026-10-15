@@ -29,6 +29,12 @@ public interface ISessionService
     /// <summary>Returns all messages for a session (ownership verified).</summary>
     Task<IReadOnlyList<ChatMessage>> GetSessionMessagesAsync(Guid sessionId, string userId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Returns the total token count consumed by a user today (UTC calendar day).
+    /// Sums token_count from all assistant messages in the user's sessions created today.
+    /// </summary>
+    Task<int> GetDailyTokenUsageAsync(string userId, CancellationToken ct = default);
+
     /// <summary>Deletes a session (ownership verified).</summary>
     Task<bool> DeleteSessionAsync(Guid sessionId, string userId, CancellationToken ct = default);
 

@@ -311,6 +311,23 @@ public sealed class SessionService : ISessionService
         await _db.SaveChangesAsync(ct);
     }
 
+    /// <inheritdoc/>
+    public async Task<int> GetDailyTokenUsageAsync(string userId, CancellationToken ct = default)
+    {
+        var startOfDayUtc = DateTime.UtcNow.Date; // midnight UTC today
+        var total = await _db.ChatMessages
+            .Join(_db.ChatSessions,
+                  msg => msg.SessionId,
+                  ses => ses.SessionId,
+                  (msg, ses) => new { msg, ses })
+            .Where(x => x.ses.UserId == userId
+                      && x.msg.Role == "assistant"
+                      && x.msg.CreatedAt >= startOfDayUtc
+                      && x.msg.TokenCount != null)
+            .SumAsync(x => (int)x.msg.TokenCount!, ct);
+        return total;
+    }
+
     // ── Private helpers ──────────────────────────────────────────────────────
 
     private async Task UpdateSessionStats(Guid sessionId, CancellationToken ct)

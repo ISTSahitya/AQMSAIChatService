@@ -1,9 +1,11 @@
 using System.Text.Json;
+using HawaqmAI.Api.Configuration;
 using HawaqmAI.Api.Models;
 using HawaqmAI.Api.Services;
 using HawaqmAI.Api.Validators;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 namespace HawaqmAI.Api.Controllers;
@@ -27,6 +29,7 @@ public sealed class ChatController : ControllerBase
     private readonly ISessionService _sessionService;
     private readonly IResponseFormatterService _formatter;
     private readonly IExternalApiService _externalApi;
+    private readonly ChatOptions _chatOptions;
 
     public ChatController(
         IQueryRouterService queryRouter,
@@ -35,7 +38,8 @@ public sealed class ChatController : ControllerBase
         ISqlExecutorService sqlExecutor,
         ISessionService sessionService,
         IResponseFormatterService formatter,
-        IExternalApiService externalApi)
+        IExternalApiService externalApi,
+        IOptions<ChatOptions> chatOptions)
     {
         _queryRouter = queryRouter;
         _azureAI = azureAI;
@@ -44,6 +48,7 @@ public sealed class ChatController : ControllerBase
         _sessionService = sessionService;
         _formatter = formatter;
         _externalApi = externalApi;
+        _chatOptions = chatOptions.Value;
     }
 
     /// <summary>
@@ -63,6 +68,8 @@ public sealed class ChatController : ControllerBase
             return Unauthorized();
 
         _log.Information("Chat request received from user {UserId}", user.UserId);
+        try
+        {
 
         // ── 1. Resolve and validate scope ───────────────────────────────────
         var (scope, scopeError) = ScopeValidator.Resolve(request.Scope, user);
@@ -76,6 +83,22 @@ public sealed class ChatController : ControllerBase
         // ── 2. Get or create session ────────────────────────────────────────
         var session = await _sessionService.GetOrCreateSessionAsync(request.SessionId, user.UserId, ct);
         var history = await _sessionService.GetConversationHistoryAsync(session.SessionId, ct: ct);
+
+        // ── 2a-pre. Daily token limit enforcement ───────────────────────────
+        if (_chatOptions.DailyTokenLimitPerUser > 0)
+        {
+            var todayUsage = await _sessionService.GetDailyTokenUsageAsync(user.UserId, ct);
+            if (todayUsage >= _chatOptions.DailyTokenLimitPerUser)
+            {
+                _log.Warning("Daily token limit reached for user {UserId}: {Used}/{Limit}",
+                    user.UserId, todayUsage, _chatOptions.DailyTokenLimitPerUser);
+                await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
+                return Ok(_formatter.FormatError(session.SessionId,
+                    $"You have reached your daily usage limit ({_chatOptions.DailyTokenLimitPerUser:N0} tokens). Your limit resets at midnight UTC. Please try again tomorrow.",
+                    "DAILY_LIMIT_REACHED"));
+            }
+            _log.Debug("Daily token usage for user {UserId}: {Used}/{Limit}", user.UserId, todayUsage, _chatOptions.DailyTokenLimitPerUser);
+        }
 
         // ── 2a. Message enrichment ──────────────────────────────────────────
         // Do NOT append scope filter-bar values to the message — the filter bar
@@ -206,6 +229,22 @@ public sealed class ChatController : ControllerBase
             "radon levels",
             "pollen count",
             "how often do hawaqm devices record",
+            "data recording frequency",
+            "recording frequency",
+            "capture frequency",
+            "at what intervals do",
+            "at what interval do",
+            "what intervals do hawaqm",
+            "capture data",
+            "intervals do devices capture",
+            "intervals do hawaqm devices",
+            "recording interval",
+            "data interval",
+            "how frequently do",
+            "how frequently does hawaqm",
+            "frequency of data recording",
+            "frequency of recording",
+            "how often is data recorded",
             "when is a device considered offline",
             "when is a site shown as inactive",
             "how is the site aqi calculated",
@@ -255,7 +294,11 @@ public sealed class ChatController : ControllerBase
             "how is the air", "how is the quality", "air quality good", "air quality bad",
             "is the aqi good", "is the aqi bad", "is it healthy", "is it unhealthy",
             "is the air ok", "is it ok to", "is it fine", "is it safe",
-            "unhealthy for"
+            "unhealthy for",
+            // AQI category questions about a specific site — "categorize the air quality at X",
+            // "what category does the air quality at X fall under", "tell me the air quality at X"
+            "categorize the air", "categorise the air", "what category does", "fall under",
+            "air quality today for", "how is the air quality at", "how is the air quality today"
         };
         var siteTypeWords = new[] { "school", "residential", "commercial", "institutional", "site", "station",
                                      "reyada", "saad", "naeem", "bateen", "khalifa", "kaltham", "gems" };
@@ -395,7 +438,7 @@ public sealed class ChatController : ControllerBase
         {
             "pm2.5", "pm 2.5", "pm10", "pm 10", "co2", "carbon dioxide", "carbon monoxide",
             "no2", "nitrogen dioxide", "o3", "ozone", "tvoc", "voc", "ch2o", "formaldehyde",
-            "temperature", "humidity", "noise", "aqi", "air quality index",
+            "temperature", "temp", "humidity", "noise", "aqi", "air quality index",
             "reading", "readings", "level", "levels", "value", "concentration"
         };
         bool hasParameterKeyword = parameterKeywords.Any(p => lowerMsg.Contains(p));
@@ -416,7 +459,15 @@ public sealed class ChatController : ControllerBase
         // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
         var deviceCountKeywords = new[] { "devices per site", "device per site", "devices at each site", "number of devices", "device count", "total devices", "devices in the application", "devices in the system" };
         bool isDeviceCountQuestion = deviceCountKeywords.Any(k => lowerMsg.Contains(k));
-        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion && !isChartDistribution && !isDeviceCountQuestion;
+        // Exclude past-date site questions — "AQI at Al Reyada School yesterday" must route to site_daily_averages, NOT site_aqi_single
+        bool msgHasPastDate =
+            lowerMsg.Contains("yesterday") || lowerMsg.Contains("last monday") || lowerMsg.Contains("last tuesday") ||
+            lowerMsg.Contains("last wednesday") || lowerMsg.Contains("last thursday") || lowerMsg.Contains("last friday") ||
+            lowerMsg.Contains("last saturday") || lowerMsg.Contains("last sunday") ||
+            lowerMsg.Contains("previous day") || lowerMsg.Contains("day before") || lowerMsg.Contains("last night") ||
+            System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
+                @"(on\s+20\d{2}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|on\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))");
+        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion && !isChartDistribution && !isDeviceCountQuestion && !msgHasPastDate;
 
         if (isParameterAtSiteQuestion)
         {
@@ -766,6 +817,137 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 2e-pre7. Hard pre-check: "devices by model chart" → force devices_by_model_chart ──
+        var deviceModelKeywords = new[] {
+            "distribution of devices by model", "devices by model", "device model distribution",
+            "device model breakdown", "devices based on the model", "based on the model",
+            "how many devices of each model", "device model pie", "device model bar",
+            "devices grouped by model", "devices by type", "device type distribution",
+            "distribution of device"
+        };
+        bool isDevicesByModelChart = isChartDistribution && deviceModelKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isDevicesByModelChart)
+        {
+            _log.Debug("ChatController: devices-by-model chart pre-check fired → forcing devices_by_model_chart");
+            var devModelTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "devices_by_model_chart");
+            if (devModelTemplate is not null && !string.IsNullOrWhiteSpace(devModelTemplate.Sql))
+            {
+                var effectiveDevModelType = userWantsBar ? "bar" : "pie";
+                devModelTemplate.ChartType = effectiveDevModelType;
+                var devModelSqlResult = await _sqlExecutor.ExecuteAsync(devModelTemplate.Sql, new Dictionary<string, object>(), ct);
+                if (devModelSqlResult.Success && devModelSqlResult.Rows.Count > 0)
+                {
+                    var devModelMsgId = Guid.NewGuid();
+                    var devModelSummary = await _azureAI.SummarizeResultsAsync(request.Message, devModelTemplate, devModelSqlResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId, userContent: request.Message,
+                        assistantMessageId: devModelMsgId, assistantContent: devModelSummary,
+                        sql: devModelTemplate.Sql, responseType: devModelTemplate.ResponseType,
+                        chartType: effectiveDevModelType, chartDataJson: System.Text.Json.JsonSerializer.Serialize(devModelSqlResult.Rows),
+                        dataSource: devModelTemplate.TableUsed, dateRange: null,
+                        modelUsed: null, executionTimeMs: (int)devModelSqlResult.ExecutionTimeMs,
+                        tokenCount: 0, ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId, messageId: devModelMsgId,
+                        template: devModelTemplate, llmSummary: devModelSummary,
+                        rows: devModelSqlResult.Rows, rowCount: devModelSqlResult.Rows.Count,
+                        executionTimeMs: (int)devModelSqlResult.ExecutionTimeMs,
+                        scope: scope, modelUsed: null, tokenCount: 0));
+                }
+                _log.Warning("ChatController: devices_by_model_chart SQL failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre8. Hard pre-check: "sites by subsector chart" → force sites_by_subsector_chart ──
+        var subsectorChartKeywords = new[] {
+            "school subsector", "subsector chart", "type of school", "private and public school",
+            "private vs public school", "school type distribution", "subsectors pie", "subsectors bar",
+            "pie chart based on school subsector", "pie chart based on type of school",
+            "plot pie chart based on school", "based on school subsector", "based on the type of school",
+            "school sub sector", "type of school pie", "type of school bar"
+        };
+        bool isSubsectorChart = isChartDistribution && subsectorChartKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isSubsectorChart)
+        {
+            _log.Debug("ChatController: sites-by-subsector chart pre-check fired → forcing sites_by_subsector_chart");
+            var subsectorTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_subsector_chart");
+            if (subsectorTemplate is not null && !string.IsNullOrWhiteSpace(subsectorTemplate.Sql))
+            {
+                var effectiveSubType = userWantsBar ? "bar" : "pie";
+                subsectorTemplate.ChartType = effectiveSubType;
+                var subSqlResult = await _sqlExecutor.ExecuteAsync(subsectorTemplate.Sql, new Dictionary<string, object>(), ct);
+                if (subSqlResult.Success && subSqlResult.Rows.Count > 0)
+                {
+                    var subMsgId = Guid.NewGuid();
+                    var subSummary = await _azureAI.SummarizeResultsAsync(request.Message, subsectorTemplate, subSqlResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId, userContent: request.Message,
+                        assistantMessageId: subMsgId, assistantContent: subSummary,
+                        sql: subsectorTemplate.Sql, responseType: subsectorTemplate.ResponseType,
+                        chartType: effectiveSubType, chartDataJson: System.Text.Json.JsonSerializer.Serialize(subSqlResult.Rows),
+                        dataSource: subsectorTemplate.TableUsed, dateRange: null,
+                        modelUsed: null, executionTimeMs: (int)subSqlResult.ExecutionTimeMs,
+                        tokenCount: 0, ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId, messageId: subMsgId,
+                        template: subsectorTemplate, llmSummary: subSummary,
+                        rows: subSqlResult.Rows, rowCount: subSqlResult.Rows.Count,
+                        executionTimeMs: (int)subSqlResult.ExecutionTimeMs,
+                        scope: scope, modelUsed: null, tokenCount: 0));
+                }
+                _log.Warning("ChatController: sites_by_subsector_chart SQL failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre9. Hard pre-check: "sites by AQI level chart" → force sites_aqi_level_chart ──
+        var aqiLevelChartKeywords = new[] {
+            "sites based on aqi level", "aqi level distribution", "sites by aqi level",
+            "aqi level chart", "aqi level pie", "aqi level bar", "sites aqi level",
+            "aqi levels chart", "based on aqi level", "sites based on aqi"
+        };
+        bool isAqiLevelChart = isChartDistribution && aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isAqiLevelChart)
+        {
+            _log.Debug("ChatController: sites-by-aqi-level chart pre-check fired → forcing sites_aqi_level_chart");
+            var aqiLvlTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_aqi_level_chart");
+            if (aqiLvlTemplate is not null && aqiLvlTemplate.ApiCall is not null)
+            {
+                var effectiveAqiLvlType = userWantsBar ? "bar" : "pie";
+                aqiLvlTemplate.ChartType = effectiveAqiLvlType;
+                var aqiLvlBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var aqiLvlResult = await _externalApi.CallAsync(aqiLvlTemplate.ApiCall, new Dictionary<string, string>(), scope, aqiLvlBearer, user, aqiLvlTemplate.Id, ct);
+                if (aqiLvlResult.Success)
+                {
+                    var aqiLvlMsgId = Guid.NewGuid();
+                    var aqiLvlSummary = await _azureAI.SummarizeResultsAsync(request.Message, aqiLvlTemplate, aqiLvlResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId, userContent: request.Message,
+                        assistantMessageId: aqiLvlMsgId, assistantContent: aqiLvlSummary,
+                        sql: null, responseType: aqiLvlTemplate.ResponseType,
+                        chartType: effectiveAqiLvlType, chartDataJson: null,
+                        dataSource: aqiLvlTemplate.TableUsed, dateRange: null,
+                        modelUsed: null, executionTimeMs: (int)aqiLvlResult.ExecutionTimeMs,
+                        tokenCount: 0, ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId, messageId: aqiLvlMsgId,
+                        template: aqiLvlTemplate, llmSummary: aqiLvlSummary,
+                        rows: aqiLvlResult.Rows, rowCount: aqiLvlResult.Rows.Count,
+                        executionTimeMs: (int)aqiLvlResult.ExecutionTimeMs,
+                        scope: scope, modelUsed: null, tokenCount: 0));
+                }
+                _log.Warning("ChatController: sites_aqi_level_chart API call failed, falling through to routing");
+            }
+        }
+
         // ── 2e. Hard pre-check: offline/inactive device questions → force offline_devices ──
         // Scope-bar enrichment appends "in Abudhabi" to the message, causing these questions to
         // match devices_by_filter (which requires BOTH regionName AND sectorName → returns nothing).
@@ -960,6 +1142,30 @@ public sealed class ChatController : ControllerBase
                 routeResult = new QueryRouterResult
                 {
                     Template = histTemplate,
+                    Score = 1.0,
+                    Candidates = [],
+                    PreviousTemplateId = routeResult.PreviousTemplateId
+                };
+            }
+        }
+
+        // ── 3c. Hard override: named site + past date → site_daily_averages ──
+        // Covers cases where pre-checks or the router still selected site_aqi_single despite a past date.
+        // Must run AFTER device_reading_history override (3b) so device+date questions are unaffected.
+        bool msgHasSiteRef = siteTypeWords.Any(s => lowerMsg.Contains(s)) || hasAtSitePattern;
+        if (msgHasPastDate && msgHasSiteRef && !msgHasDeviceCode
+            && routeResult.Template?.Id is "site_aqi_single" or "site_readings_all" or "main_pollutant_at_station"
+                or null)
+        {
+            var dailyTemplate = _queryRouter.GetPermittedTemplates(user)
+                .FirstOrDefault(t => t.Id == "site_daily_averages");
+            if (dailyTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → site_daily_averages (site+past-date detected)",
+                    routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult
+                {
+                    Template = dailyTemplate,
                     Score = 1.0,
                     Candidates = [],
                     PreviousTemplateId = routeResult.PreviousTemplateId
@@ -1967,9 +2173,14 @@ public sealed class ChatController : ControllerBase
             if (!sqlValid)
             {
                 _log.Error("SQL validation failed for template {TemplateId}: {Error}", template.Id, sqlError);
-                return Ok(_formatter.FormatError(session.SessionId,
-                    "The query could not be safely constructed. Please try a different question.",
-                    "SQL_INVALID"));
+                var sqlInvalidMsg = template.Id switch
+                {
+                    "dust_event_response" =>
+                        "I wasn't able to retrieve the dust event data for that site and date. Please make sure you include both a site name and a specific date, for example: \"How did indoor air quality at Al Saad Indian School respond during the dust event on 2026-03-15?\"",
+                    _ =>
+                        "I wasn't able to process that request right now. Please try rephrasing your question or ask something else."
+                };
+                return Ok(_formatter.FormatError(session.SessionId, sqlInvalidMsg, "SQL_INVALID"));
             }
 
             // Detect any @param references still in the SQL that were not bound (missing required params)
@@ -2003,9 +2214,14 @@ public sealed class ChatController : ControllerBase
             if (!sqlResult.Success)
             {
                 // Translate technical SQL errors into user-friendly messages
-                var userFriendlyError = sqlResult.Error!.Contains("scalar variable", StringComparison.OrdinalIgnoreCase)
-                    ? "I couldn't gather enough information from your question to run that query. Could you be more specific? For example: 'Show me commercial sites in Abu Dhabi' or 'What is the CO2 at Al Saad Indian School?'"
-                    : "I was unable to retrieve data at this time. Please try rephrasing your question or try again shortly.";
+                var userFriendlyError = template.Id switch
+                {
+                    "dust_event_response" =>
+                        "I wasn't able to retrieve dust event data for that site and date. Please check that the site name is correct and that a date is included, for example: \"How did indoor air quality at Al Saad Indian School respond during the dust event on 2026-03-15?\"",
+                    _ => sqlResult.Error!.Contains("scalar variable", StringComparison.OrdinalIgnoreCase)
+                        ? "I couldn't gather enough information from your question to run that query. Could you be more specific? For example: 'Show me commercial sites in Abu Dhabi' or 'What is the CO2 at Al Saad Indian School?'"
+                        : "I was unable to retrieve data at this time. Please try rephrasing your question or try again shortly."
+                };
 
                 _log.Warning("SQL_ERROR for template {TemplateId}: {Error}", template.Id, sqlResult.Error);
                 return Ok(_formatter.FormatError(session.SessionId, userFriendlyError, "SQL_ERROR"));
@@ -2100,9 +2316,30 @@ public sealed class ChatController : ControllerBase
         string summary;
         if (template.ResponseType is "table" or "chart")
         {
-            summary = resultRows.Count == 1
-                ? "1 result found."
-                : $"{resultRows.Count} results found.";
+            // site_daily_averages: build a meaningful intro sentence and strip
+            // StationName, Date, DeviceCount from the table rows — user sees
+            // only Parameter and Daily Average columns.
+            if (template.Id == "site_daily_averages" && resultRows.Count > 0)
+            {
+                var siteName  = resultRows[0].GetValueOrDefault("StationName")?.ToString() ?? "";
+                var dateVal   = resultRows[0].GetValueOrDefault("Date")?.ToString() ?? "";
+                // Trim the timestamp if present (e.g. "2026-03-20T00:00:00" → "2026-03-20")
+                if (dateVal.Contains('T')) dateVal = dateVal[..dateVal.IndexOf('T')];
+                summary = $"Here are the 24-hour average readings at {siteName} on {dateVal}. The table below shows all available parameters.";
+                // Strip columns that must not appear in the table
+                foreach (var row in resultRows)
+                {
+                    row.Remove("StationName");
+                    row.Remove("Date");
+                    row.Remove("DeviceCount");
+                }
+            }
+            else
+            {
+                summary = resultRows.Count == 1
+                    ? "1 result found."
+                    : $"{resultRows.Count} results found.";
+            }
             tokensUsed = 0;
         }
         else
@@ -2151,6 +2388,44 @@ public sealed class ChatController : ControllerBase
             tokenCount: tokensUsed);
 
         return Ok(response);
+        }
+        catch (TimeoutException tex)
+        {
+            _log.Error(tex, "LLM request timed out for user {UserId}", user.UserId);
+            var timeoutSession = await _sessionService.GetOrCreateSessionAsync(request.SessionId, user.UserId, CancellationToken.None);
+            return Ok(_formatter.FormatError(timeoutSession.SessionId,
+                "The AI service took too long to respond. Please try again in a moment.",
+                "LLM_TIMEOUT"));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Client disconnected — nothing to return
+            _log.Information("Chat request cancelled by client for user {UserId}", user.UserId);
+            return StatusCode(499);
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Unhandled error in Chat for user {UserId}", user.UserId);
+            var errorSession = await _sessionService.GetOrCreateSessionAsync(request.SessionId, user.UserId, CancellationToken.None);
+
+            var friendlyError = ex switch
+            {
+                HttpRequestException =>
+                    "I wasn't able to reach the data service right now. Please try again in a moment.",
+                TaskCanceledException =>
+                    "The request took too long to complete. Please try again.",
+                InvalidOperationException when ex.Message.Contains("variable", StringComparison.OrdinalIgnoreCase) =>
+                    "I couldn't retrieve data for that question. Please make sure you include a site name and date, then try again.",
+                _ when ex.Message.Contains("scalar variable", StringComparison.OrdinalIgnoreCase) =>
+                    "I couldn't gather enough details from your question. Please be more specific — for example, include a site name and date.",
+                _ when ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase) =>
+                    "The database took too long to respond. Please try again shortly.",
+                _ =>
+                    "I wasn't able to process that request. Please rephrase your question or try again in a moment."
+            };
+
+            return Ok(_formatter.FormatError(errorSession.SessionId, friendlyError, "INTERNAL_ERROR"));
+        }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────

@@ -784,6 +784,43 @@ public sealed class ExternalApiService : IExternalApiService
                 return new ApiCallResult { Success = true, Rows = polBySector, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
+            // sites_aqi_level_chart: count sites per AQI category → {Category, Count} rows for pie/bar chart.
+            if (apiCall.ResponseShape == "sites_aqi_level_chart")
+            {
+                var allDevicesAqiLvl = ParseDevicesFromJson(json);
+                if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+                    allDevicesAqiLvl = allDevicesAqiLvl.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
+                // Apply scope filters
+                var aqiLvlRegion = llmParams.GetValueOrDefault("regionName") ?? (!string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : null);
+                var aqiLvlSector = llmParams.GetValueOrDefault("sectorName") ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null);
+                if (!string.IsNullOrWhiteSpace(aqiLvlRegion))
+                    allDevicesAqiLvl = allDevicesAqiLvl.Where(d => d.RegionName.Contains(aqiLvlRegion, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (!string.IsNullOrWhiteSpace(aqiLvlSector))
+                    allDevicesAqiLvl = allDevicesAqiLvl.Where(d => d.SectorName.Contains(aqiLvlSector, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                static string GetAqiCategory(double aqi) => aqi switch
+                {
+                    <= 50  => "Good",
+                    <= 100 => "Moderate",
+                    <= 150 => "Unhealthy for Sensitive Groups",
+                    <= 200 => "Unhealthy",
+                    <= 300 => "Very Unhealthy",
+                    _      => "Hazardous"
+                };
+
+                var aqiLvlRows = allDevicesAqiLvl
+                    .GroupBy(d => d.StationId)
+                    .Select(g => g.First().Params.TryGetValue("AQI Index", out var v) ? v.Value : (double?)null)
+                    .Where(aqi => aqi.HasValue)
+                    .GroupBy(aqi => GetAqiCategory(aqi!.Value))
+                    .OrderBy(g => g.Key)
+                    .Select(g => new Dictionary<string, object?> { ["Category"] = g.Key, ["Count"] = g.Count() })
+                    .ToList();
+
+                _log.Information("ExternalApiService: sites_aqi_level_chart → {Count} AQI categories", aqiLvlRows.Count);
+                return new ApiCallResult { Success = true, Rows = aqiLvlRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
             // mold_reports: parse GetMoldReportsBySiteName response → flat rows for table display.
             // Each row = one mold test at the site with key metadata (TestName, SampleNo, ReportNo,
             // SamplingTime, FormSubmisionStatus, Remarks). Parameters listed in a sub-column.
@@ -1214,6 +1251,21 @@ public sealed class ExternalApiService : IExternalApiService
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array)
             return [];
+
+        // If regionFilter contains multiple regions (LLM leaked "Abu Dhabi, Al Ain, and Al Dhafra"),
+        // treat it as "all regions" — return everything unfiltered.
+        var multiRegionIndicators = new[] { " and ", ",", " & ", "al ain", "al dhafra", "alain", "aldhafra" };
+        if (regionFilter is not null)
+        {
+            var lower = regionFilter.ToLowerInvariant();
+            // If it contains ANY second region name alongside Abu Dhabi or the separator "and", it's multi-region
+            bool hasAlAin    = lower.Contains("al ain") || lower.Contains("alain");
+            bool hasAlDhafra = lower.Contains("al dhafra") || lower.Contains("aldhafra") || lower.Contains("dhafra");
+            bool hasAbuDhabi = lower.Contains("abu dhabi") || lower.Contains("abudhabi");
+            int  regionCount = (hasAbuDhabi ? 1 : 0) + (hasAlAin ? 1 : 0) + (hasAlDhafra ? 1 : 0);
+            if (regionCount > 1)
+                regionFilter = null; // treat as "return all regions"
+        }
 
         var canonical = regionFilter is not null ? NormaliseRegionName(regionFilter) : null;
 

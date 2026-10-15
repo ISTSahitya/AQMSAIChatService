@@ -24,7 +24,7 @@ public sealed class ChatOptions
     /// <summary>SQL query execution timeout in seconds.</summary>
     public int QueryTimeoutSeconds { get; set; } = 30;
 
-    /// <summary>Number of LLM call retries before returning an error.</summary>
+    /// <summary>Number of LLM call retries before returning an error (also configured in AzureAI section).</summary>
     public int MaxRetryAttempts { get; set; } = 2;
 
     /// <summary>
@@ -42,4 +42,11 @@ public sealed class ChatOptions
     /// <summary>Standard disclaimer appended to every AI response.</summary>
     public string Disclaimer { get; set; } =
         "AI-generated analysis. Verify data before use in official reporting.";
+
+    /// <summary>
+    /// Maximum tokens a single user may consume per UTC calendar day.
+    /// Counted from assistant messages only (input + output combined).
+    /// Set to 0 to disable the limit.
+    /// </summary>
+    public int DailyTokenLimitPerUser { get; set; } = 0;
 }

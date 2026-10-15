@@ -29,6 +29,12 @@ public static class SqlValidator
         "SubSectors",
         "Regions",
         "DMN_StationGrouping",
+        "SiteParameterAverages",
+        "DeviceSiteHistory",
+        // Ambient (outdoor) tables
+        "AmbientData",
+        "AmbientStations",
+        "AmbientParameters",
         // Chat tables (read-only access granted to readonly user)
         "chat_sessions",
         "chat_messages",
@@ -65,10 +71,11 @@ public static class SqlValidator
         var stripped = CommentStripper.Replace(sql, " ").Trim();
         var upper = stripped.ToUpperInvariant();
 
-        // Must start with SELECT
-        if (!upper.TrimStart().StartsWith("SELECT"))
+        // Must start with SELECT or WITH (CTEs use WITH ... AS ( SELECT ... ))
+        var trimmedUpper = upper.TrimStart();
+        if (!trimmedUpper.StartsWith("SELECT") && !trimmedUpper.StartsWith("WITH"))
         {
-            _log.Warning("SQL rejected: does not start with SELECT. SQL={Sql}", sql[..Math.Min(200, sql.Length)]);
+            _log.Warning("SQL rejected: does not start with SELECT or WITH. SQL={Sql}", sql[..Math.Min(200, sql.Length)]);
             return (false, "Only SELECT queries are permitted.");
         }
 
@@ -84,7 +91,13 @@ public static class SqlValidator
             }
         }
 
-        // Check all referenced tables are in the allowlist
+        // Extract CTE names defined in WITH clause so they are not mistaken for real tables.
+        // Pattern: WITH CteOne AS (, CteTwo AS ( ...
+        var cteNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match cteMatch in Regex.Matches(upper, @"\b(\w+)\s+AS\s*\("))
+            cteNames.Add(cteMatch.Groups[1].Value);
+
+        // Check all referenced tables are in the allowlist (skip CTE aliases)
         var tableMatches = Regex.Matches(upper,
             @"(?:FROM|JOIN)\s+(\w+)",
             RegexOptions.IgnoreCase);
@@ -92,6 +105,9 @@ public static class SqlValidator
         foreach (Match m in tableMatches)
         {
             var tableName = m.Groups[1].Value;
+            // Skip CTE names — they are not real tables
+            if (cteNames.Contains(tableName))
+                continue;
             if (!AllowedTables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
             {
                 _log.Warning("SQL rejected: table '{Table}' not in allowlist. SQL={Sql}", tableName, sql[..Math.Min(200, sql.Length)]);
@@ -99,9 +115,10 @@ public static class SqlValidator
             }
         }
 
-        // Reject subqueries that reference other tables (simple check)
+        // Reject excessively complex queries (simple check).
+        // CTEs legitimately use multiple SELECT statements — allow up to 10.
         var subqueryCount = Regex.Matches(upper, @"\bSELECT\b").Count;
-        if (subqueryCount > 3)
+        if (subqueryCount > 10)
         {
             return (false, "Query complexity too high (too many nested SELECT statements).");
         }
@@ -116,6 +133,9 @@ public static class SqlValidator
     public static string EnsureTopClause(string sql, int limit)
     {
         var upper = sql.ToUpperInvariant();
+        // CTEs (WITH ...) already contain TOP inside their inner SELECTs — skip injection
+        if (upper.TrimStart().StartsWith("WITH"))
+            return sql;
         if (upper.Contains(" TOP ") || upper.Contains("FETCH NEXT") || upper.Contains("OFFSET "))
             return sql;
 

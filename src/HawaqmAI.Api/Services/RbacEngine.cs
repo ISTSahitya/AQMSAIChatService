@@ -185,9 +185,18 @@ public sealed class RbacEngine : IRbacEngine
         }
         if (sql.Contains("@endDate", StringComparison.OrdinalIgnoreCase) && !parameters.ContainsKey("endDate"))
         {
-            var today = DateTime.UtcNow;
-            parameters["endDate"] = today.ToString("yyyy-MM-dd");
-            _log.Debug("RBAC: defaulted @endDate to today");
+            // If startDate is known, default endDate to the same date (single-day query).
+            // This handles "from YYYY-MM-DD" with no explicit end — the user meant that date only.
+            if (parameters.TryGetValue("startDate", out var sd) && !string.IsNullOrWhiteSpace(sd?.ToString()))
+            {
+                parameters["endDate"] = sd!.ToString()!;
+                _log.Debug("RBAC: defaulted @endDate to startDate = {EndDate}", parameters["endDate"]);
+            }
+            else
+            {
+                parameters["endDate"] = DateTime.UtcNow.Date.ToString("yyyy-MM-dd");
+                _log.Debug("RBAC: defaulted @endDate to today");
+            }
         }
 
         // ── Step 5: Ensure row limit ──────────────────────────────────────────
@@ -239,7 +248,7 @@ public sealed class RbacEngine : IRbacEngine
             return llmVal;
 
         // Fall back to scope bar values
-        return param.Name.ToLowerInvariant() switch
+        var scopeValue = param.Name.ToLowerInvariant() switch
         {
             "siteid" or "siteid1" or "stationid" => scope.SiteIds.Count > 0 ? scope.SiteIds[0].ToString() : null,
             "startdate" => scope.StartDate?.ToString("yyyy-MM-dd"),
@@ -249,6 +258,11 @@ public sealed class RbacEngine : IRbacEngine
             "sectorname" => !string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null,
             _ => null
         };
+        if (scopeValue is not null)
+            return scopeValue;
+
+        // Fall back to param default value (e.g. parameterName defaults to "PM10")
+        return !string.IsNullOrWhiteSpace(param.Default) ? param.Default : null;
     }
 
     // DB canonical region spellings (as stored in the Regions table)
@@ -312,7 +326,7 @@ public sealed class RbacEngine : IRbacEngine
         return param.Type switch
         {
             "int" => int.TryParse(rawValue, out var i) ? i : null as object,
-            "date" => rawValue,  // passed as string to SQL Server — it handles date conversion
+            "date" => DateTime.TryParse(rawValue, out var dt) ? dt.ToString("yyyy-MM-dd") : rawValue,
             "string" => rawValue,
             _ => rawValue
         };
