@@ -215,18 +215,35 @@ try
         if (!string.IsNullOrWhiteSpace(opts.BaseUrl))
             client.BaseAddress = new Uri(opts.BaseUrl);
         client.Timeout = TimeSpan.FromSeconds(opts.TimeoutSeconds);
-    }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    }).ConfigurePrimaryHttpMessageHandler((sp) =>
     {
-        // Bypass SSL certificate validation for localhost/same-machine calls.
-        // Both services run on the same server — the IIS certificate is issued
-        // for the public domain, not localhost, causing validation failure locally.
-        ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) =>
+        var opts = sp.GetRequiredService<IOptions<AqmsApiOptions>>().Value;
+        var handler = new HttpClientHandler();
+        // When BaseUrl uses localhost/IP, IIS rejects requests with "invalid hostname"
+        // because the site binding requires the public domain in the Host header.
+        // We send requests to localhost but spoof the Host header to match the IIS binding.
+        if (!string.IsNullOrWhiteSpace(opts.SiteHostName))
         {
-            var host = msg.RequestUri?.Host ?? "";
-            if (host is "localhost" or "127.0.0.1" || host.EndsWith(".local"))
-                return true;
-            return errors == System.Net.Security.SslPolicyErrors.None;
+            // Bypass SSL so the localhost/IP cert mismatch doesn't block internal calls
+            handler.ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) => true;
         }
+        else
+        {
+            handler.ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) =>
+            {
+                var host = msg.RequestUri?.Host ?? "";
+                if (host is "localhost" or "127.0.0.1" || host.EndsWith(".local"))
+                    return true;
+                return errors == System.Net.Security.SslPolicyErrors.None;
+            };
+        }
+        return handler;
+    }).AddHttpMessageHandler((sp) =>
+    {
+        // When SiteHostName is set, IIS requires the Host header to match its binding.
+        // We inject it here so requests to localhost carry the correct Host value.
+        var opts = sp.GetRequiredService<IOptions<AqmsApiOptions>>().Value;
+        return new HostHeaderHandler(opts.SiteHostName);
     });
 
     var app = builder.Build();

@@ -23,4 +23,13 @@ public sealed class AqmsApiOptions
     /// Set via AqmsApi:ServiceToken in appsettings or user-secrets.
     /// </summary>
     public string ServiceToken { get; set; } = string.Empty;
+
+    /// <summary>
+    /// When the AQMS Web API is on the same IIS server, set this to the IIS site's
+    /// host-header binding (e.g. "atlas.smartgeoapps.com") so the Host header sent
+    /// with every request matches what IIS expects. SSL validation is also bypassed
+    /// so self-signed / localhost certs don't block internal calls.
+    /// Leave empty when BaseUrl uses the public domain directly.
+    /// </summary>
+    public string SiteHostName { get; set; } = string.Empty;
 }
