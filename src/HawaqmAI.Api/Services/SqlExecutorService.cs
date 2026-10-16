@@ -98,8 +98,9 @@ public sealed class SqlExecutorService : ISqlExecutorService
         var dp = new DynamicParameters();
         foreach (var (key, value) in parameters)
         {
-            // Dapper handles List<int> as a table-valued parameter for IN clauses
-            dp.Add(key, value);
+            // Dapper handles List<int> as a table-valued parameter for IN clauses.
+            // DBNull.Value is not accepted by Dapper — convert to C# null which Dapper maps to SQL NULL.
+            dp.Add(key, value is DBNull ? null : value);
         }
         return dp;
     }

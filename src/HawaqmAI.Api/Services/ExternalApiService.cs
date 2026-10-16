@@ -375,7 +375,7 @@ public sealed class ExternalApiService : IExternalApiService
                     """
                     SELECT TOP 1 d.DeviceId AS DeviceId, d.DeviceName, d.StationID
                     FROM DMN_Devices d
-                    WHERE d.Status = 1
+                    WHERE ISNULL(d.IsDeleted, 0) = 0
                       AND (
                            d.DeviceName = @deviceName
                         OR d.DeviceName = @canonicalSpaced
@@ -1590,7 +1590,7 @@ public sealed class ExternalApiService : IExternalApiService
                     .ToList();
                 if (aqiValues.Count > 0)
                 {
-                    value       = Math.Round(aqiValues.Select(r => r.Value).Average(), 0);
+                    value       = Math.Round(aqiValues.Select(r => r.Value).Average(), 1);
                     unit        = aqiValues.First().Unit;
                     lastUpdated = group.Select(d => d.LastUpdated)
                                        .Where(t => !string.IsNullOrWhiteSpace(t))
@@ -1606,7 +1606,7 @@ public sealed class ExternalApiService : IExternalApiService
                     {
                         if (device.Params.TryGetValue(variant, out var reading))
                         {
-                            value       = Math.Round(reading.Value, 2);
+                            value       = Math.Round(reading.Value, 1);
                             unit        = reading.Unit;
                             lastUpdated = device.LastUpdated;
                             break;
@@ -1721,7 +1721,7 @@ public sealed class ExternalApiService : IExternalApiService
                     .ToList();
                 if (aqiValues.Count > 0)
                 {
-                    value       = Math.Round(aqiValues.Select(r => r.Value).Average(), 0);
+                    value       = Math.Round(aqiValues.Select(r => r.Value).Average(), 1);
                     unit        = aqiValues.First().Unit;
                     lastUpdated = group.Select(d => d.LastUpdated)
                                        .Where(t => !string.IsNullOrWhiteSpace(t))
@@ -1737,7 +1737,7 @@ public sealed class ExternalApiService : IExternalApiService
                     {
                         if (device.Params.TryGetValue(variant, out var reading))
                         {
-                            value       = Math.Round(reading.Value, 2);
+                            value       = Math.Round(reading.Value, 1);
                             unit        = reading.Unit;
                             lastUpdated = device.LastUpdated;
                             break;

@@ -121,16 +121,28 @@ public sealed class RbacEngine : IRbacEngine
             }
         }
 
-        // ── Step 2b: Remove WHERE conditions for optional params that weren't resolved ──
-        // If the SQL references @paramName but it wasn't bound, strip the condition entirely
-        // so the query doesn't throw an unbound variable error. This means no filter is applied
-        // for that dimension — all rows pass through for that optional condition.
+        // ── Step 2b: Handle unresolved optional params ───────────────────────
+        // If the SQL uses "(@param IS NULL OR ...)" pattern → bind null so SQL Server
+        // evaluates the IS NULL branch and skips the filter (no condition removed).
+        // Otherwise → remove the condition entirely (legacy behaviour for simple AND conditions).
         foreach (var param in template.Params.Where(p => p.Optional && p.Type != "column"))
         {
             if (!parameters.ContainsKey(param.Name) && sql.Contains($"@{param.Name}", StringComparison.OrdinalIgnoreCase))
             {
-                sql = RemoveParamCondition(sql, param.Name);
-                _log.Debug("RBAC: removed optional param condition '@{Param}' from SQL (not resolved)", param.Name);
+                // Detect "@param IS NULL OR ..." pattern (the param appears BEFORE IS NULL in SQL)
+                var isNullOrPattern = sql.Contains($"@{param.Name} IS NULL", StringComparison.OrdinalIgnoreCase);
+
+                if (isNullOrPattern)
+                {
+                    // Bind C# null (not DBNull.Value) — Dapper maps null to SQL NULL correctly
+                    parameters[param.Name] = null!;
+                    _log.Debug("RBAC: bound null for optional param '@{Param}' (IS NULL OR pattern)", param.Name);
+                }
+                else
+                {
+                    sql = RemoveParamCondition(sql, param.Name);
+                    _log.Debug("RBAC: removed optional param condition '@{Param}' from SQL (not resolved)", param.Name);
+                }
             }
         }
 
@@ -154,7 +166,8 @@ public sealed class RbacEngine : IRbacEngine
         // that already groups by sector — injecting a WHERE filter would break those queries.
         var skipSectorInjection = template.SkipSiteFilter
             || template.Id is "sites_count_by_sector" or "sites_count_by_region"
-                or "sector_latest_pollutant" or "sites_count_by_sector";
+                or "sector_latest_pollutant" or "devices_with_readings"
+                or "count_sites_in_region" or "sites_by_region";
         if (!skipSectorInjection && !string.IsNullOrWhiteSpace(scope.Sector))
         {
             if (sql.Contains("@sectorName", StringComparison.OrdinalIgnoreCase) && !parameters.ContainsKey("sectorName"))
@@ -443,14 +456,17 @@ public sealed class RbacEngine : IRbacEngine
             else
                 siteColumn = "StationID";
 
-            if (upperSql.Contains("WHERE"))
+            // Use the LAST WHERE clause — queries with subqueries have an inner WHERE inside
+            // the subquery and an outer WHERE after it. We must inject into the outer WHERE.
+            var lastWhereIdx = upperSql.LastIndexOf("WHERE");
+            if (lastWhereIdx >= 0)
             {
-                var insertPos = sql.IndexOf("WHERE", StringComparison.OrdinalIgnoreCase) + 5;
+                var insertPos = lastWhereIdx + 5; // skip past "WHERE"
                 sql = sql[..insertPos] + $" {siteColumn} IN @siteIds AND " + sql[insertPos..];
             }
             else
             {
-                // Insert WHERE before GROUP BY (aggregate queries) or ORDER BY, whichever comes first
+                // No WHERE at all — insert before GROUP BY or ORDER BY
                 var groupByIdx = sql.IndexOf("GROUP BY", StringComparison.OrdinalIgnoreCase);
                 var orderByIdx = sql.IndexOf("ORDER BY", StringComparison.OrdinalIgnoreCase);
                 var insertIdx = groupByIdx >= 0 ? groupByIdx
@@ -493,9 +509,11 @@ public sealed class RbacEngine : IRbacEngine
         var condition = $"{sectorColumn} LIKE @sectorName";
         parameters["sectorName"] = $"%{sector}%";
 
-        if (upperSql.Contains("WHERE"))
+        // Use the LAST WHERE — subqueries have inner WHEREs before the outer one
+        var lastWhereIdx = upperSql.LastIndexOf("WHERE");
+        if (lastWhereIdx >= 0)
         {
-            var insertPos = sql.IndexOf("WHERE", StringComparison.OrdinalIgnoreCase) + 5;
+            var insertPos = lastWhereIdx + 5;
             sql = sql[..insertPos] + $" {condition} AND " + sql[insertPos..];
         }
         else

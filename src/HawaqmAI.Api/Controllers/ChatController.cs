@@ -302,11 +302,21 @@ public sealed class ChatController : ControllerBase
         };
         var siteTypeWords = new[] { "school", "residential", "commercial", "institutional", "site", "station",
                                      "reyada", "saad", "naeem", "bateen", "khalifa", "kaltham", "gems" };
-        // Detect "at <ProperName>" pattern — "at Latifa", "at Al Reyada", "at Emirates" etc.
-        // Matches: "at " followed by one or more capitalised or Arabic-name words (2+ chars)
+        // Detect a site name reference using any common preposition or phrasing.
+        // Covers: "at X", "in X", "for X", "of X", "about X", "near X", "under X",
+        //         "the device X belongs to", "X site", "belongs to X", "located at X", etc.
+        // Uses original-case message so capitalised proper nouns are detected reliably.
         bool hasAtSitePattern = System.Text.RegularExpressions.Regex.IsMatch(
-            request.Message,  // use original case for "at Capital Word" detection
-            @"\bat\s+[A-Z][a-zA-Z]{1,}(\s+[A-Za-z]{2,}){0,5}");
+            request.Message,
+            @"\b(?:at|in|for|of|about|near|under|from|regarding|within|inside)\s+(?:the\s+)?(?:site\s+|school\s+|station\s+|building\s+)?[A-Z][a-zA-Z]{1,}(?:\s+[A-Za-z]{2,}){0,5}")
+            || System.Text.RegularExpressions.Regex.IsMatch(
+            request.Message,
+            @"\bthe\s+[A-Z][a-zA-Z]{1,}(?:\s+[A-Za-z]{2,}){0,4}\s+(?:site|school|station|building|facility)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            || System.Text.RegularExpressions.Regex.IsMatch(
+            request.Message,
+            @"(?:belongs\s+to|located\s+at|deployed\s+at|installed\s+at)\s+[A-Z][a-zA-Z]{1,}(?:\s+[A-Za-z]{2,}){0,5}",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         bool isSiteSafetyQuestion = safetyWords.Any(s => lowerMsg.Contains(s))
             && (siteTypeWords.Any(s => lowerMsg.Contains(s)) || hasAtSitePattern);
 
@@ -358,7 +368,7 @@ public sealed class ChatController : ControllerBase
         var hasSiteWord = new[] { "school", "site", "station", "building", "facility", "reyada", "saad", "naeem", "bateen", "kaltham", "gems", "residential", "commercial" }.Any(s => lowerMsg.Contains(s));
         var hasSectorWord = new[] { "sector", "commercial", "residential", "public", "govt", "government" }.Any(s => lowerMsg.Contains(s));
         bool hasDeviceName = System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\b(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})\b");
-        bool isGenericAqiRequest = genericAqiTriggers.Any(t => lowerMsg.Contains(t)) && !hasRegionWord && !hasSiteWord && !hasSectorWord && !hasDeviceName;
+        bool isGenericAqiRequest = genericAqiTriggers.Any(t => lowerMsg.Contains(t)) && !hasRegionWord && !hasSiteWord && !hasSectorWord && !hasDeviceName && !hasAtSitePattern;
 
         if (isGenericAqiRequest)
         {
@@ -439,6 +449,7 @@ public sealed class ChatController : ControllerBase
             "pm2.5", "pm 2.5", "pm10", "pm 10", "co2", "carbon dioxide", "carbon monoxide",
             "no2", "nitrogen dioxide", "o3", "ozone", "tvoc", "voc", "ch2o", "formaldehyde",
             "temperature", "temp", "humidity", "noise", "aqi", "air quality index",
+            "air quality", "air-quality", "air quality category", "air quality level",
             "reading", "readings", "level", "levels", "value", "concentration"
         };
         bool hasParameterKeyword = parameterKeywords.Any(p => lowerMsg.Contains(p));
@@ -447,8 +458,9 @@ public sealed class ChatController : ControllerBase
         // Exclude distribution/chart questions — "pie chart of schools by AQI category" is NOT a site reading lookup
         var chartDistributionKeywords = new[] { "pie chart", "pie graph", "bar chart", "bar graph", "by aqi category", "by category", "distribution", "breakdown", "chart of schools", "chart of sites", "chart of devices" };
         bool isChartDistribution = chartDistributionKeywords.Any(k => lowerMsg.Contains(k));
-        // Detect whether user asked for a bar chart (vs pie) so pre-checks can honour the request
+        // Detect whether user asked for a bar or pie chart so pre-checks can honour the request
         bool userWantsBar = lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph");
+        bool userWantsPie = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph") || lowerMsg.Contains("plot a pie") || lowerMsg.Contains("plot pie");
         // Schools AQI pie: only force schools_aqi_pie when the question is specifically about
         // schools/sites broken down BY AQI category — NOT generic pie charts about regions/sectors/counts.
         var aqiCategoryWords = new[] { "aqi category", "aqi level", "aqi categories", "aqi levels", "by category", "by aqi" };
@@ -467,7 +479,78 @@ public sealed class ChatController : ControllerBase
             lowerMsg.Contains("previous day") || lowerMsg.Contains("day before") || lowerMsg.Contains("last night") ||
             System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
                 @"(on\s+20\d{2}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|on\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))");
-        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion && !isChartDistribution && !isDeviceCountQuestion && !msgHasPastDate;
+        // Exclude sector-filter questions — "all Abu Dhabi sites under Residential sector with their latest CO2"
+        // is a sector-wide listing, NOT a single-site parameter lookup. These must route to sector_latest_pollutant.
+        var sectorFilterPhrases = new[] {
+            "sites under residential", "sites under commercial", "sites under institutional",
+            "all sites under", "residential sector", "commercial sector", "institutional sector",
+            "residential sites", "commercial sites", "institutional sites",
+            "under residential", "under commercial", "under institutional"
+        };
+        bool isSectorFilterQuestion = sectorFilterPhrases.Any(p => lowerMsg.Contains(p))
+            && (lowerMsg.Contains("all") || lowerMsg.Contains("table") || lowerMsg.Contains("show") || lowerMsg.Contains("list"));
+        // Exclude generic school questions — "all Abu Dhabi schools with their latest CO2" is a schools-sector
+        // listing, NOT a single-site lookup. Must route to schools_latest_pollutant, not site_aqi_single.
+        var genericSchoolPhrases = new[] {
+            "all schools", "schools in", "schools with", "abu dhabi schools", "al ain schools",
+            "al dhafra schools", "show me schools", "table of schools", "list schools",
+            "all abu dhabi schools", "all al ain schools", "all al dhafra schools",
+            "schools with their", "schools latest", "school sites", "school co2", "school aqi"
+        };
+        bool isGenericSchoolMsg = genericSchoolPhrases.Any(p => lowerMsg.Contains(p))
+            || (lowerMsg.Contains("schools") && (lowerMsg.Contains("all") || lowerMsg.Contains("table") || lowerMsg.Contains("list") || lowerMsg.Contains("show")));
+
+        // ── 2d-pre. Hard pre-check: generic schools + pollutant → force schools_latest_pollutant ──
+        // "Show me a table of all Abu Dhabi schools with their latest CO2 reading" must never
+        // resolve to site_aqi_single. Force schools_latest_pollutant directly.
+        if (isGenericSchoolMsg && hasParameterKeyword && !isChartDistribution)
+        {
+            _log.Debug("ChatController: generic-school-pollutant pre-check fired → forcing schools_latest_pollutant");
+            var schoolPollTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "schools_latest_pollutant");
+            if (schoolPollTemplate is not null && schoolPollTemplate.ApiCall is not null)
+            {
+                var schoolBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var schoolFillResult = await _azureAI.FillParametersAsync(request.Message, schoolPollTemplate, history, scope, ct);
+                var schoolApiResult = await _externalApi.CallAsync(schoolPollTemplate.ApiCall, schoolFillResult.Parameters, scope, schoolBearerToken, user, schoolPollTemplate.Id, ct);
+                if (schoolApiResult.Success)
+                {
+                    var schoolMsgId = Guid.NewGuid();
+                    var schoolSummary = await _azureAI.SummarizeResultsAsync(request.Message, schoolPollTemplate, schoolApiResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: schoolMsgId,
+                        assistantContent: schoolSummary,
+                        sql: null,
+                        responseType: schoolPollTemplate.ResponseType,
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: schoolPollTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: null,
+                        executionTimeMs: (int)schoolApiResult.ExecutionTimeMs,
+                        tokenCount: 0,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: schoolMsgId,
+                        template: schoolPollTemplate,
+                        llmSummary: schoolSummary,
+                        rows: schoolApiResult.Rows,
+                        rowCount: schoolApiResult.Rows.Count,
+                        executionTimeMs: (int)schoolApiResult.ExecutionTimeMs,
+                        scope: scope,
+                        modelUsed: null,
+                        tokenCount: 0));
+                }
+                _log.Warning("ChatController: schools_latest_pollutant pre-check API call failed: {Error}", schoolApiResult.Error);
+            }
+            // Fall through to normal routing if template missing or API failed
+        }
+
+        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion && !isChartDistribution && !isDeviceCountQuestion && !msgHasPastDate && !isSectorFilterQuestion && !isGenericSchoolMsg;
 
         if (isParameterAtSiteQuestion)
         {
@@ -1099,6 +1182,71 @@ public sealed class ChatController : ControllerBase
             // If template missing or SQL failed, fall through to normal routing
         }
 
+        // ── 2h. Hard pre-check: "devices under/in region or sector" → force devices_by_filter ──
+        // Compass LLM often routes region/sector device queries to devices_with_readings (site-only).
+        // Detect region or sector words and force devices_by_filter before LLM routing.
+        // NOTE: Only sector-as-category phrases trigger this (e.g. "school sector", "commercial sector").
+        //       A site name that contains "school" (e.g. "Mleih Cycle 3 School") should NOT trigger this.
+        var devFilterRegionWords  = new[] { "abu dhabi", "abudhabi", "al ain", "alain", "al dhafra", "aldhafra" };
+        // Sector phrases that unambiguously mean the sector category, not a site name
+        var devFilterSectorPhrases = new[] {
+            "commercial sector", "residential sector", "school sector", "industrial sector", "public sector",
+            "in commercial", "in residential", "under commercial", "under residential",
+            "under industrial", "in industrial"
+        };
+        var devFilterDeviceWords  = new[] { "devices", "sensors", "device", "sensor" };
+        bool devHasRegionWord  = devFilterRegionWords.Any(r => lowerMsg.Contains(r));
+        bool devHasSectorPhrase = devFilterSectorPhrases.Any(s => lowerMsg.Contains(s));
+        bool devHasDeviceWord  = devFilterDeviceWords.Any(d => lowerMsg.Contains(d));
+        // Only fire when asking about devices in a region/sector — not for AQI/readings questions
+        bool isDevicesByRegionOrSector = devHasDeviceWord && (devHasRegionWord || devHasSectorPhrase)
+            && !lowerMsg.Contains("aqi") && !lowerMsg.Contains("air quality")
+            && !lowerMsg.Contains("reading") && !lowerMsg.Contains("pm2.5")
+            && !lowerMsg.Contains("co2") && !lowerMsg.Contains("temperature");
+
+        if (isDevicesByRegionOrSector)
+        {
+            _log.Debug("ChatController: devices-by-region/sector pre-check fired → forcing devices_by_filter");
+            var devFilterTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "devices_by_filter");
+            if (devFilterTemplate is not null)
+            {
+                var devFilterFill = await _azureAI.FillParametersAsync(enrichedMessage, devFilterTemplate, history, scope, ct);
+                var (devFilterSafeSql, devFilterSqlParams) =
+                    _rbac.BuildSafeQuery(devFilterTemplate, devFilterFill.Parameters, user, scope);
+                var (devFilterSqlValid, devFilterSqlError) = SqlValidator.Validate(devFilterSafeSql);
+                if (devFilterSqlValid)
+                {
+                    var devFilterResult = await _sqlExecutor.ExecuteAsync(devFilterSafeSql, devFilterSqlParams, ct);
+                    if (devFilterResult.Success)
+                    {
+                        var devFilterSummary = await _azureAI.SummarizeResultsAsync(
+                            request.Message, devFilterTemplate, devFilterResult.Rows, scope, ct);
+                        var devFilterMsgId = Guid.NewGuid();
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: devFilterMsgId,
+                            assistantContent: devFilterSummary,
+                            sql: devFilterSafeSql,
+                            responseType: devFilterTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: null,
+                            dataSource: devFilterTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: devFilterFill.ModelUsed,
+                            executionTimeMs: (int)devFilterResult.ExecutionTimeMs,
+                            tokenCount: devFilterFill.TokensUsed,
+                            ct: ct);
+                        return Ok(_formatter.Format(session.SessionId, devFilterMsgId, devFilterTemplate,
+                            devFilterSummary, devFilterResult.Rows, devFilterResult.Rows.Count,
+                            (int)devFilterResult.ExecutionTimeMs, scope, devFilterFill.ModelUsed, devFilterFill.TokensUsed));
+                    }
+                }
+                _log.Warning("ChatController: devices_by_filter pre-check failed (valid={V} err='{E}'), falling through to routing",
+                    devFilterSqlValid, devFilterSqlError ?? "(none)");
+            }
+        }
+
         // ── 3. Route the question to an approved template ───────────────────
         var routeResult = await _queryRouter.RouteAsync(enrichedMessage, user, history, ct);
 
@@ -1211,6 +1359,17 @@ public sealed class ChatController : ControllerBase
             llmParams = paramResult.Parameters;
         }
 
+        // ── 4b. Override chartType when user explicitly asked for pie/bar ──
+        // Handles follow-up questions like "plot a pie chart for the above" where the
+        // previous template's default chartType may be "bar" or "line".
+        if (template.ResponseType == "chart")
+        {
+            if (userWantsPie && !userWantsBar)
+                template.ChartType = "pie";
+            else if (userWantsBar && !userWantsPie)
+                template.ChartType = "bar";
+        }
+
         // ── 5. RBAC: validate selection ─────────────────────────────────────
         var (rbacValid, rbacReason) = _rbac.ValidateSelection(template, user);
         if (!rbacValid)
@@ -1312,6 +1471,23 @@ public sealed class ChatController : ControllerBase
             resultRows = apiResult.Rows;
             executionTimeMs = apiResult.ExecutionTimeMs;
             dataSourceLabel = template.TableUsed; // descriptive label e.g. "AirQuality API"
+
+            // Apply topN: if user asked "top N" sort by Value descending and take N rows.
+            // schools_pollutant and sector_pollutant rows use "Value" column for the parameter reading.
+            if (llmParams.TryGetValue("topN", out var topNStr)
+                && int.TryParse(topNStr, out var topNVal) && topNVal > 0)
+            {
+                resultRows = resultRows
+                    .OrderByDescending(r =>
+                    {
+                        // "Value" is the column name in schools_pollutant / sector_pollutant rows
+                        var raw = r.GetValueOrDefault("Value") ?? r.GetValueOrDefault("AQI") ?? r.GetValueOrDefault("ParameterValue");
+                        return raw is double d ? d : double.TryParse(raw?.ToString(), out var pd) ? pd : 0.0;
+                    })
+                    .Take(topNVal)
+                    .ToList();
+                _log.Information("ChatController: applied topN={N} filter on API results, {Count} rows returned", topNVal, resultRows.Count);
+            }
         }
         else
         {
@@ -1522,8 +1698,7 @@ public sealed class ChatController : ControllerBase
                     """
                     SELECT TOP 1 d.DeviceId, d.DeviceName, d.StationID
                     FROM DMN_Devices d
-                    WHERE d.Status = 1
-                      AND ISNULL(d.IsDeleted, 0) = 0
+                    WHERE ISNULL(d.IsDeleted, 0) = 0
                       AND (d.DeviceName = @deviceName
                         OR d.DeviceName = @canonicalSpaced
                         OR REPLACE(UPPER(d.DeviceName),' ','') = @normalised
@@ -1584,6 +1759,75 @@ public sealed class ChatController : ControllerBase
                 goto afterSqlExecution;
             }
 
+            // ── device_status / device_info / device_pollutants: resolve partial device name → canonical ──
+            // Users sometimes type "B 0001" instead of "BA 0001". Resolve the canonical name via a
+            // fuzzy DB lookup so the template SQL gets the exact DeviceName from DMN_Devices.
+            if (template.Id is "device_status" or "device_info" or "device_pollutants")
+            {
+                var devNameRaw = llmParams.GetValueOrDefault("deviceName") ?? "";
+                if (!string.IsNullOrWhiteSpace(devNameRaw))
+                {
+                    var normDevRaw = devNameRaw.Replace(" ", "").ToUpperInvariant();
+                    var paddedDevRaw = normDevRaw;
+                    var prefixMatchRaw = System.Text.RegularExpressions.Regex.Match(normDevRaw, @"^([A-Z]+(?:\d+[A-Z]+)*)(\d+)$");
+                    string canonicalSpacedRaw = devNameRaw;
+                    if (prefixMatchRaw.Success)
+                    {
+                        var pfx = prefixMatchRaw.Groups[1].Value;
+                        var digs = prefixMatchRaw.Groups[2].Value.PadLeft(4, '0');
+                        paddedDevRaw = pfx + digs;
+                        canonicalSpacedRaw = pfx + " " + digs;
+                    }
+
+                    // Extract leading letter(s) and digit suffix for LIKE fuzzy match
+                    // e.g. "B0001" → firstChar="B", digitSuffix="0001"
+                    var firstCharRaw = normDevRaw.Length > 0 ? normDevRaw[0].ToString() : "";
+                    var digitSuffixMatch = System.Text.RegularExpressions.Regex.Match(normDevRaw, @"(\d{1,4})$");
+                    var digitSuffix = digitSuffixMatch.Success ? digitSuffixMatch.Groups[1].Value.PadLeft(4, '0') : "";
+
+                    var devLookupRaw = await _sqlExecutor.ExecuteAsync(
+                        """
+                        SELECT TOP 1 d.DeviceId, d.DeviceName, d.StationID
+                        FROM DMN_Devices d
+                        WHERE ISNULL(d.IsDeleted, 0) = 0
+                          AND (d.DeviceName = @deviceName
+                            OR d.DeviceName = @canonicalSpaced
+                            OR REPLACE(UPPER(d.DeviceName),' ','') = @normalised
+                            OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical
+                            OR (LEFT(REPLACE(UPPER(d.DeviceName),' ',''),1) = @firstChar
+                                AND REPLACE(UPPER(d.DeviceName),' ','') LIKE '%' + @digitSuffix))
+                        ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0
+                                      WHEN d.DeviceName = @canonicalSpaced THEN 1
+                                      WHEN REPLACE(UPPER(d.DeviceName),' ','') = @normalised THEN 2
+                                      WHEN REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical THEN 3
+                                      ELSE 4 END, d.DeviceName
+                        """,
+                        new Dictionary<string, object>
+                        {
+                            ["deviceName"]      = devNameRaw,
+                            ["canonicalSpaced"] = canonicalSpacedRaw,
+                            ["normalised"]      = normDevRaw,
+                            ["paddedCanonical"] = paddedDevRaw,
+                            ["firstChar"]       = firstCharRaw,
+                            ["digitSuffix"]     = digitSuffix
+                        }, ct);
+
+                    if (devLookupRaw.Success && devLookupRaw.Rows.Count > 0)
+                    {
+                        // Override deviceName with the exact canonical name from DB
+                        var resolvedName = devLookupRaw.Rows[0]["DeviceName"]?.ToString() ?? devNameRaw;
+                        llmParams["deviceName"] = resolvedName;
+                        _log.Information("Device name resolved: '{Input}' → '{Resolved}' for template {Id}",
+                            devNameRaw, resolvedName, template.Id);
+                    }
+                    else
+                    {
+                        _log.Warning("No device found matching '{Input}' for template {Id}", devNameRaw, template.Id);
+                        // Let the template SQL run — it will return 0 rows and the LLM prompt handles "no device found"
+                    }
+                }
+            }
+
             // ── device_reading_history: resolve deviceName → deviceId, pick interval table ──
             if (template.Id == "device_reading_history")
             {
@@ -1611,8 +1855,7 @@ public sealed class ChatController : ControllerBase
                     """
                     SELECT TOP 1 d.DeviceId, d.ID AS DevicePk, d.DeviceName, d.StationID
                     FROM DMN_Devices d
-                    WHERE d.Status = 1
-                      AND ISNULL(d.IsDeleted, 0) = 0
+                    WHERE ISNULL(d.IsDeleted, 0) = 0
                       AND (d.DeviceName = @deviceName
                         OR d.DeviceName = @canonicalSpaced
                         OR REPLACE(UPPER(d.DeviceName),' ','') = @normalised
@@ -2426,6 +2669,124 @@ public sealed class ChatController : ControllerBase
 
             return Ok(_formatter.FormatError(errorSession.SessionId, friendlyError, "INTERNAL_ERROR"));
         }
+    }
+
+    // ── Debug: route-test endpoint ───────────────────────────────────────────
+
+    /// <summary>
+    /// Debug endpoint — returns the routing decision for a question without executing SQL or LLM summarization.
+    /// Shows which template was chosen, its score, top-5 candidates, and which pre-check (if any) fired.
+    /// Only available in Development environment.
+    /// POST /api/chat/route-test  { "message": "your question here" }
+    /// </summary>
+    [HttpPost("route-test")]
+    [AllowAnonymous]
+    public async Task<IActionResult> RouteTest([FromBody] RouteTestRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Message))
+            return BadRequest(new { error = "message is required" });
+
+        var lowerMsg = request.Message.ToLowerInvariant();
+        var result = new RouteTestResult { Question = request.Message };
+
+        // ── Fake user context for routing only (no site filtering — route-test checks templates only) ──
+        var fakeUser = new UserContext
+        {
+            UserId = "debug",
+            Role = "admin",
+            PermittedCategories = ["air_quality", "device_health", "admin"],
+            PermittedSiteIds = [-1]  // deny-all sentinel — route-test never executes SQL
+        };
+
+        var templates = await _queryRouter.GetPermittedTemplatesAsync(fakeUser, ct);
+
+        // ── Check AQI definition pre-check ───────────────────────────
+        var aqiDefinitionKeywords = new[] {
+            "what aqi range", "aqi range is considered", "aqi categories", "aqi levels",
+            "what does aqi mean", "how is aqi calculated", "aqi scale", "aqi meaning",
+            "considered good", "considered moderate", "considered unhealthy", "considered hazardous",
+            "what is good aqi", "what is moderate aqi", "recording frequency", "weather forecast",
+            "can i export", "how often do hawaqm devices", "when is a device considered offline"
+        };
+        var safetyWords = new[] { "safe", "safety", "attend", "suitable", "is it good", "is it bad",
+            "how is the air", "good or bad", "is it healthy", "is it unhealthy", "can children", "should children" };
+        var siteTypeWords = new[] { "school", "residential", "commercial", "site", "station", "reyada", "saad", "naeem" };
+        bool hasAtSitePattern = System.Text.RegularExpressions.Regex.IsMatch(
+            request.Message,
+            @"\b(?:at|in|for|of|about|near)\s+(?:the\s+)?(?:site\s+|school\s+|station\s+)?[A-Z][a-zA-Z]{1,}(?:\s+[A-Za-z]{2,}){0,5}");
+        bool isSiteSafetyQ = safetyWords.Any(s => lowerMsg.Contains(s))
+            && (siteTypeWords.Any(s => lowerMsg.Contains(s)) || hasAtSitePattern);
+
+        if (!isSiteSafetyQ && aqiDefinitionKeywords.Any(k => lowerMsg.Contains(k)))
+        {
+            result.PreCheckFired = "AQI_DEFINITION → faq_answer";
+            result.SelectedTemplate = "faq_answer";
+            result.Note = "Intercepted before routing. Answered from faq.json.";
+            return Ok(result);
+        }
+
+        // ── Check site safety pre-check ──────────────────────────────
+        if (isSiteSafetyQ)
+        {
+            result.PreCheckFired = "SITE_SAFETY → site_aqi_single";
+            result.SelectedTemplate = "site_aqi_single";
+            result.Note = "Intercepted before routing. Live AQI data will be fetched.";
+            return Ok(result);
+        }
+
+        // ── Check generic AQI pre-check ──────────────────────────────
+        var genericAqiTriggers = new[] { "show me the aqi", "what is the aqi", "display aqi", "current aqi", "aqi now" };
+        var hasRegionWord = new[] { "abu dhabi", "al ain", "al dhafra" }.Any(r => lowerMsg.Contains(r));
+        var hasSiteWord = new[] { "school", "site", "station" }.Any(s => lowerMsg.Contains(s));
+        bool hasDeviceName = System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\b(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})\b");
+        if (genericAqiTriggers.Any(t => lowerMsg.Contains(t)) && !hasRegionWord && !hasSiteWord && !hasDeviceName && !hasAtSitePattern)
+        {
+            result.PreCheckFired = "GENERIC_AQI → clarification prompt";
+            result.SelectedTemplate = null;
+            result.Note = "No site/region/device specified. User will be asked to clarify.";
+            return Ok(result);
+        }
+
+        // ── Normal routing ────────────────────────────────────────────
+        var routerResult = await _queryRouter.RouteAsync(request.Message, fakeUser, null, ct);
+
+        // Top-5 scores by re-scoring all templates
+        var questionTokens = request.Message.ToLowerInvariant()
+            .Split([' ', ',', '?', '!', '.'], StringSplitOptions.RemoveEmptyEntries);
+        result.Top5Candidates = templates
+            .Select(t => new CandidateScore
+            {
+                TemplateId = t.Id,
+                Description = t.Description ?? string.Empty,
+                PatternMatchCount = t.Patterns.Count(p => questionTokens.Any(tok => p.ToLowerInvariant().Contains(tok)))
+            })
+            .OrderByDescending(x => x.PatternMatchCount)
+            .Take(5)
+            .ToList();
+
+        if (routerResult.Template is not null)
+        {
+            result.SelectedTemplate = routerResult.Template.Id;
+            result.Score = routerResult.Score;
+            result.Confidence = routerResult.Score >= 0.85 ? "HIGH" : routerResult.Score >= 0.50 ? "MEDIUM" : "LOW";
+            result.Note = "Template selected directly by keyword scoring.";
+        }
+        else if (routerResult.Candidates.Count > 0)
+        {
+            result.SelectedTemplate = null;
+            result.Score = routerResult.Score;
+            result.Confidence = "MEDIUM";
+            result.LlmCandidates = routerResult.Candidates.Select(c => c.Id).ToList();
+            result.Note = "Score in medium range — LLM would pick between these candidates.";
+        }
+        else if (!string.IsNullOrEmpty(routerResult.ClarificationPrompt))
+        {
+            result.SelectedTemplate = null;
+            result.Confidence = "LOW";
+            result.Note = $"Low confidence. Clarification prompt: {routerResult.ClarificationPrompt}";
+        }
+
+        return Ok(result);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────

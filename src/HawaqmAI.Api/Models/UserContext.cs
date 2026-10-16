@@ -33,7 +33,7 @@ public sealed class UserContext
     /// </summary>
     public List<string> PermittedCategories { get; set; } = ["air_quality"];
 
-    /// <summary>Whether the user has access to all sites (admin shortcut).</summary>
+    /// <summary>Whether the user has access to all sites (no site restrictions assigned).</summary>
     public bool HasAllSitesAccess => PermittedSiteIds.Count == 0;
 
     /// <summary>Client IP address for audit logging.</summary>

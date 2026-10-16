@@ -143,10 +143,30 @@
     },
     {
       "question": "The site is marked inactive but one device is still sending data. Is that an error?",
-      "answer": "A site is marked inactive when one or more of its devices are inactive. If at least one device is still sending data but another is not, the site may be shown as inactive depending on configuration. Check the individual device statuses for the site to confirm which devices are active."
+      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
+    },
+    {
+      "question": "Why is the site inactive if a device is still sending data?",
+      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
+    },
+    {
+      "question": "Can a site be inactive while its device is sending data?",
+      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
+    },
+    {
+      "question": "Inactive site — device still sending data",
+      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
     },
     {
       "question": "The Data Success Rate is below 75%. Can I still use the AQI results?",
+      "answer": "Yes — the readings that did arrive are valid and can be used. But always quote the Data Success Rate next to the results, because the averages are built on incomplete data."
+    },
+    {
+      "question": "Are AQI results reliable when the Data Success Rate is under 75%?",
+      "answer": "Yes — the readings that did arrive are valid and can be used. But always quote the Data Success Rate next to the results, because the averages are built on incomplete data."
+    },
+    {
+      "question": "AQI results with DSR below 75%",
       "answer": "Yes — the readings that did arrive are valid and can be used. But always quote the Data Success Rate next to the results, because the averages are built on incomplete data."
     },
     {
@@ -228,6 +248,14 @@
     {
       "question": "Why is a site not showing on the geographical map even though it is registered in HAWAQM?",
       "answer": "Almost always because the site has no geographic coordinates configured. Everything else about it works normally — reports, filters and exports. Adding the coordinates fixes it."
+    },
+    {
+      "question": "What can we do if there are not enough readings to calculate the AQI?",
+      "answer": "No. Missing values are never estimated or filled in. You get the real measurements, a clear note of which period is missing, and the Data Success Rate for context."
+    },
+    {
+      "question": "Compare two sites",
+      "answer": "Sure — which two sites, and over what period? For example: 'compare {{SCHOOL_A}} and {{SCHOOL_B}} for last month'."
     }
   ]
 }

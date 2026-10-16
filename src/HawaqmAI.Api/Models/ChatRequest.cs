@@ -51,3 +51,30 @@ public sealed class DateRangeRequest
     [Required]
     public DateOnly To { get; set; }
 }
+
+/// <summary>Request body for the route-test debug endpoint.</summary>
+public sealed class RouteTestRequest
+{
+    public string Message { get; set; } = string.Empty;
+}
+
+/// <summary>Response from the route-test debug endpoint.</summary>
+public sealed class RouteTestResult
+{
+    public string Question { get; set; } = string.Empty;
+    public string? PreCheckFired { get; set; }
+    public string? SelectedTemplate { get; set; }
+    public double? Score { get; set; }
+    public string? Confidence { get; set; }
+    public List<string> LlmCandidates { get; set; } = [];
+    public List<CandidateScore> Top5Candidates { get; set; } = [];
+    public string? Note { get; set; }
+}
+
+/// <summary>Template candidate with pattern match count for debug display.</summary>
+public sealed class CandidateScore
+{
+    public string TemplateId { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public int PatternMatchCount { get; set; }
+}

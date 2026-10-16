@@ -109,6 +109,9 @@ public sealed class QueryRouterService : IQueryRouterService
 
         if (best.Score >= high)
         {
+            // High confidence: bypass LLM and use template directly.
+            // With HighConfidenceThreshold = 1.10 this is only reached for
+            // score = 1.0 (indoor_source_analysis / dust_event_response hard overrides).
             return new QueryRouterResult
             {
                 Template = best.Template,
@@ -119,12 +122,13 @@ public sealed class QueryRouterService : IQueryRouterService
 
         if (best.Score >= low)
         {
-            var candidates = scored.Take(3).Select(x => x.Template).ToList();
+            // Always pass ALL permitted templates to the LLM — not just top 3.
+            // The LLM routing prompt is more reliable than the keyword scorer for ambiguous questions.
             return new QueryRouterResult
             {
                 Template = null,
                 Score = best.Score,
-                Candidates = candidates!
+                Candidates = permitted
             };
         }
 
@@ -248,26 +252,39 @@ public sealed class QueryRouterService : IQueryRouterService
     // pattern used by ChatController: letters+digits+letters prefix followed by 1-4 digits.
     // Handles all variants: "BA 0001", "BA0010", "SEI100M 0014", "SEI 100M 0008",
     //                        "sei100m0085", "sei 100 m 8", "BA1", "SEI100M0008" etc.
+    // Also handles partial/typo inputs like "B 0001" (missing 'A' from 'BA').
     private static bool QuestionHasDeviceName(string lowerQuestion)
     {
-        // Also check the original (for word-boundary accuracy on short names like "ba 1")
+        // Check canonical patterns: "BA 0001", "SEI100M 0014" etc.
         if (System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
             @"\b(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})\b"))
             return true;
 
         // Collapse spaces and re-check — catches "SEI 100M 0008", "sei 100 m 0014" etc.
         var collapsed = lowerQuestion.Replace(" ", "");
-        return System.Text.RegularExpressions.Regex.IsMatch(collapsed,
-            @"(ba\d{1,4}|sei100m\d{1,4})");
+        if (System.Text.RegularExpressions.Regex.IsMatch(collapsed,
+            @"(ba\d{1,4}|sei100m\d{1,4})"))
+            return true;
+
+        // Also match "device B 0001" / "device b 1" style — single-letter 'B' + digits
+        // when preceded by the word "device". Users sometimes omit the 'A' from 'BA'.
+        // Pattern: word "device" followed (anywhere after) by standalone letter B and digits.
+        if (System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
+            @"\bdevice\b.{0,30}\bb\s*\d{1,4}\b"))
+            return true;
+
+        return false;
     }
 
     // Site-name indicators — words that appear in station names but NOT in region-only queries.
     // If any of these are present alongside a region word, the question is a site query, not a region query.
     // NOTE: "school" is intentionally NOT in this list — it is a generic noun used in "all schools",
     // "schools in Abu Dhabi" etc. and must NOT be treated as a site name indicator.
+    // NOTE: "residential", "commercial", "institutional", "institution" are sector names — they are
+    // checked separately via _sectorNameWords and excluded from site-name detection when paired with
+    // "sector", "sites", "all", "show", "list" context (i.e. the user is filtering by sector, not naming a site).
     private static readonly string[] SiteNameIndicators =
     [
-        "residential", "commercial", "institutional", "institution",
         "building", "facility", "centre", "center", "hospital", "clinic",
         "office", "park", "mall", "tower", "villa", "compound", "camp",
         "indian", "british", "american", "international", "national",
@@ -277,6 +294,21 @@ public sealed class QueryRouterService : IQueryRouterService
         "wahda", "rowdah", "muroor", "electra", "hameem", "liwa", "gayathi",
         "reyada", "reayada", "kaltham", "obeidli", "gems", "british"
     ];
+
+    // Sector name words — "residential", "commercial", "institutional" appear in both sector filters
+    // ("all residential sites") and actual site names ("Abudhabi Commercial Institutional Site1").
+    // QuestionHasSiteName uses context to decide which interpretation applies.
+    private static readonly string[] SectorNameWords =
+        ["residential", "commercial", "institutional", "institution"];
+
+    // Generic site-listing context words — when sector words appear with these, it's a sector filter,
+    // not a specific site name (e.g. "all Abu Dhabi sites under Residential sector").
+    private static readonly string[] SectorFilterContext =
+        ["sector", "sites under", "all sites", "show me all", "show all", "list all",
+         "sites in", "all abu dhabi sites", "all al ain sites", "all al dhafra sites",
+         "all sites under", "sites under residential", "sites under commercial",
+         "sites under institutional", "residential sector", "commercial sector", "institutional sector",
+         "residential sites", "commercial sites", "institutional sites"];
 
     // Specific named-school indicators — unique proper nouns that only appear in a named school, not in
     // generic "schools in X" queries. Used to distinguish site_aqi_single from schools_latest_pollutant.
@@ -295,15 +327,29 @@ public sealed class QueryRouterService : IQueryRouterService
         "abu dhabi schools", "al ain schools", "al dhafra schools", "abudhabi schools",
         "alain schools", "aldhafra schools", "show me schools", "table of schools",
         "list schools", "schools air quality", "school sites", "school co2", "school aqi",
-        "schools latest", "latest co2 reading"
+        "schools latest", "schools with their", "all abu dhabi schools",
+        "all al ain schools", "all al dhafra schools", "table of all schools"
     ];
 
     /// <summary>
     /// Returns true when the question contains site-name indicators beyond just a region keyword.
-    /// Used to prevent region_aqi_geographical from winning when the user names a specific site.
+    /// Sector words (residential, commercial, institutional) are only treated as site-name indicators
+    /// when NOT used in a sector-filter context (e.g. "all residential sites" is NOT a site name).
     /// </summary>
-    private static bool QuestionHasSiteName(string lowerQuestion) =>
-        SiteNameIndicators.Any(indicator => lowerQuestion.Contains(indicator));
+    private static bool QuestionHasSiteName(string lowerQuestion)
+    {
+        // Non-sector site name indicators — always count
+        if (SiteNameIndicators.Any(indicator => lowerQuestion.Contains(indicator)))
+            return true;
+
+        // Sector words only count as site name indicators when NOT used as a sector filter
+        bool hasSectorWord = SectorNameWords.Any(w => lowerQuestion.Contains(w));
+        if (!hasSectorWord) return false;
+
+        // If question is clearly filtering by sector (not naming a specific site), return false
+        bool isSectorFilter = SectorFilterContext.Any(ctx => lowerQuestion.Contains(ctx));
+        return !isSectorFilter;
+    }
 
     // Words that indicate a device status check (not an FAQ about rules)
     private static readonly string[] DeviceStatusKeywords = [
@@ -334,6 +380,13 @@ public sealed class QueryRouterService : IQueryRouterService
         // Site historical data must always route to site_daily_averages / site_single_parameter_reading.
         var liveOnlySiteTemplates = new[] { "site_aqi_single", "site_readings_all", "main_pollutant_at_station" };
         if (liveOnlySiteTemplates.Contains(template.Id) && _specificDateRegex.IsMatch(lowerQuestion))
+            return 0.0;
+
+        // Hard override: site_aqi_single must never win when the question refers to schools generically.
+        // "all schools", "abu dhabi schools", "schools with their CO2", "all abu dhabi schools with" etc.
+        // are group queries → schools_latest_pollutant.
+        if (template.Id == "site_aqi_single"
+            && GenericSchoolPhrases.Any(p => lowerQuestion.Contains(p)))
             return 0.0;
 
         // Detect if question contains a pollutant parameter token
@@ -423,6 +476,14 @@ public sealed class QueryRouterService : IQueryRouterService
             && DeviceStatusKeywords.Any(k => lowerQuestion.Contains(k)))
         {
             maxScore = Math.Max(maxScore, 0.97);
+        }
+
+        // Penalise offline_devices/online_devices when a SPECIFIC device name is present —
+        // those templates list ALL devices, not a single device. Single-device queries go to device_status.
+        if (template.Id is "offline_devices" or "online_devices"
+            && QuestionHasDeviceName(lowerQuestion))
+        {
+            maxScore *= 0.05;
         }
 
         // Penalise device_info for "last send/report/update/active" questions with a device name —
@@ -589,8 +650,12 @@ public sealed class QueryRouterService : IQueryRouterService
 
         // Detect generic school questions: "Abu Dhabi schools", "schools in Al Ain", "all schools" etc.
         // These refer to the school SECTOR and must route to schools_latest_pollutant, NOT site_aqi_single.
-        bool isGenericSchoolQuestion = GenericSchoolPhrases.Any(p => lowerQuestion.Contains(p))
-            || (lowerQuestion.Contains("schools") && !NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k)));
+        // Explicitly exclude sector-filter questions — "sites under Residential sector" is NOT a school question
+        // even if a GenericSchoolPhrase substring happens to match.
+        bool isSectorFilterQ = SectorFilterContext.Any(ctx => lowerQuestion.Contains(ctx));
+        bool isGenericSchoolQuestion = !isSectorFilterQ
+            && (GenericSchoolPhrases.Any(p => lowerQuestion.Contains(p))
+                || (lowerQuestion.Contains("schools") && !NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k))));
 
         // Penalise site_aqi_all when the question contains a specific site name —
         // a named-site question must use site_aqi_single, not the all-sites table.
@@ -625,6 +690,13 @@ public sealed class QueryRouterService : IQueryRouterService
         // Penalise site_aqi_single for generic school questions — must not ask for a site name
         if (template.Id == "site_aqi_single" && isGenericSchoolQuestion)
             maxScore *= 0.1;
+        // Penalise pollutant_trend_hourly and sector_latest_pollutant for generic school questions —
+        // "show me a table of all Abu Dhabi schools with their latest CO2 reading" must not
+        // match on "show me readings" or "latest co2 for"; it is a schools-sector list query.
+        if (template.Id == "pollutant_trend_hourly" && isGenericSchoolQuestion)
+            maxScore *= 0.05;
+        if (template.Id == "sector_latest_pollutant" && isGenericSchoolQuestion)
+            maxScore *= 0.05;
 
         // Boost region_aqi_geographical when question has a region keyword + AQI/air quality signal
         // but NO specific site name — e.g. "what is the AQI in AL Ain", "AQI in Abudhabi"
@@ -1003,6 +1075,18 @@ public sealed class QueryRouterService : IQueryRouterService
             lowerQuestion.Contains("public and govt") ||
             lowerQuestion.Contains("government school") ||
             lowerQuestion.Contains("government sites");
+
+        // Boost sector_latest_pollutant when the question asks for a pollutant reading
+        // across sites in a named sector (residential, commercial, institutional etc.).
+        // "Show me a table of all Abu Dhabi sites under Residential sector with their latest CO2 reading"
+        // must route here, not to site_aqi_single.
+        bool isSectorPollutantQuestion = isSectorListQuestion && isAqiOrReadingQuestion
+            && (lowerQuestion.Contains("all") || lowerQuestion.Contains("sites") || lowerQuestion.Contains("table") || lowerQuestion.Contains("show") || lowerQuestion.Contains("list"));
+        if (template.Id == "sector_latest_pollutant" && isSectorPollutantQuestion && !isGenericSchoolQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
+        // Penalise site_aqi_single for sector-pollutant questions — must not resolve to one site
+        if (template.Id == "site_aqi_single" && isSectorPollutantQuestion)
+            maxScore *= 0.05;
 
         // Penalise device_status when question is asking device METADATA (site, region, sector, deployed, pollutants)
         // rather than active/inactive status — those must route to device_info.

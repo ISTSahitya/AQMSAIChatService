@@ -31,13 +31,13 @@ public sealed class ChatOptions
     /// Minimum query router confidence score to use a template directly
     /// without sending to LLM for confirmation (0.0–1.0).
     /// </summary>
-    public double HighConfidenceThreshold { get; set; } = 0.85;
+    public double HighConfidenceThreshold { get; set; } = 1.10; // effectively disabled — LLM always confirms
 
     /// <summary>
     /// Minimum score to present top-N templates to the LLM for selection.
     /// Below this, the chatbot asks for clarification.
     /// </summary>
-    public double LowConfidenceThreshold { get; set; } = 0.50;
+    public double LowConfidenceThreshold { get; set; } = 0.10;
 
     /// <summary>Standard disclaimer appended to every AI response.</summary>
     public string Disclaimer { get; set; } =
