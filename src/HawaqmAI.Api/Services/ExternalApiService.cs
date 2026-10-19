@@ -679,7 +679,7 @@ public sealed class ExternalApiService : IExternalApiService
                     .Select(g => new Dictionary<string, object?>
                     {
                         ["Region"] = g.Key,
-                        ["AQI"]    = Math.Round(g.Average(x => x.Aqi!.Value), 1)
+                        ["AQI"]    = Math.Round(g.Average(x => x.Aqi!.Value), 2)
                     })
                     .ToList();
 
@@ -776,7 +776,7 @@ public sealed class ExternalApiService : IExternalApiService
                     .Select(g => new Dictionary<string, object?>
                     {
                         ["Sector"] = g.Key,
-                        ["Value"]  = Math.Round(g.Average(x => x.Value!.Value), 1)
+                        ["Value"]  = Math.Round(g.Average(x => x.Value!.Value), 2)
                     })
                     .ToList();
 
@@ -1468,7 +1468,7 @@ public sealed class ExternalApiService : IExternalApiService
                     .ToList();
 
                 var avgAqi = aqiValues.Count > 0
-                    ? Math.Round(aqiValues.Average(), 1)
+                    ? Math.Round(aqiValues.Average(), 2)
                     : (double?)null;
 
                 var stationName = first.StationName;
@@ -1579,41 +1579,21 @@ public sealed class ExternalApiService : IExternalApiService
             string unit = "";
             string lastUpdated = "";
 
-            bool isAqiParam = paramVariants.Any(v => v.Equals("AQI Index", StringComparison.OrdinalIgnoreCase));
-            if (isAqiParam)
+            // Average the parameter across all devices at this station — matches UI dashboard behaviour.
+            var paramReadings = group
+                .SelectMany(d => paramVariants
+                    .Where(v => d.Params.ContainsKey(v))
+                    .Select(v => d.Params[v]))
+                .ToList();
+
+            if (paramReadings.Count > 0)
             {
-                // Average AQI across all devices at this station (mirrors site_aqi_single logic)
-                var aqiValues = group
-                    .SelectMany(d => paramVariants
-                        .Where(v => d.Params.ContainsKey(v))
-                        .Select(v => d.Params[v]))
-                    .ToList();
-                if (aqiValues.Count > 0)
-                {
-                    value       = Math.Round(aqiValues.Select(r => r.Value).Average(), 1);
-                    unit        = aqiValues.First().Unit;
-                    lastUpdated = group.Select(d => d.LastUpdated)
-                                       .Where(t => !string.IsNullOrWhiteSpace(t))
-                                       .OrderByDescending(t => t)
-                                       .FirstOrDefault() ?? "";
-                }
-            }
-            else
-            {
-                foreach (var device in group)
-                {
-                    foreach (var variant in paramVariants)
-                    {
-                        if (device.Params.TryGetValue(variant, out var reading))
-                        {
-                            value       = Math.Round(reading.Value, 1);
-                            unit        = reading.Unit;
-                            lastUpdated = device.LastUpdated;
-                            break;
-                        }
-                    }
-                    if (value.HasValue) break;
-                }
+                value       = Math.Round(paramReadings.Select(r => r.Value).Average(), 2);
+                unit        = paramReadings.First().Unit;
+                lastUpdated = group.Select(d => d.LastUpdated)
+                                   .Where(t => !string.IsNullOrWhiteSpace(t))
+                                   .OrderByDescending(t => t)
+                                   .FirstOrDefault() ?? "";
             }
 
             if (value is null) continue;
@@ -1710,41 +1690,21 @@ public sealed class ExternalApiService : IExternalApiService
             string unit   = "";
             string lastUpdated = "";
 
-            bool isAqiParam = paramVariants.Any(v => v.Equals("AQI Index", StringComparison.OrdinalIgnoreCase));
-            if (isAqiParam)
+            // Average the parameter across all devices at this station — matches UI dashboard behaviour.
+            var sectorParamReadings = group
+                .SelectMany(d => paramVariants
+                    .Where(v => d.Params.ContainsKey(v))
+                    .Select(v => d.Params[v]))
+                .ToList();
+
+            if (sectorParamReadings.Count > 0)
             {
-                // Average AQI across all devices at this station (mirrors site_aqi_single logic)
-                var aqiValues = group
-                    .SelectMany(d => paramVariants
-                        .Where(v => d.Params.ContainsKey(v))
-                        .Select(v => d.Params[v]))
-                    .ToList();
-                if (aqiValues.Count > 0)
-                {
-                    value       = Math.Round(aqiValues.Select(r => r.Value).Average(), 1);
-                    unit        = aqiValues.First().Unit;
-                    lastUpdated = group.Select(d => d.LastUpdated)
-                                       .Where(t => !string.IsNullOrWhiteSpace(t))
-                                       .OrderByDescending(t => t)
-                                       .FirstOrDefault() ?? "";
-                }
-            }
-            else
-            {
-                foreach (var device in group)
-                {
-                    foreach (var variant in paramVariants)
-                    {
-                        if (device.Params.TryGetValue(variant, out var reading))
-                        {
-                            value       = Math.Round(reading.Value, 1);
-                            unit        = reading.Unit;
-                            lastUpdated = device.LastUpdated;
-                            break;
-                        }
-                    }
-                    if (value.HasValue) break;
-                }
+                value       = Math.Round(sectorParamReadings.Select(r => r.Value).Average(), 2);
+                unit        = sectorParamReadings.First().Unit;
+                lastUpdated = group.Select(d => d.LastUpdated)
+                                   .Where(t => !string.IsNullOrWhiteSpace(t))
+                                   .OrderByDescending(t => t)
+                                   .FirstOrDefault() ?? "";
             }
 
             if (value is null) continue; // site has no reading for this parameter
@@ -1951,14 +1911,13 @@ public sealed class ExternalApiService : IExternalApiService
                 }
             }
 
-            // If no critical sites, return one informational row
+            // If no critical sites, return a single informational row (no table rows for sites)
             if (rows.Count == 0)
             {
                 rows.Add(new Dictionary<string, object?>
                 {
-                    ["Site Name"]            = "No priority hotspots",
-                    ["Site ID"]              = null,
-                    ["Air Quality Index"]    = networkAqi,
+                    ["Status"]               = "No priority hotspots currently",
+                    ["Network AQI"]          = networkAqi,
                     ["Air Quality Category"] = networkAqi.HasValue ? ClassifyAqi(networkAqi.Value) : null
                 });
             }

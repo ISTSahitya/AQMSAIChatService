@@ -53,9 +53,9 @@ public sealed class AzureAIService : IAzureAIService
     {
         var systemPrompt = BuildSelectionSystemPrompt(candidates, previousTemplateId);
         var userPrompt = BuildSelectionUserPrompt(question, scope);
-        // Don't pass history when candidates include device_last_reading — history causes
+        // Don't pass history when candidates include device_live_reading — history causes
         // the LLM to pick a device name from a previous turn instead of the current question
-        var hasDeviceTemplate = candidates.Any(c => c.Id == "device_last_reading");
+        var hasDeviceTemplate = candidates.Any(c => c.Id == "device_live_reading");
         var messages = BuildMessages(systemPrompt, history, userPrompt, includeHistory: !hasDeviceTemplate);
 
         var response = await CallWithRetryAsync(messages, ct, client: _fastChatClient);
@@ -110,17 +110,17 @@ public sealed class AzureAIService : IAzureAIService
             If DataSuccessRate is null: "Data Success Rate information is not available at this time."
             """,
 
-        // Priority hotspots from Executive Dashboard — columns: Site Name, Site ID, Air Quality Index, Air Quality Category
+        // Priority hotspots from Executive Dashboard
         ["priority_hotspots"] = """
-            Data columns: "Site Name", "Site ID", "Air Quality Index", "Air Quality Category".
-            Each row is one priority hotspot site flagged as critical in the Executive Dashboard.
-            "Air Quality Index" is the overall average AQI across all monitored sites for the year.
+            Two possible data shapes:
 
-            If rows contain real site names (not "No priority hotspots"):
-            FORMAT: "There are {count} priority hotspot site(s) for {year}. The overall Air Quality Index is {Air Quality Index} ({Air Quality Category}). The following sites are flagged as critical:" then list the site names.
+            CASE 1 — Hotspots exist: data has "Site Name" column with real site names and "Site ID".
+            FORMAT: "There are {count} priority hotspot site(s) flagged as critical:"
+            Then bullet list: • {Site Name} (ID: {Site ID})
 
-            If the only row has Site Name = "No priority hotspots":
-            FORMAT: "There are currently no priority hotspot sites for {year}. The overall Air Quality Index is {Air Quality Index} ({Air Quality Category})."
+            CASE 2 — No hotspots: data has "Status" = "No priority hotspots currently" and "Network AQI".
+            FORMAT: "There are currently no priority hotspot sites. The overall network Air Quality Index is {Network AQI} ({Air Quality Category}), which is within acceptable levels."
+            Do NOT show a table for this case. Output plain text only.
 
             NEVER output placeholder text — always use actual values from the data.
             """,
@@ -181,7 +181,7 @@ public sealed class AzureAIService : IAzureAIService
             """,
 
         // Sites by region pie/bar — columns: Region, Count
-        ["sites_by_region_chart"] = """
+        ["sites_by_filter_chart"] = """
             Data columns: "Region" (region name), "Count" (number of sites in that region).
             The chart below will visualise the distribution — write ONE short summary sentence only.
             FORMAT: "Here is the breakdown of {TotalCount} site(s) across {N} region(s). The chart below shows the count per region."
@@ -191,7 +191,7 @@ public sealed class AzureAIService : IAzureAIService
             """,
 
         // Sites by sector pie/bar — columns: Sector, Count
-        ["sites_by_sector_chart"] = """
+        ["sites_by_filter_chart"] = """
             Data columns: "Sector" (sector name), "Count" (number of sites in that sector).
             The chart below will visualise the distribution — write ONE short summary sentence only.
             FORMAT: "Here is the breakdown of {TotalCount} site(s) across {N} sector(s). The chart below shows the count per sector."
@@ -379,24 +379,26 @@ public sealed class AzureAIService : IAzureAIService
             Keep under 150 words. List every site from the data.
             """,
 
-        // Devices filtered by region / sector (no specific site)
+        // Unified device list/count template — handles all filter combos: status, region, sector, site
         ["devices_by_filter"] = """
             Data columns: "DeviceName", "StationName", "RegionName", "SectorName", "SubSectorName", "Status" (Active/Inactive), "LastActive", "AQI".
-            Active = last reading within 15 minutes. Inactive = last reading older than 15 minutes.
+            Active = last reading within 15 minutes. Inactive/Offline = last reading older than 15 minutes.
 
             COUNT INTENT RULE — if the user question contains any of: "how many", "total", "count", "number of" → respond with count ONLY:
-            "There are {N} device(s) in {filter description} — {ActiveCount} active and {InactiveCount} inactive."
-            Do NOT list any device names or site names. Stop after the count sentence.
+            "There are {N} {status} device(s){filter description}."
+            Examples: "There are 12 offline device(s) in Abu Dhabi." / "There are 45 active device(s) in the Commercial sector."
+            Do NOT list device names. Stop after the count sentence.
 
-            LIST INTENT — only if user says "show", "list", "display", "what are the devices":
-            Line 1: "There are {ActiveCount} active and {InactiveCount} inactive device(s) in {filter description}."
-            Then output a markdown table with ALL matching devices:
+            LIST INTENT — if user says "which", "show", "list", "display", "what are", or asks for offline/online devices:
+            Line 1: "Found {N} {status} device(s){filter description}."
+            Then output a markdown table:
             | # | Device Name | Site Name | Region | Sector | Status | Last Active |
             |---|-------------|-----------|--------|--------|--------|-------------|
             | 1 | {DeviceName} | {StationName} | {RegionName} | {SectorName} | {Status} | {LastActive} |
             ...
-            If user asked only about active devices: show only Active rows.
-            If user asked only about inactive devices: show only Inactive rows.
+            - "offline" / "inactive" / "not sending" → show only rows where Status = Inactive
+            - "online" / "active" / "sending data" → show only rows where Status = Active
+            - No status filter → show all rows with Status column visible
             NEVER output a bullet list. ALWAYS use the table format above.
 
             If no rows: "No devices found matching the specified filter."
@@ -427,7 +429,7 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual values from the data row only.
             """,
 
-        ["device_last_reading"] = """
+        ["device_live_reading"] = """
             FORMAT RULES for device readings:
             The data rows each represent one parameter reading. Each row has: DeviceName, ParameterName, ParameterValue, UnitName, LastMeasured.
 
@@ -522,34 +524,27 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual values from the data.
             """,
 
-        ["count_sites_total"] = """
-            Data columns: "TotalSiteCount".
-            FORMAT: "HAWAQM currently has {TotalSiteCount} registered sites."
-            Example: "HAWAQM currently has 8 registered sites."
-            NEVER output placeholder text — always use the actual count from the data.
-            """,
-
-        ["count_sites_in_region"] = """
-            Data columns: "RegionName", "TotalSites", "ActiveSites", "InactiveSites".
-            FORMAT: "The {RegionName} region has {TotalSites} registered site(s) — {ActiveSites} active and {InactiveSites} inactive."
-            If no rows: "No sites found for that region. Please check the region name and try again."
-            NEVER output placeholder text — always use actual values from the data.
-            """,
-
-        ["count_sites_active_inactive"] = """
-            Data columns: "RegionName", "SectorName", "TotalSites", "ActiveSites", "InactiveSites".
+        ["site_count"] = """
+            Data columns: "GroupName", "TotalSites", "ActiveSites", "InactiveSites".
             Active = device reported in last 15 minutes. Inactive = no recent data.
 
-            If one row (filtered by region + sector):
-            "In the {RegionName} region, {SectorName} sector: {TotalSites} site(s) — {ActiveSites} active, {InactiveSites} inactive."
+            CASE 1 — Single total row (GroupName = "All", no groupBy param):
+            If user asked for total only: "HAWAQM currently has {TotalSites} registered sites — {ActiveSites} active and {InactiveSites} inactive."
+            If user asked only about active: "There are currently {ActiveSites} active site(s) in HAWAQM."
+            If user asked only about inactive: "There are currently {InactiveSites} inactive site(s) in HAWAQM."
 
-            If multiple rows (region only, or no filter):
-            Start with a summary line: "Active/inactive site breakdown:"
-            Then one line per row: "• {RegionName} — {SectorName}: {TotalSites} total, {ActiveSites} active, {InactiveSites} inactive."
-            End with total: "Total: {sum of TotalSites} sites, {sum of ActiveSites} active, {sum of InactiveSites} inactive."
+            CASE 2 — Multiple rows grouped by region (GroupName = region name):
+            "Site count by region:"
+            Then one line per row: "• {GroupName}: {TotalSites} total — {ActiveSites} active, {InactiveSites} inactive."
+            If user asked only about active/inactive, show only that column.
 
-            If user asked only about active: focus on ActiveSites number only.
-            If user asked only about inactive: focus on InactiveSites number only.
+            CASE 3 — Multiple rows grouped by sector (GroupName = sector name):
+            "Site count by sector:"
+            Then one line per row: "• {GroupName}: {TotalSites} total — {ActiveSites} active, {InactiveSites} inactive."
+
+            CASE 4 — Single row filtered by specific region or sector:
+            "The {GroupName} region/sector has {TotalSites} registered site(s) — {ActiveSites} active and {InactiveSites} inactive."
+
             If no rows: "No site data found for the selected filters."
             NEVER output placeholder text — always use actual values from the data.
             """,
@@ -587,51 +582,7 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual values from the data.
             """,
 
-        ["offline_devices"] = """
-            Data columns: "DeviceName", "StationName", "LastActive".
-            If no rows: "All devices are currently online."
-            If rows exist:
-            Line 1: "There are {N} offline device(s):"
-            Then output a markdown table with ALL devices — no exceptions, list every row:
-            | # | Device Name | Site Name | Last Active |
-            |---|-------------|-----------|-------------|
-            | 1 | {DeviceName} | {StationName} | {LastActive} |
-            ...
-            NEVER output a bullet list. ALWAYS use the table format above.
-            NEVER output placeholder text — always use actual values from the data.
-            """,
-
-        ["online_devices"] = """
-            Data columns: "DeviceName", "StationName", "LastActive".
-            If no rows: "No devices are currently online."
-            If rows exist:
-            Line 1: "There are {N} online device(s):"
-            Then output a markdown table with ALL devices — no exceptions, list every row:
-            | # | Device Name | Site Name | Last Active |
-            |---|-------------|-----------|-------------|
-            | 1 | {DeviceName} | {StationName} | {LastActive} |
-            ...
-            NEVER output a bullet list. ALWAYS use the table format above.
-            NEVER output placeholder text — always use actual values from the data.
-            """,
-
-        ["devices_with_readings"] = """
-            Data columns: "DeviceName", "StationName", "RegionName", "SectorName", "SubSectorName", "Status" (Active/Inactive), "LastActive", "AQI".
-            Active = last reading within 15 minutes. Inactive = last reading older than 15 minutes.
-
-            COUNT INTENT RULE — if the user question contains any of: "how many", "total", "count", "number of" → respond with count ONLY:
-            "There are {N} device(s) at {StationName}."
-            Do NOT list any device names. Stop after the count sentence.
-
-            LIST INTENT — only if user says "show", "list", "display", "what are the devices":
-            Line 1: "There are {N} device(s) under {StationName}."
-            Then list every device, one per line:
-            "- {DeviceName} | Status: {Status} | Last Active: {LastActive} | AQI: {AQI}"
-            Only include AQI if it is not null.
-
-            If no rows: "No devices found matching the specified filter. Please check the site, region, or sector name."
-            NEVER output placeholder text — always use actual values from the data.
-            """,
+        // devices_with_readings retired — merged into devices_by_filter (use stationName param)
 
         ["list_devices_at_station"] = """
             Data columns: "DeviceName", "StationName".
@@ -678,41 +629,25 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use actual values from the data.
             """,
 
-        ["count_sites_in_region"] = """
-            If the data is empty: "You do not have access to any sites in {RegionName}. Contact your administrator if you need access."
-            If data has rows: write ONE intro sentence "You have access to {N} site(s) in {RegionName}." then output a table with columns: Site Name | Region
-            Never output blank placeholders. Always use the actual region name from the question.
-            """,
-
-        ["sites_all_regions"] = """
+        ["sites_by_filter"] = """
             Data columns: "StationName", "RegionName", "SectorName", "SubSectorName", "LiveStatus".
+            LiveStatus: "Active" = at least one device reported in last 15 min; "Inactive" = devices exist but none active.
 
-            COUNT INTENT RULE — if the user question contains any of: "how many", "total", "count", "number of" → respond with count ONLY:
-            "There are {N} site(s) across {RegionCount} regions — {ActiveCount} active and {InactiveCount} inactive."
-            Do NOT list site names. Stop after the count sentence.
+            COUNT INTENT — if user asks "how many" / "total" / "number of" sites with a specific filter (a named region OR sector OR status, but NOT "by region"/"by sector" grouping):
+            → ONE sentence only: "There are {N} site(s){filter description}."
+            Examples: "There are 5 active site(s) in Al Ain." / "There are 12 school site(s)."
+            Do NOT list site names.
 
-            LIST INTENT — only if user says "show", "list", "display", "what are the sites":
-            Write ONE intro sentence only: "Here are all {N} site(s) across {RegionCount} regions. The table below shows each site grouped by region."
-            N = total row count. RegionCount = number of distinct RegionName values.
-            NEVER list individual sites in text — the table handles that.
+            LIST INTENT — all other questions (show, list, which, what are, give me, by region, region wise, active sites in X):
+            Line 1: "Found {N} site(s){filter description}."
+            Then a markdown table:
+            | # | Site Name | Region | Sector | Sub-Sector | Status |
+            |---|-----------|--------|--------|------------|--------|
+            Fill every row from the data. Omit Sub-Sector column if all values are null/empty.
 
-            NEVER output placeholder text — always use actual counts from the data.
-            """,
-
-        ["sites_count_by_region"] = """
-            HAWAQM has 3 regions in total: Abu Dhabi, Al Ain, and Al Dhafra.
-            The data rows show only the regions the user has access to.
-
-            If the user asked ONLY about regions (e.g. "how many regions", "what are the regions", "number of regions", "regions in this application"):
-            FORMAT: "HAWAQM covers {N} regions: {RegionName1}, {RegionName2}, and {RegionName3}."
-            Example: "HAWAQM covers 3 regions: Abu Dhabi, Al Ain, and Al Dhafra."
-            Do NOT mention site counts in this case.
-
-            If the user asked about sites per region or site breakdown by region:
-            FORMAT: "HAWAQM has 3 regions — Abu Dhabi ({TotalSites1} sites, {ActiveSites1} active), Al Ain ({TotalSites2} sites, {ActiveSites2} active), and Al Dhafra ({TotalSites3} sites, {ActiveSites3} active)."
-
-            If user has access to fewer than 3 regions: "HAWAQM has 3 regions in total (Abu Dhabi, Al Ain, and Al Dhafra). Based on your access permissions, you can view: {RegionName} ({TotalSites} sites). Contact your administrator for access to other regions."
-            Always use actual values from the data rows. Never output placeholders.
+            {filter description} examples: " in Al Ain", " in Commercial sector", " across all regions".
+            If no rows: "No sites found matching the specified filter."
+            NEVER output placeholder text — always use actual values from the data.
             """,
 
         ["list_sectors"] = """
@@ -730,14 +665,6 @@ public sealed class AzureAIService : IAzureAIService
             FORMAT: "HAWAQM has {N} sub-sectors across {SectorCount} sectors: {list each SubSectorName grouped under its SectorName}."
             Example: "HAWAQM has 5 sub-sectors — under Public & Govt-School: Private School, Government School; under Commercial: Mall, Office; under Residential: Villa."
             N = total number of rows. Group by SectorName. Do NOT mention site counts unless user asked.
-            NEVER output placeholder text — always use actual values from the data.
-            """,
-
-        ["sites_count_by_sector"] = """
-            Data columns: "SectorName", "TotalSites", "ActiveSites".
-            FORMAT: "The current sector distribution is {SectorName1}: {TotalSites1}, {SectorName2}: {TotalSites2}, {SectorName3}: {TotalSites3}, and {SectorName4}: {TotalSites4}."
-            Use the exact SectorName and TotalSites values from each row. List all sectors from the data in one sentence.
-            Example: "The current sector distribution is Public & Govt-School: 2, Residential: 1, and Commercial: 4."
             NEVER output placeholder text — always use actual values from the data.
             """,
 
@@ -769,45 +696,6 @@ public sealed class AzureAIService : IAzureAIService
             The table handles full details — write ONE intro sentence or short paragraph only.
             """,
 
-        ["sites_by_sector"] = """
-            Data columns: "StationName", "SubSectorName", "SectorName", "RegionName", "LiveStatus".
-            SubSectorName shows the sub-type (e.g. "Private School", "Government School", "Indian School").
-
-            If no rows: "There are no {SectorName} sites found for your query. Contact your administrator if you need access."
-
-            If user asked about SCHOOLS (sectorName = "Public & Govt-School"):
-            Group by SubSectorName to show public vs private breakdown.
-            FORMAT:
-            "There are {N} school site(s){region suffix}:
-             {SubSectorName1}: {StationName1}, {StationName2}
-             {SubSectorName2}: {StationName3}"
-            Example:
-            "There are 4 school site(s) in Abu Dhabi:
-             Government School: Al Naeem School, Al Bateen School
-             Private School: Al Saad Indian School, GEMS School"
-
-            If user asked about COMMERCIAL or RESIDENTIAL:
-            Group by RegionName if spanning multiple regions.
-            FORMAT: "There are {N} {SectorName} site(s){region suffix}: {StationName1}, {StationName2}, ..."
-
-            {region suffix} = " in {RegionName}" if filtered to one region, otherwise omit.
-            NEVER output placeholder text — always use actual values from the data.
-            The table below shows the full list — write ONE intro paragraph only.
-            """,
-
-        ["sites_by_region"] = """
-            Data columns: "StationName", "SectorName", "SubSectorName", "RegionName", "LiveStatus".
-
-            COUNT INTENT RULE — if the user question contains any of: "how many", "total", "count", "number of" → respond with count ONLY:
-            "There are {N} site(s) in the {RegionName} region — {ActiveCount} active and {InactiveCount} inactive."
-            Do NOT list any site names. Stop after the count sentence.
-
-            LIST INTENT — only if user says "show", "list", "display", "what are the sites":
-            "There are {N} site(s) in {RegionName}: {StationName1} ({SectorName}), {StationName2} ({SectorName}), ..."
-
-            If no rows: "There are no sites found in that region. Contact your administrator if you need access."
-            Always use the actual RegionName from the data rows. Never output blank placeholders.
-            """,
 
         // Regional AQI
         ["aqi_by_region"] = """
@@ -1005,6 +893,23 @@ public sealed class AzureAIService : IAzureAIService
             Final line: "The lowest was {Row1.DeviceName} at {Row1.DSR_Pct}%."
 
             If no rows: "No Data Success Rate data found for last month."
+            NEVER output placeholder text — always use actual values from the data.
+            """,
+
+        ["device_longest_silent"] = """
+            Data columns: "DeviceName", "StationName", "RegionName", "SectorName", "LastReading", "DaysSinceLastReading".
+            Rows are ordered longest silent first (oldest LastReading first). Only inactive devices are included (no readings in last 15 min).
+
+            If ONE row: "The device that has been without data for the longest time is {DeviceName} at {StationName} ({RegionName}) — last reading {LastReading}, {DaysSinceLastReading} day(s) ago."
+
+            If MULTIPLE rows:
+            Line 1: "The following inactive devices have been without data the longest:"
+            Then a markdown table:
+            | # | Device | Site | Region | Sector | Last Reading | Days Silent |
+            |---|--------|------|--------|--------|--------------|-------------|
+            Fill every row from the data.
+
+            If no rows: "No inactive devices found — all registered devices are currently sending data."
             NEVER output placeholder text — always use actual values from the data.
             """,
 
@@ -1393,16 +1298,18 @@ public sealed class AzureAIService : IAzureAIService
             CRITICAL — template selection rules:
 
             PRIORITY RULE 0 — device name ALWAYS beats ALL other rules including "average", "mean", "trend":
-            A device name is ONLY the patterns "BA" or "SEI100M" followed by 1–4 digits (e.g. "BA0010", "BA 0010", "ba0010", "SEI100M0014", "SEI100M 0014"). Site names, school names, and person names are NOT device names.
-            ALSO treat "device B \d+" as a device name — users sometimes type "B 0001" or "B 1" meaning "BA 0001". When you see "device" followed by a single letter B and digits, treat the full "B \d+" as the deviceName and select a device template. Extract the deviceName exactly as typed (e.g. "B 0001").
+            A device name is an alphanumeric code: letters (1+ chars) optionally mixed with digits, followed by 1–4 digit suffix — with or without spaces between parts.
+            Current known device models: "BA" + digits (e.g. "BA 0010", "BA0010"), "SEI100M" + digits (e.g. "SEI100M 0014", "SEI100M0014"). New models may be added in future — apply the same pattern rule to any device code that follows letter-prefix + digit-suffix format.
+            ALSO treat "device <code>" as a device name even if the code is partially typed (e.g. "device B 0001" means device code "B 0001"). Extract deviceName exactly as the user typed it.
             NEVER treat a school name, site name, or person name as a device name — even if it contains letters and numbers. For example: "Al Reyada School", "Al Saad Indian School", "Kaltham Hasan", "Al Naeem School" are SITE names, NOT device names.
-            If the question does NOT contain an explicit BA/SEI100M device code (and does NOT match the "device B \d+" pattern), do NOT select any device template (device_last_reading, device_status, device_info, device_pollutants, device_reading_history).
-            If the question contains a device name (pattern: "BA" or "SEI100M" followed by 1–4 digits, with or without space, OR "device B \d+") THEN choose one of the device templates:
+            NEVER treat pollutant abbreviations as device names: PM2.5, PM10, CO2, NO2, SO2, O3, CO, CH2O, VOC, TVOC are pollutants — not devices.
+            If the question does NOT contain a device code (letter-prefix + digit-suffix pattern, or "device <code>"), do NOT select any device template (device_live_reading, device_status, device_info, device_pollutants, device_reading_history).
+            If the question contains a device name THEN choose one of the device templates:
             - If the question asks for METADATA (site, station, region, sector, deployed, created, installed, when, model, details, info, last measured time, last data time, where is) → select "device_info"
             - If the question asks what POLLUTANTS or PARAMETERS a device monitors/measures → select "device_pollutants"
             - If the question asks for STATUS only (active, inactive, online, offline, is it working, is it sending) WITHOUT asking for readings → select "device_status"
             - If the question mentions ANY of: a time interval (5 min, 1 hour, 1H, 8 hour, 8H, 24 hour, 24H, daily, monthly, yearly, annual), OR the words average/avg/mean/reading/value/history/historical/past/trend, OR a date/time reference (yesterday, today, last hour, last 24 hours, last week, last month, last year, "at 8AM", "on 2026-07-16", any date or clock time, any "last N" phrase) → select "device_reading_history". A device name + any date word (yesterday, today, last week, last month) ALWAYS means device_reading_history — NEVER device_info.
-            - Otherwise (no time interval or date, asks for current/latest/live/now readings, or no specific context) → select "device_last_reading"
+            - Otherwise (no time interval or date, asks for current/latest/live/now readings, or no specific context) → select "device_live_reading"
             NEVER select a site template (site_aqi_single, site_readings_all, site_aqi_all, site_aqi_by_category) when the question contains a device name.
             NEVER select "average_at_station", "pollutant_trend_hourly", or any non-device template when the question contains a device name — device name is ABSOLUTE priority.
             Examples of questions that do NOT contain a device name and must NOT use device templates:
@@ -1428,11 +1335,11 @@ public sealed class AzureAIService : IAzureAIService
             - "show me the 1 hour PM2.5 for BA 0010" → device_reading_history, deviceName="BA 0010", interval="1hour", parameterName="PM2.5"
             - "pollutant reading at 14:00 for SEI100M 0008 yesterday" → device_reading_history, deviceName="SEI100M 0008", targetTime="14:00", startDate=yesterday
             - "what pollutant value did BA 0010 record at noon on 2026-09-01" → device_reading_history, deviceName="BA 0010", targetTime="12:00", startDate="2026-09-01"
-            Examples — device_last_reading (current/live):
-            - "what is the PM2.5 for device BA0010" → device_last_reading, deviceName="BA0010"
-            - "PM2.5 reading for BA 0010" → device_last_reading, deviceName="BA 0010"
-            - "current readings for SEI100M 0008" → device_last_reading, deviceName="SEI100M 0008"
-            - "latest CO2 for BA 0010" → device_last_reading, deviceName="BA 0010"
+            Examples — device_live_reading (current/live):
+            - "what is the PM2.5 for device BA0010" → device_live_reading, deviceName="BA0010"
+            - "PM2.5 reading for BA 0010" → device_live_reading, deviceName="BA 0010"
+            - "current readings for SEI100M 0008" → device_live_reading, deviceName="SEI100M 0008"
+            - "latest CO2 for BA 0010" → device_live_reading, deviceName="BA 0010"
             Examples — device_info / device_pollutants / device_status:
             - "what site is device BA 0001" → device_info, deviceName="BA 0001"
             - "which region is BA 0010 in" → device_info, deviceName="BA 0010"
@@ -1443,7 +1350,7 @@ public sealed class AzureAIService : IAzureAIService
             - "is BA 0010 active" → device_status, deviceName="BA 0010"
             - "is device B 0001 active or inactive" → device_status, deviceName="B 0001"
             - "is device B 1 online" → device_status, deviceName="B 1"
-            - "what is the reading of device B 0001" → device_last_reading, deviceName="B 0001"
+            - "what is the reading of device B 0001" → device_live_reading, deviceName="B 0001"
 
             PRIORITY RULE — site name beats region/generic rules:
             If the user names a SPECIFIC site or person name in their question (but NOT a device name), ALWAYS use rule 1 or 2 — never site_aqi_all, never site_aqi_by_category, never region queries, NEVER schools_latest_pollutant.
@@ -1493,8 +1400,8 @@ public sealed class AzureAIService : IAzureAIService
             3. Only select "schools_latest_pollutant" when the user says "schools" generically with a GENERIC plural reference (e.g. "all schools", "schools in Al Ain", "what is the AQI at schools") with NO specific school name mentioned AND is asking for a specific POLLUTANT reading (CO2, PM2.5, AQI value, etc.) WITHOUT an AQI quality level filter. NEVER select schools_latest_pollutant when: (a) a specific school or site name is mentioned, or (b) the user is asking about AQI category/quality level (good, moderate, unhealthy, etc.) — use site_aqi_by_category with sectorName="Public & Govt-School" instead.
             4. If the user asks an AQI question that mentions ONLY a region name (Abu Dhabi, Abudhabi, Al Ain, Alain, Al Dhafra, Aldhafra) with NO specific site name, OR asks for "all regions", "by region", "region wise" → select "region_aqi_geographical". Extract regionName ONLY if exactly ONE specific region is mentioned and the user is asking about that region alone. OMIT regionName (return all regions) when: the user names TWO OR MORE regions (e.g. "Abu Dhabi, Al Ain, and Al Dhafra"), says "each region", "all regions", "every region", "each of the regions", "all three regions", "region wise", or any phrasing that implies the complete set. NEVER extract regionName when the question implies all three. NEVER select region_aqi_geographical when a specific site name is also present — rule 1 takes priority.
             4b. If the user asks a generic AQI question with NO specific site name AND NO region AND NO quality level word → select "site_aqi_all". Examples: "show me the AQI", "what is the AQI", "show the AQI", "current AQI", "display AQI", "AQI at my sites". NEVER select site_aqi_all when: (a) the question names a specific site or person → use site_aqi_single (rule 1), or (b) the question contains a quality word like good, bad, poor, unhealthy, moderate, hazardous, safe, harmful, vulnerable, critical → use site_aqi_by_category (rule 8).
-            5. If the user asks to LIST or SHOW which schools/sites exist (no pollutant reading requested) — with or without a region filter — → ALWAYS select "sites_by_sector". Extract sectorName ("Public & Govt-School" for any school/govt/public question) and regionName if mentioned. This covers questions like "what are the different schools in Abu Dhabi?", "list schools in Al Ain", "schools present in Abudhabi", "which schools are in Al Dhafra", "commercial sites in Abu Dhabi". NEVER select schools_latest_pollutant or sites_by_region for these — those don't show school type breakdown.
-               EXCEPTION to rule 5: if the user says "schools" generically AND asks for a specific pollutant reading or data (e.g. "show me a table of all Abu Dhabi schools with their latest CO2 reading", "Abu Dhabi schools CO2", "schools in Al Ain with AQI") → select "schools_latest_pollutant" (rule 3), NOT sites_by_sector. Rule 3 wins when a pollutant/reading is explicitly requested.
+            5. If the user asks to LIST or SHOW which schools/sites exist (no pollutant reading requested) — with or without a region filter — → ALWAYS select "sites_by_filter". Extract sectorName ("Public & Govt-School" for any school/govt/public question) and regionName if mentioned. This covers questions like "what are the different schools in Abu Dhabi?", "list schools in Al Ain", "schools present in Abudhabi", "which schools are in Al Dhafra", "commercial sites in Abu Dhabi". NEVER select schools_latest_pollutant or sites_by_filter for these — those don't show school type breakdown.
+               EXCEPTION to rule 5: if the user says "schools" generically AND asks for a specific pollutant reading or data (e.g. "show me a table of all Abu Dhabi schools with their latest CO2 reading", "Abu Dhabi schools CO2", "schools in Al Ain with AQI") → select "schools_latest_pollutant" (rule 3), NOT sites_by_filter. Rule 3 wins when a pollutant/reading is explicitly requested.
             6. Extract deviceName ONLY from the CURRENT question. Never use a device name from conversation history.
             7. Extract the device name as written in the question. Device names follow these real patterns (with or without space between prefix and number): "BA 0001", "BA 0010", "BA0010", "SEI100M 0014", "SEI100M 0085", "SEI100M0085". Preserve exactly what the user wrote — the system handles all spacing/casing variants automatically.
             7b. For device_reading_history: extract interval from time words in the question.
@@ -1525,7 +1432,7 @@ public sealed class AzureAIService : IAzureAIService
             8. PRIORITY RULE — AQI quality filter beats generic AQI: If the question contains ANY quality/condition word describing the AQI level (good, bad, poor, unhealthy, moderate, hazardous, safe, unsafe, clean, harmful, dangerous, critical, hotspot, vulnerable, sensitive, kids, children, elders, elderly, sick, diseased, patients, healthy, polluted, dirty, severe, alarming, toxic, deadly) → ALWAYS select "site_aqi_by_category", even if the question starts with "show me the sites" or "which sites". Extract aqiCategory using the mapping in the parameter rules below. If no specific level word is present, omit aqiCategory to return all sites grouped.
                IMPORTANT — AQI category DEFINITION questions: if the user is asking WHAT an AQI range or category means (e.g. "What AQI range is considered Good?", "What AQI range is Moderate?", "What AQI range is Unhealthy?", "What is the AQI range for Hazardous?", "What AQI is good?") → select "faq_answer". These are knowledge questions about the numeric range, NOT requests for site data. NEVER select "site_aqi_by_category" for these — that template lists sites, not definitions.
                IMPORTANT — AQI numeric threshold questions: if the user asks about sites or schools with AQI ABOVE/BELOW/MORE THAN/LESS THAN a specific number (e.g. "How many schools have an AQI above 30 in Abu Dhabi?", "sites with AQI above 100", "schools where AQI exceeds 50", "how many sites have AQI less than 80", "Show me all Al Ain schools where the current AQI is above 10", "Al Ain schools with AQI above 50", "schools in Abu Dhabi where AQI exceeds 100") → ALWAYS select "site_aqi_by_category". Extract: sectorName="Public & Govt-School" if "school" or "schools" is mentioned, regionName if a region is mentioned (e.g. "Al Ain", "Abu Dhabi", "Al Dhafra"), minValue from the number when "above/more than/greater than/over/exceeds/at least", maxValue from the number when "below/less than/under/at most". NEVER select "schools_latest_pollutant" for numeric threshold questions — that template cannot filter by AQI value. AQI numeric threshold ALWAYS wins over schools_latest_pollutant even when a region is mentioned.
-               IMPORTANT — AQI category with region: if the user asks for sites/locations WHERE AQI IS a quality level (good, moderate, unhealthy, hazardous, etc.) even with a region filter (e.g. "Al Ain sites where AQI is good", "list Abu Dhabi sites with good AQI", "sites in Al Dhafra where AQI is moderate") → ALWAYS select "site_aqi_by_category". Extract aqiCategory AND regionName. NEVER select sites_by_region or list_stations for these — those return site lists without AQI data.
+               IMPORTANT — AQI category with region: if the user asks for sites/locations WHERE AQI IS a quality level (good, moderate, unhealthy, hazardous, etc.) even with a region filter (e.g. "Al Ain sites where AQI is good", "list Abu Dhabi sites with good AQI", "sites in Al Dhafra where AQI is moderate") → ALWAYS select "site_aqi_by_category". Extract aqiCategory AND regionName. NEVER select sites_by_filter or list_stations for these — those return site lists without AQI data.
                IMPORTANT — schools + AQI category: if the user asks about SCHOOLS (e.g. "schools where AQI is good", "school sites with moderate AQI") AND mentions an AQI quality level → select "site_aqi_by_category" with aqiCategory set AND sectorName="Public & Govt-School". Do NOT select schools_latest_pollutant for this case.
             9. If the user asks for the current Data Success Rate, DSR value, data availability %, how many devices are active, active device count, or critical site count → select "data_success_rate". Extract year if mentioned (e.g. "2025", "2026"); omit year to default to the current year. NEVER select faq_answer for questions asking for the CURRENT or ACTUAL value of the DSR or active device count — those must come from the live API.
             9j. If the user asks which region had the poorest/worst/best air quality over the last N years considering data completeness (multi-year comparison) → select "region_aqi_trend_yearly". Extract years (default 3). NEVER select region_aqi_geographical or region_aqi_single_year for multi-year questions.
@@ -1537,25 +1444,47 @@ public sealed class AzureAIService : IAzureAIService
             9f-ii. If the user asks how indoor air quality at a specific school or site responded during a dust event, dust storm, or sandstorm on a specific date (e.g. "How did indoor air quality at Al Saad Indian School respond during the dust event on 2026-03-15?") → select "dust_event_response". Extract stationName and date (as YYYY-MM-DD). Optionally extract parameterName (default PM10; allowed: PM10, PM25, O3, SO2, NO2, CO, AQI). The key signals are: a site name + a specific date + the words "dust event", "dust storm", "sandstorm", or "respond during". NEVER select indoor_ambient_compare (that is live/current only), site_parameter_trend (that shows multi-day history with no outdoor comparison), site_aqi_single, or faq_answer for this.
             9k. If the user asks what the main, dominant, primary, worst, or highest pollutant is at a specific named site RIGHT NOW (e.g. "What is the main pollutant at Al Reyada School?", "Which pollutant is driving the AQI at Al Saad Indian School?", "What is the dominant pollutant at Kaltham Hasan Al Obeidli?") → select "main_pollutant_at_station". Extract stationName only. This uses the last 1-hour averaged readings to rank pollutants by their exceedance ratio. NEVER select site_aqi_single or faq_answer for this — those do not return pollutant ranking data.
             9e. If the user asks which devices had the lowest Data Success Rate last month (e.g. "which devices had the lowest DSR last month?", "worst data success rate last month") → select "lowest_dsr_devices". Extract topN if mentioned (default 10). NEVER select data_success_rate (that returns overall network DSR, not per-device) or device_compliance_rate (that requires a specific stationId).
-            9d. If the user asks which device contributed most to the highest site AQI at a school or site last month (e.g. "which device contributed most to the highest site AQI at Al Saad Indian School last month?") → select "device_peak_aqi_contribution". Extract stationName only — the date range is always last month (hardcoded in SQL). NEVER select device_last_reading, compare_two_stations, or schools_latest_pollutant for this.
-            9c. If the user asks to compare the two devices at a specific school or site for a specific month (e.g. "compare the two devices at Al Saad Indian School for September 2026", "device comparison at Al Naeem School for August") → select "compare_devices_monthly". Extract stationName (site/school name), month (as integer 1–12), and year (4-digit). NEVER select compare_two_stations or device_last_reading for this — those do not group by device per month.
+            9f. If the user asks which device has been without data / offline / silent for the longest time → select "device_longest_silent". Set topN=1 when user says "which device" (singular). Set topN to the number mentioned if user says "top 5", "show me 10", etc. Default is 1. Extract regionName, sectorName, stationName if the user filters by region/sector/site. Only inactive devices (no reading in last 15 min) are returned.
+            9d. If the user asks which device contributed most to the highest site AQI at a school or site last month (e.g. "which device contributed most to the highest site AQI at Al Saad Indian School last month?") → select "device_peak_aqi_contribution". Extract stationName only — the date range is always last month (hardcoded in SQL). NEVER select device_live_reading, compare_two_stations, or schools_latest_pollutant for this.
+            9c. If the user asks to compare the two devices at a specific school or site for a specific month (e.g. "compare the two devices at Al Saad Indian School for September 2026", "device comparison at Al Naeem School for August") → select "compare_devices_monthly". Extract stationName (site/school name), month (as integer 1–12), and year (4-digit). NEVER select compare_two_stations or device_live_reading for this — those do not group by device per month.
             9b. If the user asks which sites had the HIGHEST average AQI last year, in a specific year, or wants a worst/most-polluted year-based ranking (e.g. "which 10 sites had the highest average AQI last year?", "top sites by AQI in 2024", "worst sites AQI 2023") → select "top_sites_aqi_yearly". Extract topN (default 10) and year (default: current year minus 1). If the user asks for LOWEST or BEST average AQI last year (cleanest, safest, best air quality) → select "bottom_sites_aqi_yearly" instead. NEVER select faq_answer, site_aqi_ranking, or highest_aqi_today for year-based AQI ranking questions.
-            10. If the user asks to LIST, SHOW, or COUNT devices under a SPECIFIC SITE or SCHOOL name (e.g. "devices under Al Naeem School", "devices at Al Saad Indian School", "total number of devices in Al Reyada School", "how many devices does Al Reyada School have", "number of devices at Al Saad") → select "devices_with_readings". Extract stationName as the site name or a keyword from it. NEVER select list_devices (that returns system-wide total with no site filter) for site-specific device count questions. NEVER select sites_by_sector or list_stations for device listing questions.
-            If the user asks about devices in a REGION or SECTOR only (no specific site name) → select "devices_by_filter". Extract regionName and/or sectorName. This also handles "how many active devices in Abu Dhabi" — extract statusFilter if active/inactive is mentioned.
-            IMPORTANT — when the user mentions "school sites", "school devices", "schools" in the context of device status (offline, online, active, inactive) → ALWAYS select "devices_by_filter" with sectorName="Public & Govt-School". Extract statusFilter="Inactive" for offline/inactive, "Active" for online/active. NEVER select "offline_devices" or "online_devices" for school-scoped device questions — those templates have no sector filter.
-            Examples: "school sites with offline device" → devices_by_filter, sectorName="Public & Govt-School", statusFilter="Inactive". "all school sites that currently have an offline device" → devices_by_filter, sectorName="Public & Govt-School", statusFilter="Inactive". "active devices at school sites" → devices_by_filter, sectorName="Public & Govt-School", statusFilter="Active".
-            11. If the user asks to LIST or SHOW sites/stations across ALL regions (e.g. "give me the sites under all regions", "show sites region wise", "sites in each region", "all sites by region") → select "sites_all_regions". NEVER select sites_count_by_region (that only shows counts), schools_latest_pollutant, or sector_latest_pollutant for this.
-            11e. If the user asks HOW MANY sites are in ALL THREE regions together (e.g. "how many sites are there in Abu Dhabi, Al Ain and Al Dhafra?", "how many sites in Abu Dhabi, Al Ain and Al Dhafra", "total sites in all three regions") → select "sites_count_by_region". No params needed — it returns counts for all regions. NEVER select count_sites_in_region (that takes a single regionName and would need to run 3 times). NEVER select sites_all_regions (that lists site names, not counts).
-            11a. If the user asks how many SECTORS exist, what sectors are in HAWAQM, or list of sectors (with NO specific sector name) → select "list_sectors". NEVER select sites_count_by_sector (that shows sites per sector, not the sector list).
-            11b. If the user asks how many SUB-SECTORS exist, what sub-sectors are in HAWAQM, or list of sub-sectors → select "list_subsectors". NEVER select sites_by_sector or list_sectors for sub-sector questions.
+            10. If the user asks to LIST, SHOW, or COUNT devices under a SPECIFIC SITE or SCHOOL name (e.g. "devices under Al Naeem School", "devices at Al Saad Indian School", "devices available at Al Ain Commerical Com site") → select "devices_by_filter". Extract stationName as the site name keyword. The SQL uses LIKE so a partial keyword works. NEVER select list_devices (system-wide total) for site-specific questions.
+            "devices_by_filter" is the SINGLE template for ALL device listing and status questions — regardless of filter combination. Use it for:
+            - "which devices are offline/online/active/inactive" (no filter) → statusFilter="Inactive"/"Active"
+            - "offline devices in Abu Dhabi" → regionName="Abu Dhabi", statusFilter="Inactive"
+            - "active devices in commercial sector" → sectorName="Commercial", statusFilter="Active"
+            - "devices at Al Reyada School" → stationName="Al Reyada School"
+            - "inactive devices in Al Ain commercial sector" → regionName="Al Ain", sectorName="Commercial", statusFilter="Inactive"
+            - "school devices that are offline" → sectorName="Public & Govt-School", statusFilter="Inactive"
+            - "how many offline devices in Abu Dhabi" → regionName="Abu Dhabi", statusFilter="Inactive" (LLM returns count from rows)
+            - "which devices are currently available at Al Ain Commercial site" → regionName="Al Ain", sectorName="Commercial" (NO stationName — "Al Ain" is a region, "Commercial" is a sector)
+            - "devices in Abu Dhabi Residential" → regionName="Abu Dhabi", sectorName="Residential" (NOT a stationName)
+            - "devices in Al Ain Commercial Com site" → regionName="Al Ain", sectorName="Commercial"
+            CRITICAL for regionName/sectorName vs stationName disambiguation (devices_by_filter only):
+            - If the phrase contains BOTH a known region ("Abu Dhabi", "Al Ain", "Al Dhafra") AND a known sector word ("Commercial", "Residential", "School"), treat them as regionName + sectorName — do NOT set stationName.
+            - Only set stationName if the user mentions a real site name that is NOT just a region+sector combo (e.g. "Al Reyada School", "Al Bateen Airport").
+            Always extract: statusFilter="Inactive" for offline/inactive/not sending; statusFilter="Active" for online/active/sending/working/connected. NEVER set statusFilter for "available", "installed", "at", "under" — those mean location, not status.
+            Leave statusFilter empty when no status filter is mentioned (show all devices with status column).
+            11. For site listing/filtering questions → "sites_by_filter". Use it for: "show me sites", "list sites in Al Ain", "sites in commercial sector", "what are the active sites", "sites by region", "sites region wise". NEVER select schools_latest_pollutant or sector_latest_pollutant for plain site listing questions.
+            11e. For ALL site COUNT questions → select "site_count". Set params as follows:
+              - "how many sites total", "total sites in HAWAQM" → no params (returns one row with total)
+              - "how many sites per region", "site count by region", "how many sites in each region" → groupBy="region"
+              - "how many sites per sector", "site count by sector", "how many sites in each sector" → groupBy="sector"
+              - "how many sites in Abu Dhabi" (specific region) → regionName="Abu Dhabi" (no groupBy)
+              - "how many active sites" → liveStatus="Active" (no groupBy)
+              - "how many active sites in Al Ain" → regionName="Al Ain", liveStatus="Active"
+              NEVER select sites_by_filter for count questions — it returns individual site rows, not counts.
+            11f. If the user asks to LIST/SHOW which sites are active or inactive (e.g. "what are the active sites in Al Ain", "show me inactive sites in Abu Dhabi", "which sites are active") → select "sites_by_filter" with liveStatus="Active" or "Inactive". NEVER select site_count for list questions.
+            11a. If the user asks how many SECTORS exist, what sectors are in HAWAQM, or list of sectors (with NO specific sector name) → select "list_sectors". NEVER select site_count (that shows sites per sector, not the sector list).
+            11b. If the user asks how many SUB-SECTORS exist, what sub-sectors are in HAWAQM, or list of sub-sectors → select "list_subsectors". NEVER select sites_by_filter or list_sectors for sub-sector questions.
             11c. If the user asks for a PIE CHART or DONUT CHART or DISTRIBUTION CHART of sites or schools by AQI category (e.g. "create a pie chart of schools by their current AQI category", "show me a pie chart of AQI distribution", "AQI category breakdown as a pie chart") → select "schools_aqi_pie". If the user mentions "schools" or "school sites", extract sectorName="Public & Govt-School". If a region is mentioned, extract regionName. NEVER select site_aqi_by_category or site_aqi_all for pie/donut/distribution chart questions.
-            11c-ii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each REGION (e.g. "pie chart of sites by region", "how many sites per region as a chart", "show number of sites in each region") → select "sites_by_region_chart". No parameters needed.
-            11c-iii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each SECTOR (e.g. "pie chart of sites by sector", "how many sites per sector as a chart", "show number of sites in each sector") → select "sites_by_sector_chart". No parameters needed.
+            11c-ii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each REGION (e.g. "pie chart of sites by region", "how many sites per region as a chart", "show number of sites in each region") → select "sites_by_filter_chart". No parameters needed.
+            11c-iii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each SECTOR (e.g. "pie chart of sites by sector", "how many sites per sector as a chart", "show number of sites in each sector") → select "sites_by_filter_chart". No parameters needed.
             11c-iv. If the user asks for a chart of AVERAGE AQI by REGION (e.g. "bar chart of AQI by region", "average AQI per region chart", "AQI comparison across regions") → select "aqi_by_region_chart". No parameters needed.
             11c-v. If the user asks for a chart of SITE STATUS (Active vs Offline/Inactive) (e.g. "pie chart of site status", "active vs offline sites chart", "site availability breakdown") → select "sites_by_status_chart". No parameters needed.
             11c-vi. If the user asks for a chart of a POLLUTANT or AQI by SECTOR (e.g. "bar chart of PM2.5 by sector", "average AQI by sector", "pollutant levels per sector") → select "pollutant_by_sector_chart". Extract parameterName (e.g. "PM2.5", "PM10", "AQI Index"). Default to "AQI Index" if not specified.
             11c-vii. If the user asks for a pie or bar chart of devices grouped by model/type (e.g. "show me the distribution of devices by model", "pie chart of device models", "how many devices of each model") → select "devices_by_model_chart". No parameters needed. NEVER select site_device_summary or list_devices for this.
-            11c-viii. If the user asks for a pie or bar chart based on school sub-sectors or type of school (private/public/government) (e.g. "plot a pie chart based on school subsectors", "pie chart of type of school", "private vs public school chart") → select "sites_by_subsector_chart". No parameters needed. NEVER select sites_by_sector_chart (that groups by main sector, not sub-sector).
+            11c-viii. If the user asks for a pie or bar chart based on school sub-sectors or type of school (private/public/government) (e.g. "plot a pie chart based on school subsectors", "pie chart of type of school", "private vs public school chart") → select "sites_by_subsector_chart". No parameters needed. NEVER select sites_by_filter_chart (that groups by main sector, not sub-sector).
             11c-ix. If the user asks for a pie or bar chart of sites based on AQI levels/categories (e.g. "sites based on AQI levels", "AQI level distribution chart", "pie chart of sites by AQI category") → select "sites_aqi_level_chart". No parameters needed. NEVER select schools_aqi_pie (that is school-sector only) or site_aqi_by_category (that returns a filtered table, not a chart) for this.
             11d. If the user asks about TOTAL DEVICES or DEVICES PER SITE across ALL sites (e.g. "total number of devices per site in the application", "how many devices does each site have", "device count per site", "total devices across all sites") — even without naming a specific site — select "site_device_summary". No parameters needed. NEVER select site_aqi_single for this type of question.
             11d-i. If the user asks about DEVICES PER SITE — including:
@@ -1570,7 +1499,7 @@ public sealed class AzureAIService : IAzureAIService
               For "fewer than N devices" → set minDeviceCount=0, maxDeviceCount=N-1.
               For "at least N devices" → set minDeviceCount=N, maxDeviceCount=9999.
               For general device summary (no count filter) → omit both params (defaults: min=0, max=9999).
-              NEVER select online_devices, offline_devices, active_device_count, or devices_by_filter for device-per-site questions.
+              NEVER select active_device_count or devices_by_filter for device-per-site questions.
 
             Return ONLY valid JSON in this exact format:
             {
@@ -1662,8 +1591,12 @@ public sealed class AzureAIService : IAzureAIService
               → "Residential": "residential", "residential sector", "residential sites"
             IMPORTANT: "public & Gov School", "Public and Government School", "Public & Government school", "gov school", "govt school" ALL map to "Public & Govt-School".
             IMPORTANT: When the template is "site_aqi_by_category" and the user mentions "schools" or "school sites", ALWAYS extract sectorName="Public & Govt-School".
-            IMPORTANT: When the template is "sites_by_sector" and the user mentions "schools", "school", "different schools", "schools present", "which schools", "list schools" → ALWAYS extract sectorName="Public & Govt-School".
-            IMPORTANT: When the template is "sites_by_sector" and the user does NOT mention any specific region (Abu Dhabi, Al Ain, Al Dhafra), ALWAYS default regionName="Abu Dhabi". Only use a different region when the user explicitly names one.
+            IMPORTANT: When the template is "sites_by_filter" and the user mentions "schools", "school", "different schools", "schools present", "which schools", "list schools" → ALWAYS extract sectorName="Public & Govt-School".
+            IMPORTANT: When the template is "sites_by_filter":
+               - Extract regionName ONLY when user explicitly names a region ("in Al Ain", "in Abu Dhabi", "in Al Dhafra"). If user says "by region", "all regions", "each region", "region wise", "site count by region" — omit regionName (all regions shown).
+               - Extract sectorName ONLY when user explicitly names a sector ("commercial", "residential", "school"). If user says "by sector", "each sector", "site count by sector" — omit sectorName (all sectors shown).
+               - Extract liveStatus ONLY when user explicitly says "active" or "inactive" as a site status filter.
+               - Do NOT default any param. Omitted params = show all (no filter applied).
             If the user says something that doesn't match any of these three, omit sectorName.
             For parameterName: map common user words to the allowed parameter name — "co2", "carbon dioxide" → "CO2"; "pm2.5", "fine particles", "fine dust" → "PM2.5"; "pm10", "coarse particles", "coarse dust" → "PM10"; "co", "carbon monoxide" → "CO"; "aqi", "air quality index" → "AQI Index"; "no2", "nitrogen dioxide" → "NO2"; "so2", "sulphur dioxide", "sulfur dioxide" → "SO2"; "o3", "ozone" → "O3"; "tvoc", "voc", "volatile organic" → "VOC"; "ch2o", "formaldehyde" → "CH2O"; "temperature", "temp" → "Temperature"; "humidity" → "Humidity"; "noise", "sound" → "Noise".
             IMPORTANT — pollutant groups: if the user asks for "physical" readings/pollutants/parameters, do NOT extract a single parameterName — omit it (the system will filter to physical group: PM2.5, PM10, Temperature, Humidity, Noise). If the user asks for "chemical" readings/pollutants/parameters, omit parameterName as well (system filters to chemical group: CO, CO2, NO2, SO2, O3, CH2O, VOC). Only extract a specific parameterName when the user names ONE specific pollutant.
@@ -1678,8 +1611,8 @@ public sealed class AzureAIService : IAzureAIService
             For parameterName (device readings only): if the user asks for a specific parameter, map it — "aqi", "air quality index" → "AQI Index"; "pm2.5", "fine particles", "fine dust" → "PM2.5"; "pm10", "coarse particles" → "PM10"; "co2", "carbon dioxide" → "CO2"; "co", "carbon monoxide" → "CO"; "no2", "nitrogen dioxide" → "NO2"; "so2", "sulphur dioxide", "sulfur dioxide" → "SO2"; "o3", "ozone" → "O3"; "temperature", "temp" → "Temperature"; "humidity" → "Humidity"; "voc", "tvoc", "volatile organic" → "VOC"; "noise", "sound" → "Noise"; "ch2o", "formaldehyde" → "CH2O".
             CRITICAL — pollutant group words for device queries: if the user says "physical" (or "physical readings", "physical pollutants", "physical parameters"), omit parameterName — the controller will return PM2.5, PM10, Temperature, Humidity, Noise. If the user says "chemical" (or "chemical readings", "chemical pollutants", "chemical parameters"), omit parameterName — the controller will return CO, CO2, NO2, SO2, O3, CH2O, VOC. Only extract a specific parameterName when the user names a single explicit pollutant.
             If the user asks for "reading", "readings", "all readings", "all parameters", "all data", "physical", or "chemical" — omit parameterName entirely.
-            For statusFilter (devices_by_filter only): extract "Active" if user says "active", "online", "working", "sending"; extract "Inactive" if user says "inactive", "offline", "not sending", "down"; omit if user asks for all devices with no status preference.
-            For liveStatus (sites_filtered only): extract "Active" ONLY if user explicitly says "active sites", "online sites", "currently active"; extract "Inactive" ONLY if user explicitly says "inactive sites", "offline sites", "not active"; extract "No Data" ONLY if user says "no data", "no devices", "without devices", "no readings". If the user mentions MORE THAN ONE status (e.g. "active and inactive sites"), join with "|": "Active|Inactive". CRITICAL: if the user says "all sites", "show sites", "list sites", "give all sites", or any generic site list phrase WITHOUT a status word — omit liveStatus entirely. Never guess or infer liveStatus from context.
+            For statusFilter (devices_by_filter only): extract "Active" if user says "active", "online", "working", "sending", "connected"; extract "Inactive" if user says "inactive", "offline", "not sending", "down", "disconnected"; omit (do NOT set statusFilter) if user says "available", "installed", "under", "at", "in" with no explicit status word — those are location queries not status filters.
+            For liveStatus (sites_by_filter only): extract "Active" ONLY if user explicitly says "active sites", "active stations", "online sites", "currently active"; extract "Inactive" ONLY if user explicitly says "inactive sites", "inactive stations", "offline sites", "not active". If the user mentions MORE THAN ONE status (e.g. "active and inactive sites"), join with "|": "Active|Inactive". CRITICAL: if the user says "all sites", "show sites", "list sites", "give all sites", or any generic site list phrase WITHOUT a status word — omit liveStatus entirely. Never guess or infer liveStatus from context. Example: "active sites in Al Ain" → liveStatus="Active", regionName="Al Ain".
             For aqiCategory (site_aqi_by_category only): map the user's words to one or more of the six categories below.
               If the user asks for MORE THAN ONE category (e.g. "Moderate and Very Unhealthy", "Good or Unhealthy"), output ALL matched categories joined by "|" (pipe).
               Examples: "Moderate and Very Unhealthy" → "Moderate|Very Unhealthy"; "Good or Hazardous" → "Good|Hazardous"; "just Moderate" → "Moderate".

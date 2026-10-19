@@ -166,8 +166,8 @@ public sealed class RbacEngine : IRbacEngine
         // that already groups by sector — injecting a WHERE filter would break those queries.
         var skipSectorInjection = template.SkipSiteFilter
             || template.Id is "sites_count_by_sector" or "sites_count_by_region"
-                or "sector_latest_pollutant" or "devices_with_readings"
-                or "count_sites_in_region" or "sites_by_region";
+                or "sector_latest_pollutant"
+                or "count_sites_in_region" or "sites_by_filter";
         if (!skipSectorInjection && !string.IsNullOrWhiteSpace(scope.Sector))
         {
             if (sql.Contains("@sectorName", StringComparison.OrdinalIgnoreCase) && !parameters.ContainsKey("sectorName"))
@@ -219,8 +219,9 @@ public sealed class RbacEngine : IRbacEngine
 
         sql = SqlValidator.EnsureTopClause(sql, userLimit);
 
-        _log.Debug("RBAC: built safe query for template '{Id}', sites={Sites}, params={ParamCount}",
-            template.Id, string.Join(",", effectiveSiteIds), parameters.Count);
+        _log.Debug("RBAC: built safe query for template '{Id}', sites={Sites}, params={Params}",
+            template.Id, string.Join(",", effectiveSiteIds),
+            string.Join(", ", parameters.Select(kv => $"{kv.Key}={kv.Value ?? "NULL"}")));
 
         return (sql, parameters);
     }
@@ -427,8 +428,11 @@ public sealed class RbacEngine : IRbacEngine
                 parameters["stationId"] = siteIds[0];
             return sql;
         }
-        // If SQL filters by station name string, the site is already constrained — skip ID injection
-        if (Regex.IsMatch(sql, @"@stationName\b", RegexOptions.IgnoreCase))
+        // If SQL filters by station name string AND a non-null stationName was actually provided,
+        // the site is already constrained by the LIKE filter — skip ID injection.
+        // If stationName is null (optional param not provided), we still need RBAC site injection.
+        if (Regex.IsMatch(sql, @"@stationName\b", RegexOptions.IgnoreCase)
+            && parameters.TryGetValue("stationName", out var snVal) && snVal is not null)
             return sql;
 
         // Inject WHERE/AND clause with IN list (parameterised via Dapper tvp workaround)

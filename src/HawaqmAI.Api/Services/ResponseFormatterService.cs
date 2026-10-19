@@ -51,9 +51,9 @@ public sealed class ResponseFormatterService : IResponseFormatterService
         if (rows.Count > 0)
             rows = EnrichWithAqiLabels(rows);
 
-        // For device_last_reading: strip metadata columns from table display
+        // For device_live_reading: strip metadata columns from table display
         // (DeviceName and LastMeasured are the same on every row — shown once in the summary)
-        if (template.Id == "device_last_reading" && rows.Count > 0)
+        if (template.Id == "device_live_reading" && rows.Count > 0)
         {
             rows = rows.Select(r =>
             {

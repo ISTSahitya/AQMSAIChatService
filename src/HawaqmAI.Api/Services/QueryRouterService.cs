@@ -39,9 +39,11 @@ public sealed class QueryRouterService : IQueryRouterService
     private static readonly string[] SiteKeywords =
         ["site", "station", "school", "building", "facility", "location", "readings at", "aqi at", "data for", "reading at"];
 
-    // Keywords that clearly signal a device query
+    // Keywords that clearly signal a device query.
+    // Intentionally excludes hardcoded device model prefixes (BA, SEI100M) — QuestionHasDeviceName()
+    // handles model detection generically so new device models need no code change here.
     private static readonly string[] DeviceKeywords =
-        ["device", "sensor", "reading for", "data from", "ba 0", "sei100m 0", "sei100m"];
+        ["device", "sensor", "reading for", "data from"];
 
     // Keywords that clearly signal a region query
     private static readonly string[] RegionKeywords =
@@ -226,21 +228,31 @@ public sealed class QueryRouterService : IQueryRouterService
         if (_cache.TryGetValue(CacheKey, out List<ApprovedQuery>? cached) && cached != null)
             return cached;
 
-        var path = Path.Combine(AppContext.BaseDirectory, "Knowledge", "approved-queries.json");
-        if (!File.Exists(path))
+        var knowledgeDir = Path.Combine(AppContext.BaseDirectory, "Knowledge");
+        var files = Directory.GetFiles(knowledgeDir, "*-queries.json");
+
+        if (files.Length == 0)
         {
-            _log.Error("approved-queries.json not found at {Path}", path);
+            _log.Error("No *-queries.json files found in {Dir}", knowledgeDir);
             return [];
         }
 
-        await using var fs = File.OpenRead(path);
-        var file = await JsonSerializer.DeserializeAsync<ApprovedQueriesFile>(fs,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }, ct);
+        var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        var all = new List<ApprovedQuery>();
 
-        var queries = file?.Queries ?? [];
-        _cache.Set(CacheKey, queries, TimeSpan.FromHours(1));
-        _log.Information("Loaded {Count} approved query templates", queries.Count);
-        return queries;
+        foreach (var filePath in files)
+        {
+            await using var fs = File.OpenRead(filePath);
+            var file = await JsonSerializer.DeserializeAsync<ApprovedQueriesFile>(fs, opts, ct);
+            if (file?.Queries is { Count: > 0 } q)
+                all.AddRange(q);
+            else
+                _log.Warning("No queries loaded from {File}", Path.GetFileName(filePath));
+        }
+
+        _cache.Set(CacheKey, all, TimeSpan.FromHours(1));
+        _log.Information("Loaded {Count} approved query templates from {FileCount} files", all.Count, files.Length);
+        return all;
     }
 
     // Parameter names that indicate a pollutant-reading request
@@ -248,29 +260,81 @@ public sealed class QueryRouterService : IQueryRouterService
         { "co", "no2", "so2", "co2", "pm2.5", "pm10", "o3", "tvoc", "ch2o", "aqi", "temperature", "humidity", "voc", "noise" };
 
     // Regex-style check: question contains a device name pattern.
-    // Strategy: strip all spaces from the question, then match the normalised device-name
-    // pattern used by ChatController: letters+digits+letters prefix followed by 1-4 digits.
-    // Handles all variants: "BA 0001", "BA0010", "SEI100M 0014", "SEI 100M 0008",
-    //                        "sei100m0085", "sei 100 m 8", "BA1", "SEI100M0008" etc.
-    // Also handles partial/typo inputs like "B 0001" (missing 'A' from 'BA').
+    //
+    // DESIGN: intentionally device-prefix-agnostic so it works even if device naming
+    // conventions change (new models, new prefixes). The DB fuzzy lookup in ChatController
+    // resolves the exact name; this method only needs to detect "something that looks like
+    // a device code" vs. a site/person name.
+    //
+    // Rules:
+    //   1. Generic: word boundary + 1-8 uppercase letters optionally mixed with digits
+    //      (the alphanumeric prefix of a device model name) immediately followed by
+    //      1-4 digits, with optional internal spaces — e.g. "BA 0001", "SEI100M 0014",
+    //      "XYZ 0042", collapsed "sei100m0009".
+    //      Guard: must NOT be a pure-word token (no digits at all), which would match
+    //      ordinary words. Require at least one digit in the suffix portion.
+    //   2. Context guard: when the word "device" or "sensor" appears in the question,
+    //      a short letter+digits token nearby is also treated as a device code —
+    //      covers partial/typo inputs like "device B 0001".
+    //
+    // Current known prefixes for reference: BA, SEI100M
+    // To add a new device model, NO code change is needed — the generic rule picks it up.
     private static bool QuestionHasDeviceName(string lowerQuestion)
     {
-        // Check canonical patterns: "BA 0001", "SEI100M 0014" etc.
+        // Rule 1a: generic device code pattern in original text
+        // Letters (1-8) optionally interspersed with digit groups, then \s* then digits (1-4)
+        // \b guards prevent matching ordinary words like "abu", "al", "o3" etc.
+        // The negative lookahead (?!\s*[a-z]) prevents matching "pm 2" or "co 2" type tokens.
         if (System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
-            @"\b(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})\b"))
-            return true;
+            @"\b[a-z]{1,8}(?:\d+[a-z]+)*\s*\d{1,4}\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            // Filter out common false positives: pollutant names, region words, number phrases
+            // that also match the generic pattern (e.g. "pm10", "no2", "co2", "o3", "pm2", "al1")
+            var fp = System.Text.RegularExpressions.Regex.Matches(lowerQuestion,
+                @"\b([a-z]{1,8}(?:\d+[a-z]+)*)\s*(\d{1,4})\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-        // Collapse spaces and re-check — catches "SEI 100M 0008", "sei 100 m 0014" etc.
+            foreach (System.Text.RegularExpressions.Match m in fp)
+            {
+                var prefix = m.Groups[1].Value.ToUpperInvariant();
+                // Skip known non-device tokens
+                if (prefix is "PM" or "NO" or "SO" or "CO" or "O" or "CH" or "VOC"
+                         or "AL" or "PM2" or "NO2" or "SO2" or "CO2" or "O3" or "CH2"
+                         or "AQI" or "TOP" or "P" or "S" or "M" or "N" or "H" or "C"
+                         or "T" or "F" or "D" or "E" or "G" or "I" or "J" or "K"
+                         or "L" or "Q" or "R" or "U" or "V" or "W" or "X" or "Y" or "Z")
+                    continue;
+
+                // Prefix must be at least 2 chars OR be "B" followed by context word "device"
+                if (prefix.Length >= 2)
+                    return true;
+            }
+        }
+
+        // Rule 1b: collapse spaces and re-check — catches "SEI 100M 0008", "sei 100 m 0014"
         var collapsed = lowerQuestion.Replace(" ", "");
         if (System.Text.RegularExpressions.Regex.IsMatch(collapsed,
-            @"(ba\d{1,4}|sei100m\d{1,4})"))
-            return true;
+            @"\b[a-z]{2,}(?:\d+[a-z]+)*\d{1,4}\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            var fp2 = System.Text.RegularExpressions.Regex.Matches(collapsed,
+                @"\b([a-z]{2,}(?:\d+[a-z]+)*)\d{1,4}\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            foreach (System.Text.RegularExpressions.Match m in fp2)
+            {
+                var prefix = m.Groups[1].Value.ToUpperInvariant();
+                if (prefix is "PM" or "NO" or "SO" or "CO" or "O" or "CH" or "VOC"
+                         or "PM2" or "NO2" or "SO2" or "CO2" or "CH2" or "AQI" or "TOP")
+                    continue;
+                return true;
+            }
+        }
 
-        // Also match "device B 0001" / "device b 1" style — single-letter 'B' + digits
-        // when preceded by the word "device". Users sometimes omit the 'A' from 'BA'.
-        // Pattern: word "device" followed (anywhere after) by standalone letter B and digits.
+        // Rule 2: "device/sensor" + any short code nearby (covers partial inputs like "device B 0001")
         if (System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion,
-            @"\bdevice\b.{0,30}\bb\s*\d{1,4}\b"))
+            @"\b(device|sensor)\b.{0,40}\b[a-z]{1,8}(?:\d+[a-z]+)*\s*\d{1,4}\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase))
             return true;
 
         return false;
@@ -353,10 +417,13 @@ public sealed class QueryRouterService : IQueryRouterService
 
     // Words that indicate a device status check (not an FAQ about rules)
     private static readonly string[] DeviceStatusKeywords = [
-        "active", "inactive", "online", "offline", "working", "sending", "send", "status",
+        "active", "inactive", "online", "offline", "connected", "disconnected",
+        "working", "sending", "send", "status",
         "last send", "last report", "last active", "last update", "last transmit",
         "last measured", "last data", "last communicated", "most recent data",
-        "most recent transmission", "recent data transmission", "last report"
+        "most recent transmission", "recent data transmission",
+        "last time", "last reading", "last reported", "last communicate",
+        "when was", "when did"
     ];
 
     // Shared compiled regex for specific-date detection (ISO, slash, month-name, year-only, relative)
@@ -432,7 +499,12 @@ public sealed class QueryRouterService : IQueryRouterService
             "overall data availability", "data availability rate", "data availability percentage",
             "how many devices are active", "active device count", "how many active devices",
             "how many critical sites", "critical site count", "priority hotspot count",
-            "how many devices are currently active"
+            "how many devices are currently active",
+            "how much data is being successfully received", "latest data success percentage",
+            "how successful is the current data collection", "how much data are we getting",
+            "data completeness right now", "data collection rate", "data reception rate",
+            "how well are devices reporting", "how well is data being collected",
+            "how complete is our data", "current data collection rate"
         };
         if (template.Id == "faq_answer"
             && dsrValueKeywords.Any(k => lowerQuestion.Contains(k)))
@@ -449,18 +521,34 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.2;
         }
 
-        // Penalise device_last_reading when question asks WHEN the device last sent data —
-        // those should route to device_status which queries ParameterReadingUpdateTime directly.
-        if (template.Id == "device_last_reading"
+        // Penalise device_live_reading when question is about online/offline/active/inactive status —
+        // those route to device_status, not device_live_reading which returns parameter readings.
+        if (template.Id == "device_live_reading"
             && QuestionHasDeviceName(lowerQuestion)
-            && (lowerQuestion.Contains("when did") || lowerQuestion.Contains("last send") || lowerQuestion.Contains("last sent")))
+            && (lowerQuestion.Contains("online") || lowerQuestion.Contains("offline")
+                || lowerQuestion.Contains("active") || lowerQuestion.Contains("inactive")
+                || lowerQuestion.Contains("connected") || lowerQuestion.Contains("disconnected")))
         {
-            maxScore *= 0.1;
+            maxScore *= 0.05;
+        }
+
+        // Penalise device_live_reading when question asks WHEN the device last sent/reported/was active —
+        // those route to device_status which queries ParameterReadingUpdateTime directly.
+        var lastTimestampQuestionPhrases = new[] {
+            "when did", "when was", "last time", "last send", "last sent", "last report",
+            "last active", "last reading", "last data", "last transmit", "last measured",
+            "last communicate", "most recent data transmission", "most recent transmission"
+        };
+        if (template.Id == "device_live_reading"
+            && QuestionHasDeviceName(lowerQuestion)
+            && lastTimestampQuestionPhrases.Any(p => lowerQuestion.Contains(p)))
+        {
+            maxScore *= 0.05;
         }
 
         // Boost all device templates when a device name pattern is present —
         // prevents site templates from stealing device queries (e.g. "PM2.5 for BA0010").
-        if ((template.Id == "device_last_reading" || template.Id == "device_reading_history"
+        if ((template.Id == "device_live_reading" || template.Id == "device_reading_history"
              || template.Id == "device_info" || template.Id == "device_status"
              || template.Id == "device_pollutants")
             && QuestionHasDeviceName(lowerQuestion))
@@ -469,7 +557,6 @@ public sealed class QueryRouterService : IQueryRouterService
         }
 
         // Boost device_status decisively when device name + status/timestamp question word is present.
-        // Must beat offline_devices/online_devices which can score 0.95 via substring match.
         // Also covers "when did X last send/report/update" — timestamp questions about a specific device.
         if (template.Id == "device_status"
             && QuestionHasDeviceName(lowerQuestion)
@@ -478,9 +565,9 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore = Math.Max(maxScore, 0.97);
         }
 
-        // Penalise offline_devices/online_devices when a SPECIFIC device name is present —
-        // those templates list ALL devices, not a single device. Single-device queries go to device_status.
-        if (template.Id is "offline_devices" or "online_devices"
+        // Penalise devices_by_filter when a SPECIFIC device name is present —
+        // single-device status queries go to device_status, not the list template.
+        if (template.Id == "devices_by_filter"
             && QuestionHasDeviceName(lowerQuestion))
         {
             maxScore *= 0.05;
@@ -500,12 +587,11 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.1;
         }
 
-        // Boost devices_with_readings when a site/school name is present + device listing intent.
-        // Covers: "which devices are installed at X", "list devices for X", "how many devices does X have"
+        // Penalise list_devices (system-wide count, admin only) for site-specific device questions
         var deviceAtSitePhrases = new[] {
             "devices at", "devices for", "devices installed at", "devices under",
             "sensors at", "sensors for", "sensors installed at", "sensors under",
-            "devices available at", "list devices", "which devices are",
+            "devices available at", "available at", "list devices", "which devices are",
             "how many devices does", "how many devices at", "how many sensors does",
             "what devices are", "what sensors are", "device count at", "device count for"
         };
@@ -513,10 +599,6 @@ public sealed class QueryRouterService : IQueryRouterService
             && !QuestionHasDeviceName(lowerQuestion)
             && (QuestionHasSiteName(lowerQuestion) || lowerQuestion.Contains("school") || lowerQuestion.Contains("site") || lowerQuestion.Contains("station"));
 
-        if (template.Id == "devices_with_readings" && isDeviceAtSiteQuestion)
-            maxScore = Math.Max(maxScore, 0.97);
-
-        // Penalise list_devices (system-wide count, admin only) for site-specific device questions
         if (template.Id == "list_devices" && isDeviceAtSiteQuestion)
             maxScore *= 0.05;
 
@@ -544,8 +626,8 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore = Math.Max(maxScore, 0.96);
         }
 
-        // Penalise device_last_reading when question is asking for metadata (not readings)
-        if (template.Id == "device_last_reading"
+        // Penalise device_live_reading when question is asking for metadata (not readings)
+        if (template.Id == "device_live_reading"
             && QuestionHasDeviceName(lowerQuestion)
             && deviceMetaKeywords.Any(k => lowerQuestion.Contains(k))
             && !lowerQuestion.Contains("reading") && !lowerQuestion.Contains("value")
@@ -555,7 +637,7 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.1;
         }
 
-        // Between device_last_reading and device_reading_history:
+        // Between device_live_reading and device_reading_history:
         // Pick history ONLY when an explicit time interval OR specific date/time is present.
         // "reading" and "value" alone do NOT imply history — they appear in current-reading questions too.
         var historyIntervalWords = new[] {
@@ -570,7 +652,7 @@ public sealed class QueryRouterService : IQueryRouterService
             "last hour", "last 24", "last month", "last year",
             "yesterday", "last week"
         };
-        // "current", "now", "latest", "live", "right now", "at this moment" → force device_last_reading
+        // "current", "now", "latest", "live", "right now", "at this moment" → force device_live_reading
         var currentReadingWords = new[] { "current", "now", "latest", "live", "right now", "at this moment", "today's reading", "present" };
         bool isCurrentReading = currentReadingWords.Any(w => lowerQuestion.Contains(w));
 
@@ -592,15 +674,15 @@ public sealed class QueryRouterService : IQueryRouterService
                                (historyIntervalWords.Any(w => lowerQuestion.Contains(w))
                                 || hasSpecificDate || hasSpecificTime);
 
-        // Force device_last_reading when "current/now/latest" is present with a device name
-        if (template.Id == "device_last_reading"
+        // Force device_live_reading when "current/now/latest" is present with a device name
+        if (template.Id == "device_live_reading"
             && QuestionHasDeviceName(lowerQuestion)
             && isCurrentReading)
         {
             maxScore = Math.Max(maxScore, 0.97);
         }
 
-        if (template.Id == "device_last_reading"
+        if (template.Id == "device_live_reading"
             && QuestionHasDeviceName(lowerQuestion)
             && isHistorySignal)
         {
@@ -610,7 +692,7 @@ public sealed class QueryRouterService : IQueryRouterService
             && QuestionHasDeviceName(lowerQuestion)
             && isHistorySignal)
         {
-            maxScore = Math.Max(maxScore, 0.97); // beats all non-device templates (0.95) and device_last_reading
+            maxScore = Math.Max(maxScore, 0.97); // beats all non-device templates (0.95) and device_live_reading
         }
 
         // Penalise ALL non-device templates when a device name is present —
@@ -628,19 +710,11 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.02;
         }
 
-        // Penalise offline_devices and online_devices when a specific device name is present —
-        // those templates list ALL offline/online devices with no per-device filter.
-        // A question like "Is SEI100M 0008 active or inactive?" must route to device_status.
-        if ((template.Id == "offline_devices" || template.Id == "online_devices")
-            && QuestionHasDeviceName(lowerQuestion))
-        {
-            maxScore *= 0.02;
-        }
 
         // Penalise ALL device templates when there is NO device name in the question —
         // without a BA/SEI100M code the device templates cannot resolve and will error.
         var deviceTemplates = new[] {
-            "device_last_reading", "device_status", "device_info",
+            "device_live_reading", "device_status", "device_info",
             "device_pollutants", "device_reading_history"
         };
         if (deviceTemplates.Contains(template.Id) && !QuestionHasDeviceName(lowerQuestion))
@@ -725,8 +799,43 @@ public sealed class QueryRouterService : IQueryRouterService
         bool isSiteListQuestion = siteListPhrases.Any(p => lowerQuestion.Contains(p));
         bool hasRegionWord = RegionKeywords.Any(k => lowerQuestion.Contains(k));
 
+        // Detect if the question is about listing sites by sector
+        // (commercial, residential, public/govt school) — used by multiple scoring blocks below.
+        bool isSectorListQuestion =
+            lowerQuestion.Contains("commercial") ||
+            lowerQuestion.Contains("residential") ||
+            lowerQuestion.Contains("govt-school") ||
+            lowerQuestion.Contains("govt school") ||
+            lowerQuestion.Contains("gov school") ||
+            lowerQuestion.Contains("gov-school") ||
+            lowerQuestion.Contains("public & govt") ||
+            lowerQuestion.Contains("public & gov") ||
+            lowerQuestion.Contains("public and gov") ||
+            lowerQuestion.Contains("public and govt") ||
+            lowerQuestion.Contains("government school") ||
+            lowerQuestion.Contains("government sites");
+
         if (isSiteListQuestion && (template.Id == "list_stations" || template.Id == "sites_filtered"))
             maxScore = Math.Max(maxScore, 0.93);
+
+        // Strongly boost list_stations when user asks for a SECTOR-filtered site list —
+        // "what are the sites under commercial sector", "sites under residential" etc.
+        // must not route to chart templates.
+        bool isSectorSiteListQuestion = isSiteListQuestion && isSectorListQuestion;
+        if (template.Id == "list_stations" && isSectorSiteListQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // Penalise chart templates when user asks for a plain site list (no chart keywords) —
+        // "what are the sites under commercial sector" is NOT a chart request.
+        var chartTemplates = new[] {
+            "schools_aqi_pie", "site_aqi_by_category", "sites_by_sector_chart",
+            "sites_by_region_chart", "aqi_by_region_chart", "pollutant_by_sector_chart"
+        };
+        bool hasChartKeyword = lowerQuestion.Contains("pie") || lowerQuestion.Contains("chart")
+            || lowerQuestion.Contains("graph") || lowerQuestion.Contains("bar chart")
+            || lowerQuestion.Contains("donut") || lowerQuestion.Contains("distribution");
+        if (chartTemplates.Contains(template.Id) && isSiteListQuestion && !hasChartKeyword)
+            maxScore *= 0.02;
 
         // Penalise current_all_stations for site-list questions — it returns readings, not a list
         if (template.Id == "current_all_stations" && isSiteListQuestion && !isAqiOrReadingQuestion)
@@ -939,17 +1048,16 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
-        // Penalise sites_by_sector / list_stations / sites_by_region when the question explicitly
+        // Penalise sites_by_filter / list_stations when the question explicitly
         // mentions "device" or "sensor" — those templates return sites, not devices.
-        // Device listing questions must route to devices_with_readings.
-        if ((template.Id == "sites_by_sector" || template.Id == "list_stations" ||
-             template.Id == "sites_by_region" || template.Id == "count_sites_in_region")
+        // Device listing questions must route to devices_by_filter.
+        if ((template.Id == "sites_by_filter" || template.Id == "list_stations")
             && (lowerQuestion.Contains("device") || lowerQuestion.Contains("sensor")))
         {
             maxScore *= 0.05;
         }
 
-        // Penalise sites_count_by_sector and sites_by_sector when user is asking for sector/subsector LIST or COUNT
+        // Penalise site_count and sites_by_filter when user is asking for sector/subsector LIST or COUNT
         // (not sites-per-sector breakdown) — route to list_sectors or list_subsectors instead.
         var isSectorCountQuestion =
             (lowerQuestion.Contains("how many sector") || lowerQuestion.Contains("number of sector") ||
@@ -962,7 +1070,7 @@ public sealed class QueryRouterService : IQueryRouterService
             lowerQuestion.Contains("subsector") || lowerQuestion.Contains("sub sector") ||
             lowerQuestion.Contains("sub-sector");
 
-        if ((template.Id == "sites_count_by_sector" || template.Id == "sites_by_sector")
+        if ((template.Id == "site_count" || template.Id == "sites_by_filter")
             && (isSectorCountQuestion || isSubSectorListQuestion))
         {
             maxScore *= 0.05;
@@ -1017,64 +1125,43 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
-        // Penalise count_sites_in_region when multiple regions are mentioned in one question —
-        // that template takes a single @regionName and fails when the user asks about all regions.
-        // Multi-region questions must route to sites_count_by_region which groups by all regions.
+        // Detect count vs list intent — used by several blocks below.
         var mentionedRegionCount =
             (lowerQuestion.Contains("abu dhabi") || lowerQuestion.Contains("abudhabi") ? 1 : 0) +
             (lowerQuestion.Contains("al ain") || lowerQuestion.Contains("alain") ? 1 : 0) +
             (lowerQuestion.Contains("al dhafra") || lowerQuestion.Contains("aldhafra") || lowerQuestion.Contains("dhafra") ? 1 : 0);
 
-        if (template.Id == "count_sites_in_region" && mentionedRegionCount > 1)
-        {
+        var countWords = new[] { "how many", "total", "count", "number of" };
+        bool isCountIntent = countWords.Any(w => lowerQuestion.Contains(w));
+        var listIntentPhrases = new[] { "what are the sites", "which sites are", "show me sites",
+            "show sites", "list sites", "give me sites", "what sites are", "sites under", "sites in",
+            "show me active sites", "show me inactive sites", "what are the active sites",
+            "what are the inactive sites", "which sites are active", "which sites are inactive",
+            "active sites in", "inactive sites in", "show active sites", "show inactive sites" };
+        bool isListIntent = listIntentPhrases.Any(p => lowerQuestion.Contains(p));
+
+        // Boost site_count for any count question about sites/stations.
+        var hasCountWord = lowerQuestion.Contains("how many") || lowerQuestion.Contains("total") ||
+                           lowerQuestion.Contains("count") || lowerQuestion.Contains("number of");
+        var hasSiteWord = lowerQuestion.Contains("site") || lowerQuestion.Contains("station");
+        if (template.Id == "site_count" && hasCountWord && hasSiteWord)
+            maxScore = Math.Max(maxScore, 0.95);
+
+        // Penalise site_count for list-intent questions — those go to sites_by_filter.
+        if (template.Id == "site_count" && isListIntent && !isCountIntent)
             maxScore *= 0.05;
-        }
 
-        // Boost sites_count_by_region when all 3 regions are mentioned together —
-        // user wants a cross-region count, not per-region listing.
-        var isAllThreeRegionsCountQuestion =
-            mentionedRegionCount == 3 &&
-            (lowerQuestion.Contains("how many") || lowerQuestion.Contains("total") ||
-             lowerQuestion.Contains("count") || lowerQuestion.Contains("number of"));
-
-        if (template.Id == "sites_count_by_region" && isAllThreeRegionsCountQuestion)
-        {
-            maxScore = Math.Max(maxScore, 0.97);
-        }
-
-        // Penalise sites_by_region and count_sites_in_region when all 3 regions are mentioned
-        // in a count question — these templates take a single @regionName and will fail or
-        // ask for clarification. Route to sites_count_by_region instead.
-        if ((template.Id == "sites_by_region" || template.Id == "count_sites_in_region")
-            && isAllThreeRegionsCountQuestion)
-        {
-            maxScore *= 0.05;
-        }
+        // Penalise sites_by_filter for count-intent questions — routes to site_count instead.
+        if (template.Id == "sites_by_filter" && isCountIntent && hasSiteWord && !isListIntent)
+            maxScore *= 0.3;
 
         // Penalise list_stations when the question mentions a specific region name —
-        // those should route to sites_by_region which filters by region, not list_stations
-        // which returns all accessible sites regardless of region.
+        // those should route to sites_by_filter which filters by region.
         if (template.Id == "list_stations"
             && RegionKeywords.Any(k => lowerQuestion.Contains(k)))
         {
             maxScore *= 0.05;
         }
-
-        // Detect if the question is about listing sites by sector
-        // (commercial, residential, public/govt school) — used by two penalty blocks below.
-        var isSectorListQuestion =
-            lowerQuestion.Contains("commercial") ||
-            lowerQuestion.Contains("residential") ||
-            lowerQuestion.Contains("govt-school") ||
-            lowerQuestion.Contains("govt school") ||
-            lowerQuestion.Contains("gov school") ||
-            lowerQuestion.Contains("gov-school") ||
-            lowerQuestion.Contains("public & govt") ||
-            lowerQuestion.Contains("public & gov") ||
-            lowerQuestion.Contains("public and gov") ||
-            lowerQuestion.Contains("public and govt") ||
-            lowerQuestion.Contains("government school") ||
-            lowerQuestion.Contains("government sites");
 
         // Boost sector_latest_pollutant when the question asks for a pollutant reading
         // across sites in a named sector (residential, commercial, institutional etc.).
@@ -1109,18 +1196,18 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
-        // Penalise active_device_count / online_devices / offline_devices when a region or sector
-        // is mentioned — those templates have no filter and return all-network results.
-        if ((template.Id == "active_device_count" || template.Id == "online_devices" || template.Id == "offline_devices")
+        // Penalise active_device_count when a region or sector is mentioned —
+        // that template has no filter; region/sector device questions go to devices_by_filter.
+        if (template.Id == "active_device_count"
             && (RegionKeywords.Any(k => lowerQuestion.Contains(k)) || isSectorListQuestion))
         {
             maxScore *= 0.1;
         }
 
-        // Penalise sites_by_region when a sector word is also present —
-        // sector+region questions must go to sites_by_sector which applies BOTH filters.
-        // sites_by_region only filters by region and would return all sectors.
-        if (template.Id == "sites_by_region" && isSectorListQuestion)
+        // Penalise sites_by_filter when a sector word is also present —
+        // sector+region questions must go to sites_by_filter which applies BOTH filters.
+        // sites_by_filter only filters by region and would return all sectors.
+        if (template.Id == "sites_by_filter" && isSectorListQuestion)
         {
             maxScore *= 0.05;
         }
@@ -1204,9 +1291,9 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore = Math.Max(maxScore, 0.96);
         }
 
-        // Penalise sites_by_region / list_stations / sites_by_sector when the question
+        // Penalise sites_by_filter / list_stations / sites_by_filter when the question
         // asks for an AQI category — those templates return site lists without AQI data.
-        if ((template.Id == "sites_by_region" || template.Id == "list_stations" || template.Id == "sites_by_sector")
+        if ((template.Id == "sites_by_filter" || template.Id == "list_stations" || template.Id == "sites_by_filter")
             && isAqiCategoryQuestion)
         {
             maxScore *= 0.05;
@@ -1227,27 +1314,45 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
-        // Boost sites_all_regions when user asks to list/show sites across all regions.
+        // COUNT BY GROUP questions → site_count with groupBy param (LLM sets this).
+        var isCountBySectorQuestion =
+            (lowerQuestion.Contains("count") || lowerQuestion.Contains("how many") ||
+             lowerQuestion.Contains("total") || lowerQuestion.Contains("number of"))
+            && (lowerQuestion.Contains("by sector") || lowerQuestion.Contains("per sector") ||
+                lowerQuestion.Contains("each sector"))
+            && (lowerQuestion.Contains("site") || lowerQuestion.Contains("station"));
+
+        var isCountByRegionQuestion =
+            (lowerQuestion.Contains("count") || lowerQuestion.Contains("how many") ||
+             lowerQuestion.Contains("total") || lowerQuestion.Contains("number of"))
+            && (lowerQuestion.Contains("by region") || lowerQuestion.Contains("per region") ||
+                lowerQuestion.Contains("each region") || lowerQuestion.Contains("all region"))
+            && (lowerQuestion.Contains("site") || lowerQuestion.Contains("station"));
+
+        if (template.Id == "site_count" && (isCountBySectorQuestion || isCountByRegionQuestion))
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // Penalise sites_by_filter for count-by-group questions (wrong SQL — returns individual rows)
+        if (template.Id == "sites_by_filter" && (isCountBySectorQuestion || isCountByRegionQuestion))
+            maxScore *= 0.05;
+
+        // LIST questions → sites_by_filter (individual rows, filterable)
         var isAllRegionsSiteListQuestion =
             (lowerQuestion.Contains("all region") || lowerQuestion.Contains("each region") ||
              lowerQuestion.Contains("across region") || lowerQuestion.Contains("region wise") ||
-             lowerQuestion.Contains("region-wise") || lowerQuestion.Contains("by region"))
+             lowerQuestion.Contains("region-wise") || lowerQuestion.Contains("by region") ||
+             lowerQuestion.Contains("per region"))
             && (lowerQuestion.Contains("site") || lowerQuestion.Contains("station"))
             && !lowerQuestion.Contains("aqi") && !lowerQuestion.Contains("pollutant")
-            && !lowerQuestion.Contains("co2") && !lowerQuestion.Contains("pm");
+            && !lowerQuestion.Contains("co2") && !lowerQuestion.Contains("pm")
+            && !isCountByRegionQuestion;
 
-        if (template.Id == "sites_all_regions" && isAllRegionsSiteListQuestion)
-        {
+        if (template.Id == "sites_by_filter" && isAllRegionsSiteListQuestion)
             maxScore = Math.Max(maxScore, 0.97);
-        }
 
-        // Penalise pollutant/school templates when user is asking for site listing across all regions.
-        if ((template.Id == "schools_latest_pollutant" || template.Id == "sector_latest_pollutant"
-             || template.Id == "sites_count_by_region")
+        if ((template.Id == "schools_latest_pollutant" || template.Id == "sector_latest_pollutant")
             && isAllRegionsSiteListQuestion)
-        {
             maxScore *= 0.05;
-        }
 
         // Penalise schools_latest_pollutant / sector_latest_pollutant when the question
         // is asking for AQI region-wise — those return per-site lists, not regional summaries.
@@ -1267,7 +1372,7 @@ public sealed class QueryRouterService : IQueryRouterService
         }
 
         // Penalise current_all_stations when the question is about listing sites by sector —
-        // those should route to sites_by_sector, not current_all_stations which requires
+        // those should route to sites_by_filter, not current_all_stations which requires
         // a @parameterName and will throw a SQL error.
         if (template.Id == "current_all_stations"
             && isSectorListQuestion
@@ -1408,10 +1513,6 @@ public sealed class QueryRouterService : IQueryRouterService
         if (template.Id == "data_success_rate" && isActiveDeviceCountQuestion
             && !lowerQuestion.Contains("dsr") && !lowerQuestion.Contains("data success")
             && !lowerQuestion.Contains("data availability") && !lowerQuestion.Contains("compliance"))
-            maxScore *= 0.1;
-
-        // Penalise online_devices for count-only questions — that template returns a list, not a count.
-        if (template.Id == "online_devices" && isActiveDeviceCountQuestion)
             maxScore *= 0.1;
 
         // Boost devices_by_model_chart for device model distribution chart questions
@@ -1589,8 +1690,7 @@ public sealed class QueryRouterService : IQueryRouterService
         }
 
         // Penalise templates that would wrongly capture device-per-site questions
-        if ((template.Id == "online_devices" || template.Id == "offline_devices" ||
-             template.Id == "active_device_count" || template.Id == "devices_by_filter")
+        if ((template.Id == "active_device_count" || template.Id == "devices_by_filter")
             && isDevicePerSiteQuestion)
         {
             maxScore *= 0.05;

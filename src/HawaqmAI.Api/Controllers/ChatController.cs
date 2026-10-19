@@ -132,9 +132,10 @@ public sealed class ChatController : ControllerBase
             var lastUserMessage = history.LastOrDefault(h => h.Role == "user")?.Content ?? "";
 
             // Extract the most likely entity: look for known site/device patterns in the previous message
-            // Device: BA/SEI100M followed by digits
+            // Device: letter-prefix (1-8 chars, optionally mixed with digits) followed by 1-4 digit suffix.
+            // Generic pattern works for current models (BA, SEI100M) and any future device naming convention.
             var deviceMatch = System.Text.RegularExpressions.Regex.Match(
-                lastUserMessage, @"\b(BA\s*\d{1,4}|SEI100M\s*\d{1,4})\b",
+                lastUserMessage, @"\b([A-Z]{1,8}(?:\d+[A-Z]+)*\s*\d{1,4})\b",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
             if (deviceMatch.Success)
@@ -713,14 +714,14 @@ public sealed class ChatController : ControllerBase
             }
         }
 
-        // ── 2e-pre3. Hard pre-check: "pie/bar chart of sites by sector" → force sites_by_sector_chart ──
+        // ── 2e-pre3. Hard pre-check: "pie/bar chart of sites by sector" → force sites_by_filter_chart ──
         var chartBySectorKeywords = new[] { "sites in each sector", "sites per sector", "sites by sector", "number of sites in each sector", "count of sites per sector", "site count by sector", "breakdown of sites by sector", "distribution of sites by sector", "sector bar graph", "sector bar chart", "by sector bar", "sector pie chart", "sector pie graph" };
         bool isSitesBySectorChart = isChartDistribution && chartBySectorKeywords.Any(k => lowerMsg.Contains(k));
 
         if (isSitesBySectorChart)
         {
-            _log.Debug("ChatController: sites-by-sector chart pre-check fired → forcing sites_by_sector_chart");
-            var sectorChartTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_sector_chart");
+            _log.Debug("ChatController: sites-by-sector chart pre-check fired → forcing sites_by_filter_chart");
+            var sectorChartTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_filter_chart");
             if (sectorChartTemplate is not null && sectorChartTemplate.ApiCall is not null)
             {
                 var sectorBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
@@ -758,7 +759,7 @@ public sealed class ChatController : ControllerBase
                         modelUsed: null,
                         tokenCount: 0));
                 }
-                _log.Warning("ChatController: sites_by_sector_chart API call failed, falling through to routing");
+                _log.Warning("ChatController: sites_by_filter_chart API call failed, falling through to routing");
             }
         }
 
@@ -1183,7 +1184,7 @@ public sealed class ChatController : ControllerBase
         }
 
         // ── 2h. Hard pre-check: "devices under/in region or sector" → force devices_by_filter ──
-        // Compass LLM often routes region/sector device queries to devices_with_readings (site-only).
+        // Route all device listing/filter queries to devices_by_filter.
         // Detect region or sector words and force devices_by_filter before LLM routing.
         // NOTE: Only sector-as-category phrases trigger this (e.g. "school sector", "commercial sector").
         //       A site name that contains "school" (e.g. "Mleih Cycle 3 School") should NOT trigger this.
@@ -1260,7 +1261,7 @@ public sealed class ChatController : ControllerBase
         }
 
         // ── 3b. Hard override: device name + date/time reference → device_reading_history ──
-        // The pattern scorer matches "reading" → device_last_reading with high confidence,
+        // The pattern scorer matches "reading" → device_live_reading with high confidence,
         // but any date/time reference makes it historical. Override BEFORE LLM param fill.
         bool msgHasDeviceCode = System.Text.RegularExpressions.Regex.IsMatch(
             lowerMsg, @"(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})");
@@ -1357,6 +1358,26 @@ public sealed class ChatController : ControllerBase
             tokensUsed = paramResult.TokensUsed;
             modelUsed = paramResult.ModelUsed;
             llmParams = paramResult.Parameters;
+        }
+
+        _log.Debug("ChatController: template={Template}, llmParams={Params}",
+            template.Id, string.Join(", ", llmParams.Select(kv => $"{kv.Key}={kv.Value}")));
+
+        // ── 4b-pre. Fix: "available at X site" is a location query, not a status filter.
+        // Remove statusFilter=Active when user says "available at/in/under" with a stationName —
+        // "available" means "which devices exist here", not "which devices are Active".
+        if (template.Id == "devices_by_filter"
+            && llmParams.TryGetValue("statusFilter", out var sf) && sf == "Active"
+            && llmParams.ContainsKey("stationName"))
+        {
+            var lowerMsgAvail = enrichedMessage.ToLowerInvariant();
+            if (lowerMsgAvail.Contains("available at") || lowerMsgAvail.Contains("available in")
+                || lowerMsgAvail.Contains("available under") || lowerMsgAvail.Contains("installed at")
+                || lowerMsgAvail.Contains("installed in") || lowerMsgAvail.Contains("installed under"))
+            {
+                llmParams.Remove("statusFilter");
+                _log.Debug("ChatController: cleared statusFilter=Active — 'available/installed at site' is location intent, not status filter");
+            }
         }
 
         // ── 4b. Override chartType when user explicitly asked for pie/bar ──
@@ -1526,10 +1547,10 @@ public sealed class ChatController : ControllerBase
                 }
             }
 
-            // ── Multi-site handling for devices_with_readings ──────────────────
+            // ── Multi-site handling for devices_by_filter with stationName ────────
             // When stationName contains multiple site names separated by "and"/commas,
             // run one query per site and merge the results.
-            if (template.Id == "devices_with_readings"
+            if (template.Id == "devices_by_filter"
                 && llmParams.TryGetValue("stationName", out var multiSiteName)
                 && !string.IsNullOrWhiteSpace(multiSiteName))
             {
@@ -1587,20 +1608,20 @@ public sealed class ChatController : ControllerBase
 
             // ── Multi-region handling for region-filtered templates ────────────────
             // When regionName contains multiple regions (e.g. "Al Ain and Al Dhafra"),
-            // For sites_by_sector: default regionName to "Abu Dhabi" when the user didn't specify one.
+            // For sites_by_filter: default regionName to "Abu Dhabi" when the user didn't specify one.
             // This matches the Executive Dashboard default view which shows Abu Dhabi sector breakdown.
-            if (template.Id == "sites_by_sector"
+            if (template.Id == "sites_by_filter"
                 && (!llmParams.TryGetValue("regionName", out var sectorRegion)
                     || string.IsNullOrWhiteSpace(sectorRegion)))
             {
                 llmParams["regionName"] = "Abu Dhabi";
-                _log.Information("sites_by_sector: no region specified — defaulting to Abu Dhabi");
+                _log.Information("sites_by_filter: no region specified — defaulting to Abu Dhabi");
             }
 
             // run one query per region and merge the results.
             var multiRegionTemplates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "sites_by_region", "count_sites_in_region", "sites_by_sector",
+                "sites_by_filter", "count_sites_in_region",
                 "devices_by_filter", "schools_latest_pollutant", "sector_latest_pollutant"
             };
 
@@ -1672,8 +1693,8 @@ public sealed class ChatController : ControllerBase
                     llmParams["maxDeviceCount"] = "9999";
             }
 
-            // ── device_last_reading: resolve deviceName → deviceId, call GetDeviceLatestData API ──
-            if (template.Id == "device_last_reading")
+            // ── device_live_reading: resolve deviceName → deviceId, call GetDeviceLatestData API ──
+            if (template.Id == "device_live_reading")
             {
                 var devName = llmParams.GetValueOrDefault("deviceName") ?? "";
                 if (string.IsNullOrWhiteSpace(devName))
@@ -1740,7 +1761,7 @@ public sealed class ChatController : ControllerBase
 
                 var latestParamName = llmParams.GetValueOrDefault("parameterName");
 
-                _log.Information("ChatController: device_last_reading deviceId={Id} deviceName='{Name}' param={Param}",
+                _log.Information("ChatController: device_live_reading deviceId={Id} deviceName='{Name}' param={Param}",
                     latestDeviceId, latestDeviceName, latestParamName ?? "all");
 
                 var latestApiResult = await _externalApi.GetDeviceLatestDataAsync(
@@ -1748,7 +1769,7 @@ public sealed class ChatController : ControllerBase
 
                 if (!latestApiResult.Success)
                 {
-                    _log.Warning("device_last_reading API_ERROR: {Error}", latestApiResult.Error);
+                    _log.Warning("device_live_reading API_ERROR: {Error}", latestApiResult.Error);
                     return Ok(_formatter.FormatError(session.SessionId,
                         "Could not retrieve the latest data for that device. Please try again.", "API_ERROR"));
                 }
@@ -2480,7 +2501,7 @@ public sealed class ChatController : ControllerBase
         // ── 7b. Physical / Chemical group filter for device queries ─────────
         // Physical: PM2.5, PM10, Temperature, Humidity, Noise
         // Chemical: CO, CO2 (CO₂), NO2 (NO₂), SO2 (SO₂), O3 (O₃), CH2O (CH₂O), VOC/TVOC
-        if (template.Id is "device_last_reading" or "device_reading_history")
+        if (template.Id is "device_live_reading" or "device_reading_history")
         {
             var lowerMsgDevice = request.Message.ToLowerInvariant();
             var wantsPhysical = lowerMsgDevice.Contains("physical");
@@ -2804,7 +2825,7 @@ public sealed class ChatController : ControllerBase
             "current_all_stations" or "site_aqi_all" =>
                 $"No air quality readings are currently available for {region}. This may be because devices are still syncing or no active sites have reported data yet. Please try again shortly.",
 
-            "sites_by_region" or "count_sites_in_region" =>
+            "sites_by_filter" or "count_sites_in_region" =>
                 $"No sites were found for {region}. Please check that the region name is correct or try a different filter.",
 
             "sites_outside_safe_range" or "site_aqi_by_category" =>
@@ -2822,7 +2843,7 @@ public sealed class ChatController : ControllerBase
             "device_reading_history" =>
                 $"No readings were found for that device on the requested date. The device may not have recorded data for that period, or the date may be outside the available history. Try a different date or interval.",
 
-            "device_last_reading" =>
+            "device_live_reading" =>
                 "No current readings are available for that device. It may be offline or still syncing. Please try again shortly.",
 
             _ =>

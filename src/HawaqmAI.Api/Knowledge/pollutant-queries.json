@@ -1,0 +1,835 @@
+{
+  "queries": [
+    {
+      "id": "pollutant_trend_hourly",
+      "description": "Show hourly average trend for a pollutant at a station over a date range",
+      "patterns": [
+        "trend",
+        "over time",
+        "graph",
+        "chart",
+        "plot",
+        "readings over",
+        "how has",
+        "historical",
+        "show me the trend",
+        "show me readings"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pa.Interval, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as MaxValue, MIN(pa.Parametervalue) as MinValue, p.ParameterName, u.UnitName, s.StationName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY pa.Interval, p.ParameterName, u.UnitName, s.StationName ORDER BY pa.Interval",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "CH2O",
+            "TVOC",
+            "Temperature",
+            "Humidity"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "pollutant_trend_monthly",
+      "description": "Show monthly average trend for a pollutant at a station",
+      "patterns": [
+        "monthly trend",
+        "month by month",
+        "monthly average",
+        "over months",
+        "each month"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pam.Interval, AVG(pam.Parametervalue) as AvgValue, MAX(pam.Parametervalue) as MaxValue, p.ParameterName, u.UnitName, s.StationName FROM ParameterAveragesMonth pam JOIN DMN_Stations s ON pam.StationID = s.ID JOIN DMN_Parameters p ON pam.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pam.StationID = @stationId AND p.ParameterName = @parameterName AND pam.Interval BETWEEN @startDate AND @endDate AND pam.Status = 1 GROUP BY pam.Interval, p.ParameterName, u.UnitName, s.StationName ORDER BY pam.Interval",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "CH2O",
+            "TVOC",
+            "Temperature",
+            "Humidity"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAveragesMonth"
+    },
+    {
+      "id": "worst_month_pollutants",
+      "description": "Find the worst air-quality month at a specific site in a given year — returns the month with highest avg AQI, the top pollutants with exceedance counts, and the peak single AQI reading. Uses ParameterAveragesMonth for monthly AQI, Parameters_Excedence_Values for thresholds, and ParameterAverages for peak hourly reading.",
+      "patterns": [
+        "what drove the worst air quality month",
+        "worst air quality month at",
+        "what caused the worst month",
+        "worst month air quality at",
+        "what drove the worst month",
+        "worst aqi month at",
+        "which month was worst at",
+        "pollutants behind the worst month",
+        "worst month and pollutants at",
+        "worst monthly aqi at",
+        "which was the worst month for air quality",
+        "what made the worst month at",
+        "worst air quality in a month"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "WITH MonthlyAvg AS ( SELECT MONTH(pam.Interval) AS [Month], YEAR(pam.Interval) AS [Year], ROUND(AVG(CAST(pam.Parametervalue AS FLOAT)), 1) AS AvgAQI, MAX(CAST(pam.Parametervalue AS FLOAT)) AS MaxAQI FROM ParameterAveragesMonth pam JOIN DMN_Parameters p ON pam.ParameterID = p.ID JOIN DMN_Stations s ON pam.StationID = s.ID WHERE p.ParameterName = 'AQI Index' AND s.StationName LIKE '%' + @stationName + '%' AND YEAR(pam.Interval) = @year GROUP BY MONTH(pam.Interval), YEAR(pam.Interval) ), WorstMonth AS ( SELECT TOP 1 * FROM MonthlyAvg ORDER BY AvgAQI DESC ), Exceedances AS ( SELECT p.ParameterName, COUNT(*) AS ExceedanceCount FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN DMN_Stations s ON pa.StationID = s.ID JOIN Parameters_Excedence_Values ev ON ev.Parameter = p.ParameterName AND ev.Interval = 24 WHERE s.StationName LIKE '%' + @stationName + '%' AND MONTH(pa.Interval) = (SELECT [Month] FROM WorstMonth) AND YEAR(pa.Interval) = @year AND pa.Parametervalue > ev.ExcedenceValue AND pa.Status = 1 AND p.ParameterName <> 'AQI Index' GROUP BY p.ParameterName ) SELECT wm.[Month], wm.[Year], wm.AvgAQI, wm.MaxAQI, e.ParameterName, e.ExceedanceCount FROM WorstMonth wm CROSS JOIN Exceedances e ORDER BY e.ExceedanceCount DESC",
+      "params": [
+        {
+          "name": "stationName",
+          "type": "string",
+          "source": "question"
+        },
+        {
+          "name": "year",
+          "type": "int",
+          "source": "question",
+          "optional": true,
+          "default": "YEAR(GETDATE())"
+        }
+      ],
+      "responseType": "text",
+      "tableUsed": "ParameterAveragesMonth",
+      "skipSiteFilter": false
+    },
+    {
+      "id": "indoor_ambient_compare",
+      "description": "Compare the current indoor AQI at a specific site with the nearest outdoor ambient (ArcGIS SDI) station. Fetches indoor AQI from GetAllSiteData, finds the nearest ambient station by coordinates, and returns both AQI values with distance.",
+      "patterns": [
+        "compare the current indoor aqi",
+        "compare indoor aqi with ambient",
+        "compare indoor aqi with outdoor",
+        "indoor vs outdoor aqi",
+        "indoor aqi compared to ambient",
+        "indoor aqi vs ambient station",
+        "nearest ambient station aqi",
+        "compare with nearest ambient station",
+        "nearest outdoor station",
+        "outdoor aqi near",
+        "ambient aqi near",
+        "compare indoor and outdoor",
+        "indoor outdoor aqi comparison",
+        "what is the outdoor aqi near",
+        "compare with outdoor station",
+        "indoor vs ambient",
+        "ambient station comparison"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        {
+          "name": "stationName",
+          "type": "string",
+          "source": "question"
+        }
+      ],
+      "responseType": "text",
+      "tableUsed": "AirQuality API + ArcGIS SDI",
+      "skipSiteFilter": false,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "indoor_ambient_compare"
+      }
+    },
+    {
+      "id": "highest_readings",
+      "description": "Find the stations with the highest pollutant readings over a period",
+      "patterns": [
+        "highest",
+        "worst",
+        "most polluted",
+        "maximum",
+        "top polluted",
+        "peak readings"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 10 s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as PeakValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue DESC",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "CH2O",
+            "TVOC",
+            "AQI"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "lowest_readings",
+      "description": "Find the stations with the lowest (best) pollutant readings over a period",
+      "patterns": [
+        "lowest",
+        "best air quality",
+        "cleanest",
+        "minimum",
+        "best performing stations"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 10 s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MIN(pa.Parametervalue) as MinValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue ASC",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "CH2O",
+            "TVOC"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "exceedance_count",
+      "description": "Count how many readings exceeded the MOCCAE standard threshold for a pollutant at a station",
+      "patterns": [
+        "exceedance",
+        "exceeded",
+        "above threshold",
+        "violations",
+        "breached",
+        "how many times exceeded",
+        "standard exceeded"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName, COUNT(*) as ExceedanceCount, MAX(pa.Parametervalue) as PeakValue FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID JOIN Parameters_Excedence_Values ev ON ev.Parameter = p.ParameterName WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Parametervalue > ev.ExcedenceValue AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "NO2",
+            "O3",
+            "SO2"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "text",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "exceedance_all_stations",
+      "description": "Count exceedances across all stations for a pollutant — ranked worst to best",
+      "patterns": [
+        "exceedance ranking",
+        "which stations exceeded",
+        "exceedance by station",
+        "stations with violations"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName, COUNT(*) as ExceedanceCount, MAX(pa.Parametervalue) as PeakValue FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID JOIN Parameters_Excedence_Values ev ON ev.Parameter = p.ParameterName WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Parametervalue > ev.ExcedenceValue AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, ev.ExcedenceValue, u.UnitName ORDER BY ExceedanceCount DESC",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "NO2",
+            "O3",
+            "SO2"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "rank_stations_by_pollutant",
+      "description": "Rank all stations by average pollutant level",
+      "patterns": [
+        "rank stations",
+        "ranking",
+        "worst stations for",
+        "best stations for",
+        "order stations by",
+        "sort stations"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as PeakValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue DESC",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "CH2O",
+            "TVOC"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "hourly_breakdown_by_day",
+      "description": "Hourly breakdown of a pollutant at a station on a specific date",
+      "patterns": [
+        "hourly",
+        "hour by hour",
+        "each hour",
+        "throughout the day",
+        "intraday",
+        "time of day"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT DATEPART(HOUR, pa.Interval) as Hour, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as MaxValue, p.ParameterName, u.UnitName FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND CAST(pa.Interval AS DATE) = @targetDate AND pa.Status = 1 GROUP BY DATEPART(HOUR, pa.Interval), p.ParameterName, u.UnitName ORDER BY Hour",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "CH2O",
+            "TVOC",
+            "Temperature",
+            "Humidity"
+          ]
+        },
+        {
+          "name": "targetDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "peak_pollution_hours",
+      "description": "Find which hours of the day have the highest pollution levels on average",
+      "patterns": [
+        "peak hours",
+        "worst time of day",
+        "busiest pollution time",
+        "when is pollution highest",
+        "rush hour"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT DATEPART(HOUR, pa.Interval) as Hour, AVG(pa.Parametervalue) as AvgValue, COUNT(*) as ReadingCount FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID WHERE pa.StationID = @stationId AND p.ParameterName = @parameterName AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY DATEPART(HOUR, pa.Interval) ORDER BY AvgValue DESC",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "TVOC"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "month_over_month",
+      "description": "Month-over-month comparison of a pollutant at a station",
+      "patterns": [
+        "month over month",
+        "monthly comparison",
+        "last month vs this month",
+        "compare months",
+        "monthly change"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT FORMAT(pam.Interval, 'yyyy-MM') as Month, AVG(pam.Parametervalue) as AvgValue, MAX(pam.Parametervalue) as MaxValue, p.ParameterName, u.UnitName FROM ParameterAveragesMonth pam JOIN DMN_Parameters p ON pam.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pam.StationID = @stationId AND p.ParameterName = @parameterName AND pam.Interval BETWEEN @startDate AND @endDate AND pam.Status = 1 GROUP BY FORMAT(pam.Interval, 'yyyy-MM'), p.ParameterName, u.UnitName ORDER BY Month",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "CH2O",
+            "TVOC"
+          ]
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope"
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope"
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "bar",
+      "tableUsed": "ParameterAveragesMonth"
+    },
+    {
+      "id": "worst_this_week",
+      "description": "Worst pollutant readings across all stations in the past 7 days",
+      "patterns": [
+        "worst this week",
+        "bad this week",
+        "this week summary",
+        "last 7 days",
+        "past week"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT TOP 20 s.StationName, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, MAX(pa.Parametervalue) as PeakValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE p.ParameterName = @parameterName AND pa.Interval >= DATEADD(DAY, -7, GETUTCDATE()) AND pa.Status = 1 GROUP BY s.StationName, p.ParameterName, u.UnitName ORDER BY AvgValue DESC",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "PM2.5",
+            "PM10",
+            "CO",
+            "CO2",
+            "NO2",
+            "O3",
+            "SO2",
+            "TVOC"
+          ]
+        }
+      ],
+      "responseType": "table",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "temperature_humidity_trend",
+      "description": "Temperature and humidity trend over time (historical chart) — only use when user asks for trend, chart, graph, or history",
+      "patterns": [
+        "temperature trend",
+        "humidity trend",
+        "temp and humidity trend",
+        "thermal comfort trend",
+        "indoor climate trend",
+        "temperature over time",
+        "humidity over time",
+        "temperature chart",
+        "humidity chart"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pa.Interval, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName IN ('Temperature', 'Humidity') AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY pa.Interval, p.ParameterName, u.UnitName ORDER BY pa.Interval, p.ParameterName",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope",
+          "optional": true
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope",
+          "optional": true
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope",
+          "optional": true
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "co2_tvoc_trend",
+      "description": "CO2 and TVOC trend over time (historical chart) at a station — only use when user asks for trend, chart, graph, or history",
+      "patterns": [
+        "co2 trend",
+        "tvoc trend",
+        "co2 over time",
+        "tvoc over time",
+        "co2 chart",
+        "tvoc chart",
+        "co2 graph",
+        "co2 and tvoc trend",
+        "indoor air quality trend",
+        "indoor pollutants trend",
+        "carbon dioxide trend",
+        "volatile organic trend"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT pa.Interval, p.ParameterName, AVG(pa.Parametervalue) as AvgValue, u.UnitName FROM ParameterAverages pa JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID WHERE pa.StationID = @stationId AND p.ParameterName IN ('CO2', 'TVOC') AND pa.Interval BETWEEN @startDate AND @endDate AND pa.Status = 1 GROUP BY pa.Interval, p.ParameterName, u.UnitName ORDER BY pa.Interval, p.ParameterName",
+      "params": [
+        {
+          "name": "stationId",
+          "type": "int",
+          "source": "question_or_scope",
+          "optional": true
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question_or_scope",
+          "optional": true
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question_or_scope",
+          "optional": true
+        }
+      ],
+      "responseType": "chart",
+      "chartType": "line",
+      "tableUsed": "ParameterAverages"
+    },
+    {
+      "id": "dust_event_response",
+      "description": "Analyse how a specific indoor school site responded to an outdoor dust/sand event on a given date. Queries SiteParameterAverages (TypeID=14440) for the indoor site's 24-hour average of a pollutant (default PM10), and joins AmbientData with the nearest AmbientStation (by Haversine distance) for the outdoor 24-hour average of the same pollutant on that date. Returns indoor avg, outdoor avg, peak percent (indoor/outdoor), protection level, nearest ambient station name, and the date. Use when user asks how indoor air quality responded to a dust/sand storm event, or asks for indoor vs outdoor pollutant comparison on a specific date. Available ambient parameters: PM10, PM25, O3, SO2, NO2, CO, AQI.",
+      "patterns": [
+        "how did indoor air quality respond during the dust event",
+        "respond during the dust event",
+        "respond during the dust",
+        "indoor air quality respond during dust",
+        "indoor air quality at school respond",
+        "dust event on",
+        "indoor response to dust event",
+        "indoor response to dust",
+        "indoor vs outdoor dust",
+        "how did the school respond to dust",
+        "sand storm indoor impact",
+        "dust storm indoor",
+        "indoor pm10 during dust",
+        "indoor pm25 during dust",
+        "indoor air quality during dust event",
+        "indoor air quality during dust",
+        "indoor outdoor pm10 comparison on date",
+        "indoor outdoor pollutant comparison",
+        "school response to dust event",
+        "building respond to dust event",
+        "dust event pm10",
+        "dust event pm25",
+        "how did the building respond to dust",
+        "indoor air during sandstorm",
+        "pm10 during dust event",
+        "sandstorm indoor impact",
+        "sand event indoor",
+        "indoor air quality respond",
+        "indoor quality during dust"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "WITH IndoorSite AS ( SELECT TOP 1 s.ID AS SiteID, s.StationName, TRY_CAST(s.CoordinateY AS FLOAT) AS Longitude, TRY_CAST(s.CoordinateX AS FLOAT) AS Latitude FROM DMN_Stations s WHERE s.StationName LIKE '%' + @stationName + '%' AND s.Status = 1 AND s.CoordinateX IS NOT NULL AND s.CoordinateY IS NOT NULL AND s.CoordinateX <> '' AND s.CoordinateY <> '' AND TRY_CAST(s.CoordinateX AS FLOAT) IS NOT NULL AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL ), IndoorAvg AS ( SELECT spa.StationID, ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 1) AS IndoorAvg FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID WHERE spa.TypeID = 14440 AND spa.ParameterName = @parameterName AND CAST(spa.Interval AS DATE) = TRY_CONVERT(DATE, @date, 23) GROUP BY spa.StationID ), NearestAmbient AS ( SELECT TOP 1 amb.Id AS AmbientStationID, amb.StationName AS AmbientStationName, ROUND(SQRT( ( (amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32 ) * ( (amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32 ) + ( (amb.Latitude - i.Latitude) * 111.32 ) * ( (amb.Latitude - i.Latitude) * 111.32 ) ), 2) AS Distance_km FROM AmbientStations amb CROSS JOIN IndoorSite i WHERE amb.Status = 'Active' AND amb.Latitude IS NOT NULL AND amb.Longitude IS NOT NULL ORDER BY Distance_km ), OutdoorAvg AS ( SELECT ROUND(AVG(CAST(ad.ParameterValue AS FLOAT)), 1) AS OutdoorAvg FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName = @parameterName AND TRY_CONVERT(DATE, ad.RecordedDate, 105) = TRY_CONVERT(DATE, @date, 23) ), OutdoorBaselineDailyMeans AS ( SELECT TRY_CONVERT(DATE, ad.RecordedDate, 105) AS ReadingDate, AVG(CAST(ad.ParameterValue AS FLOAT)) AS DailyMean FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName = @parameterName AND TRY_CONVERT(DATE, ad.RecordedDate, 105) >= DATEADD(DAY, -30, TRY_CONVERT(DATE, @date, 23)) AND TRY_CONVERT(DATE, ad.RecordedDate, 105) < TRY_CONVERT(DATE, @date, 23) GROUP BY TRY_CONVERT(DATE, ad.RecordedDate, 105) ), OutdoorBaseline AS ( SELECT ROUND(AVG(DailyMean), 1) AS OutdoorBaseline30 FROM OutdoorBaselineDailyMeans ), OutdoorBaselineByDay AS ( SELECT TRY_CONVERT(DATE, ad.RecordedDate, 105) AS ReadingDate, AVG(CAST(ad.ParameterValue AS FLOAT)) AS DailyOutdoor FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName = @parameterName AND TRY_CONVERT(DATE, ad.RecordedDate, 105) >= DATEADD(DAY, -14, TRY_CONVERT(DATE, @date, 23)) AND TRY_CONVERT(DATE, ad.RecordedDate, 105) < TRY_CONVERT(DATE, @date, 23) GROUP BY TRY_CONVERT(DATE, ad.RecordedDate, 105) ), BaselineRatio AS ( SELECT ROUND(AVG(CAST(spa.Parametervalue AS FLOAT) / NULLIF(obd.DailyOutdoor, 0)), 2) AS BaselineIORatio FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID JOIN OutdoorBaselineByDay obd ON CAST(spa.Interval AS DATE) = obd.ReadingDate WHERE spa.TypeID = 14440 AND spa.ParameterName = @parameterName AND DATEPART(WEEKDAY, CAST(spa.Interval AS DATE)) NOT IN (1, 7) ) SELECT i.StationName AS IndoorSite, na.AmbientStationName AS NearestAmbientStation, na.Distance_km, TRY_CONVERT(DATE, @date, 23) AS EventDate, @parameterName AS Parameter, ia.IndoorAvg, oa.OutdoorAvg, ob.OutdoorBaseline30, br.BaselineIORatio, DATENAME(WEEKDAY, TRY_CONVERT(DATE, @date, 23)) AS DayOfWeek, CASE WHEN oa.OutdoorAvg > 0 THEN ROUND(ia.IndoorAvg / oa.OutdoorAvg, 2) ELSE NULL END AS IORatio FROM IndoorSite i LEFT JOIN IndoorAvg ia ON ia.StationID = i.SiteID CROSS JOIN NearestAmbient na LEFT JOIN OutdoorAvg oa ON 1=1 LEFT JOIN OutdoorBaseline ob ON 1=1 LEFT JOIN BaselineRatio br ON 1=1",
+      "params": [
+        {
+          "name": "stationName",
+          "type": "string",
+          "source": "question",
+          "optional": false
+        },
+        {
+          "name": "date",
+          "type": "date",
+          "source": "question",
+          "optional": false
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "default": "PM10",
+          "allowed": [
+            "PM10",
+            "PM25",
+            "O3",
+            "SO2",
+            "NO2",
+            "CO",
+            "AQI"
+          ]
+        }
+      ],
+      "responseType": "text",
+      "tableUsed": "SiteParameterAverages + AmbientData + AmbientStations + AmbientParameters",
+      "skipSiteFilter": false
+    },
+    {
+      "id": "indoor_source_analysis",
+      "description": "Analyse whether a pollutant (PM2.5, PM10, CO2, CO, NO2, SO2, O3, TVOC, etc.) at a residential indoor site is more likely from indoor sources (bakhoor, cooking, ventilation) or outdoor infiltration, over a date range. Compares the indoor 24-hour average from SiteParameterAverages (TypeID=14440) against the nearest outdoor ambient station from AmbientData, computing an Indoor/Outdoor ratio. Use when user asks about the source of any indoor pollutant, indoor vs outdoor comparison for any parameter, bakhoor or cooking vs outdoor dust for any pollutant, or what is causing elevated readings of any parameter at a residence.",
+      "patterns": [
+        "is the pm2.5 more likely coming from indoors",
+        "is the pm10 more likely coming from indoors",
+        "is the co2 more likely coming from indoors",
+        "more likely coming from indoors",
+        "more likely coming from outdoor",
+        "pm2.5 indoor or outdoor source",
+        "pm10 indoor or outdoor source",
+        "is pm2.5 from indoor sources",
+        "is pm10 from indoor sources",
+        "bakhoor or outdoor dust",
+        "cooking or outdoor dust",
+        "indoor source of pm2.5",
+        "indoor source of pm10",
+        "indoor source of co2",
+        "pm2.5 source analysis",
+        "pm10 source analysis",
+        "indoor vs outdoor pm2.5",
+        "indoor vs outdoor pm10",
+        "indoor vs outdoor co2",
+        "is pm2.5 from bakhoor",
+        "is pm2.5 from cooking",
+        "what is causing pm2.5",
+        "what is causing pm10",
+        "what is causing elevated",
+        "pm2.5 coming from inside",
+        "pm2.5 coming from outside",
+        "pm10 coming from inside",
+        "pm10 coming from outside",
+        "indoor outdoor pm2.5 ratio",
+        "indoor outdoor pm10 ratio",
+        "source of pm2.5 at residence",
+        "source of pm10 at residence",
+        "indoor pollution source",
+        "bakhoor incense pm2.5",
+        "is elevated pm2.5 indoor",
+        "is elevated pm10 indoor",
+        "residence pm2.5 source",
+        "residence pm10 source",
+        "indoor outdoor ratio for",
+        "source of the pollutant at"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "WITH IndoorSite AS ( SELECT TOP 1 s.ID AS SiteID, s.StationName, TRY_CAST(s.CoordinateY AS FLOAT) AS Longitude, TRY_CAST(s.CoordinateX AS FLOAT) AS Latitude FROM DMN_Stations s WHERE s.StationName LIKE '%' + @stationName + '%' AND s.Status = 1 AND s.CoordinateX IS NOT NULL AND s.CoordinateY IS NOT NULL AND s.CoordinateX <> '' AND s.CoordinateY <> '' AND TRY_CAST(s.CoordinateX AS FLOAT) IS NOT NULL AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL ), IndoorAvg AS ( SELECT ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 2) AS IndoorVal, COUNT(DISTINCT CAST(spa.Interval AS DATE)) AS DayCount FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID WHERE spa.TypeID = 14440 AND spa.ParameterName = @parameterName AND CAST(spa.Interval AS DATE) BETWEEN TRY_CONVERT(DATE, @startDate, 23) AND TRY_CONVERT(DATE, @endDate, 23) ), NearestAmbient AS ( SELECT TOP 1 amb.Id AS AmbientStationID, amb.StationName AS AmbientStationName, ROUND(SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ), 2) AS Distance_km FROM AmbientStations amb CROSS JOIN IndoorSite i WHERE amb.Status = 'Active' AND amb.Latitude IS NOT NULL AND amb.Longitude IS NOT NULL ORDER BY Distance_km ), OutdoorDailyMeans AS ( SELECT TRY_CONVERT(DATE, ad.RecordedDate, 105) AS ReadingDate, ROUND(AVG(CAST(ad.ParameterValue AS FLOAT)), 2) AS DailyMean FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName = @parameterName AND TRY_CONVERT(DATE, ad.RecordedDate, 105) BETWEEN TRY_CONVERT(DATE, @startDate, 23) AND TRY_CONVERT(DATE, @endDate, 23) GROUP BY TRY_CONVERT(DATE, ad.RecordedDate, 105) ), OutdoorAvg AS ( SELECT ROUND(AVG(DailyMean), 2) AS OutdoorVal FROM OutdoorDailyMeans ) SELECT i.StationName AS ResidenceName, na.AmbientStationName AS NearestAmbientStation, na.Distance_km, @parameterName AS Parameter, TRY_CONVERT(DATE, @startDate, 23) AS PeriodStart, TRY_CONVERT(DATE, @endDate, 23) AS PeriodEnd, ia.DayCount, ia.IndoorVal, oa.OutdoorVal, CASE WHEN oa.OutdoorVal > 0 THEN ROUND(ia.IndoorVal / oa.OutdoorVal, 2) ELSE NULL END AS IORatio FROM IndoorSite i LEFT JOIN IndoorAvg ia ON 1=1 CROSS JOIN NearestAmbient na LEFT JOIN OutdoorAvg oa ON 1=1",
+      "params": [
+        {
+          "name": "stationName",
+          "type": "string",
+          "source": "question",
+          "optional": false
+        },
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "default": "PM2.5"
+        },
+        {
+          "name": "startDate",
+          "type": "date",
+          "source": "question",
+          "optional": false
+        },
+        {
+          "name": "endDate",
+          "type": "date",
+          "source": "question",
+          "optional": false
+        }
+      ],
+      "responseType": "text",
+      "tableUsed": "SiteParameterAverages + AmbientData + AmbientStations + AmbientParameters",
+      "skipSiteFilter": false
+    }
+  ]
+}
