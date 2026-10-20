@@ -63,11 +63,31 @@
     },
     {
       "question": "Can I view both indoor and ambient air-quality locations on the map?",
-      "answer": "Yes. The geographical view can show indoor HAWAQM sites and ambient air-quality stations as separate selectable layers, with the current AQI shown for available locations."
+      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations as two layers you can switch on or off. Each location shows its current AQI, so you can compare indoor and outdoor conditions easily."
+    },
+    {
+      "question": "Does the map show both indoor and ambient air-quality sites?",
+      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations as two layers you can switch on or off. Each location shows its current AQI, so you can compare indoor and outdoor conditions easily."
+    },
+    {
+      "question": "Can I see indoor and ambient air-quality locations on the map?",
+      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations as two layers you can switch on or off. Each location shows its current AQI, so you can compare indoor and outdoor conditions easily."
     },
     {
       "question": "What happens if a site has no geographic coordinates?",
-      "answer": "A site without configured geographic coordinates does not appear on the geographical map until coordinates are added."
+      "answer": "It will not appear on the map. The site still works everywhere else — reports, dashboards and exports. Adding the coordinates puts it on the map immediately."
+    },
+    {
+      "question": "What happens when a site has no location coordinates?",
+      "answer": "It will not appear on the map. The site still works everywhere else — reports, dashboards and exports. Adding the coordinates puts it on the map immediately."
+    },
+    {
+      "question": "Can a site without geographic coordinates still be shown on the map?",
+      "answer": "It will not appear on the map. The site still works everywhere else — reports, dashboards and exports. Adding the coordinates puts it on the map immediately."
+    },
+    {
+      "question": "Site without coordinates",
+      "answer": "It will not appear on the map. The site still works everywhere else — reports, dashboards and exports. Adding the coordinates puts it on the map immediately."
     },
     {
       "question": "What is MOCCAE?",
@@ -75,15 +95,39 @@
     },
     {
       "question": "What are the total regions?",
-      "answer": "There are 3 regions. Abu Dhabi, Al Ain, and Al Dhafra."
+      "answer": "HAWAQM covers the three regions of the Emirate of Abu Dhabi: Abu Dhabi, Al Ain and Al Dhafra. Every monitored site belongs to exactly one of these regions, so all regional filters and breakdowns use these three names."
     },
     {
       "question": "Which regions are covered by HAWAQM?",
-      "answer": "HAWAQM covers 3 regions: Abu Dhabi, Al Ain, and Al Dhafra."
+      "answer": "HAWAQM covers the three regions of the Emirate of Abu Dhabi: Abu Dhabi, Al Ain and Al Dhafra. Every monitored site belongs to exactly one of these regions, so all regional filters and breakdowns use these three names."
+    },
+    {
+      "question": "Which areas are covered by HAWAQM?",
+      "answer": "HAWAQM covers the three regions of the Emirate of Abu Dhabi: Abu Dhabi, Al Ain and Al Dhafra. Every monitored site belongs to exactly one of these regions, so all regional filters and breakdowns use these three names."
+    },
+    {
+      "question": "Can you tell me the regions available in HAWAQM?",
+      "answer": "HAWAQM covers the three regions of the Emirate of Abu Dhabi: Abu Dhabi, Al Ain and Al Dhafra. Every monitored site belongs to exactly one of these regions, so all regional filters and breakdowns use these three names."
     },
     {
       "question": "What data am I able to see in HAWAQM?",
-      "answer": "What you can see depends on the access your account has been given. Some users are set up for a single site, others for a sector or a whole region, and administrators can see everything, so two people asking the same question may legitimately get different totals. Within your permitted scope you can view real-time and historical readings for CO2, PM2.5, PM10, CO, NO2, O3, SO2, TVOC, CH2O, temperature, humidity and noise, along with AQI per site and device, AQI by region, exceedance reports, statistical summaries, data success rates, and mold test results."
+      "answer": "What you can see depends on the access your account has been given. Some users are set up for a single site, others for a sector or a whole region, and administrators can see everything, so two people asking the same question may legitimately get different totals."
+    },
+    {
+      "question": "What kind of data can I see in HAWAQM?",
+      "answer": "What you can see depends on the access your account has been given. Some users are set up for a single site, others for a sector or a whole region, and administrators can see everything, so two people asking the same question may legitimately get different totals."
+    },
+    {
+      "question": "What can I view in HAWAQM?",
+      "answer": "What you can see depends on the access your account has been given. Some users are set up for a single site, others for a sector or a whole region, and administrators can see everything, so two people asking the same question may legitimately get different totals."
+    },
+    {
+      "question": "Can you tell me what information is available in HAWAQM?",
+      "answer": "What you can see depends on the access your account has been given. Some users are set up for a single site, others for a sector or a whole region, and administrators can see everything, so two people asking the same question may legitimately get different totals."
+    },
+    {
+      "question": "HAWAQM data available",
+      "answer": "What you can see depends on the access your account has been given. Some users are set up for a single site, others for a sector or a whole region, and administrators can see everything, so two people asking the same question may legitimately get different totals."
     },
     {
       "question": "What is the current Data Success Rate?",
@@ -183,7 +227,11 @@
     },
     {
       "question": "Can I get the last 24 hours of readings for a device?",
-      "answer": "Yes. I can show the last 24 hours for a device as 5-minute records, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint. Please share the device name (e.g. BA 0001 or SEI100M 0008) and I will retrieve the data for you."
+      "answer": "Yes. I can show the last 24 hours for a device as 5-minute records, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint. Just share the device name (e.g. BA 0001 or SEI100M 0008) and I will retrieve the data for you."
+    },
+    {
+      "question": "Can I see the readings from the last 24 hours for a device?",
+      "answer": "Yes. I can show the last 24 hours for a device as 5-minute records, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint. Just share the device name (e.g. BA 0001 or SEI100M 0008) and I will retrieve the data for you."
     },
     {
       "question": "Can I use a 1-hour threshold for PM10 because I want a faster alert?",
@@ -204,6 +252,18 @@
     {
       "question": "Can you prove the ventilation system caused yesterday's spike?",
       "answer": "Not with certainty. I can show the temperature, humidity and parameter readings recorded at that site around the same time, which may suggest a correlation — but the sensor data alone cannot prove causation. For a definitive finding, a physical inspection or engineering assessment would be needed."
+    },
+    {
+      "question": "What caused the AQI spike at the school yesterday?",
+      "answer": "HAWAQM records air quality readings but cannot determine the root cause of a spike. The data can show which parameters were elevated and when, which may point to a likely source — but proving a direct cause requires a physical inspection or engineering assessment. I can show you the recorded readings for that site on that date if that would help."
+    },
+    {
+      "question": "Why did the AQI spike at a site?",
+      "answer": "HAWAQM can show you when a parameter was elevated and by how much, but it cannot determine the root cause with certainty. Spikes may be linked to nearby outdoor events, indoor activities, equipment issues, or ventilation conditions. A physical inspection is needed to confirm the cause."
+    },
+    {
+      "question": "Why was the AQI high at a site yesterday?",
+      "answer": "HAWAQM records the measured values but cannot explain why a reading was high. I can display the recorded readings at that site for yesterday, which may help identify which parameter drove the elevated AQI — but the underlying cause would need to be investigated on-site."
     },
     {
       "question": "Can you tell me which weather condition caused a pollutant spike?",

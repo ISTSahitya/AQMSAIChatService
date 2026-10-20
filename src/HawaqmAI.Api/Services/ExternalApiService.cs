@@ -158,7 +158,10 @@ public sealed class ExternalApiService : IExternalApiService
                         var score = union > 0 ? (double)intersection / union * 100 : 0;
                         return new { s.Key, s.Name, s.Devices, Score = score };
                     })
-                    .Where(s => s.Score > 0)
+                    // Minimum score threshold: generic words like "school", "site", "station"
+                    // shared between unrelated names must not count as a match.
+                    // Require at least 40% Jaccard overlap (or exact match = 1000).
+                    .Where(s => s.Score >= 40.0)
                     .OrderByDescending(s => s.Score)
                     .FirstOrDefault();
 
@@ -2438,8 +2441,8 @@ public sealed class ExternalApiService : IExternalApiService
                 FROM DMN_Stations
                 WHERE StationName LIKE '%{stationName.Replace("'", "''")}%'
                   AND Status = 1
-                  AND CoordinateX IS NOT NULL AND CoordinateX <> 0
-                  AND CoordinateY IS NOT NULL AND CoordinateY <> 0
+                  AND CoordinateX IS NOT NULL AND LTRIM(RTRIM(CAST(CoordinateX AS NVARCHAR(50)))) <> '' AND LTRIM(RTRIM(CAST(CoordinateX AS NVARCHAR(50)))) <> '0'
+                  AND CoordinateY IS NOT NULL AND LTRIM(RTRIM(CAST(CoordinateY AS NVARCHAR(50)))) <> '' AND LTRIM(RTRIM(CAST(CoordinateY AS NVARCHAR(50)))) <> '0'
                 """;
             var coordResult = await _sqlExecutor.ExecuteAsync(coordSql, new Dictionary<string, object>(), ct);
             var coordRows = coordResult.Rows;

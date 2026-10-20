@@ -174,37 +174,169 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 2a-dsr. Dynamic DSR interpretation pre-check ──
+        // Handles "What does a X% Data Success Rate indicate for YEAR?" and variants.
+        // Extracts DSR value and year from the question and returns a computed interpretation.
+        var lowerMsg = enrichedMessage.ToLowerInvariant();
+        {
+            // DSR question detection: question must mention "data success rate", "data rate", or "dsr"
+            // AND contain a percentage number somewhere in the message.
+            bool hasDsrKeyword = lowerMsg.Contains("data success rate") || lowerMsg.Contains("dsr")
+                || (lowerMsg.Contains("data rate") && (lowerMsg.Contains("%") || System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\d")));
+
+            // Match number adjacent to "data success rate / dsr" (tight match)
+            var dsrMatch = System.Text.RegularExpressions.Regex.Match(
+                lowerMsg,
+                @"(?:(\d{1,3}(?:\.\d+)?)\s*%?\s*(?:data success rate|dsr))|(?:(?:data success rate|dsr)\s*(?:of\s*)?(\d{1,3}(?:\.\d+)?)\s*%?)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            // Fallback: any percentage number in the message when DSR keyword present
+            var anyPercentMatch = hasDsrKeyword
+                ? System.Text.RegularExpressions.Regex.Match(lowerMsg, @"(\d{1,3}(?:\.\d+)?)\s*%")
+                : System.Text.RegularExpressions.Match.Empty;
+
+            string dsrRawValue = dsrMatch.Success
+                ? (dsrMatch.Groups[1].Success ? dsrMatch.Groups[1].Value : dsrMatch.Groups[2].Value)
+                : (anyPercentMatch.Success ? anyPercentMatch.Groups[1].Value : string.Empty);
+
+            var dsrInterpretTriggers = new[] {
+                "indicate", "mean", "what does", "what is", "tell me about", "explain",
+                "interpret", "how should i", "how do i", "how to interpret", "understand",
+                "what can i", "implication", "significance", "represent", "reflect",
+                "good data rate", "good dsr", "acceptable data rate", "acceptable dsr",
+                "is it good", "is this good", "is that good", "good rate", "bad rate",
+                "what does it mean", "what does this mean"
+            };
+            bool isDsrInterpretation = hasDsrKeyword && !string.IsNullOrEmpty(dsrRawValue)
+                && dsrInterpretTriggers.Any(t => lowerMsg.Contains(t));
+
+            if (isDsrInterpretation && double.TryParse(dsrRawValue, out double dsrValue))
+            {
+                // Extract year from question (any 4-digit year), default to current year
+                var yearMatch = System.Text.RegularExpressions.Regex.Match(lowerMsg, @"\b(\d{4})\b");
+                int currentYear = DateTime.Now.Year;
+                // Filter out years that look like percentages or nonsense — accept 1990–2999
+                int targetYear = currentYear;
+                if (yearMatch.Success && int.TryParse(yearMatch.Groups[1].Value, out int parsedYear)
+                    && parsedYear >= 1990 && parsedYear <= 2999
+                    && parsedYear != (int)dsrValue) // don't confuse DSR value for year
+                    targetYear = parsedYear;
+                bool isCurrentYear = targetYear == currentYear;
+                string ytdSuffix = isCurrentYear ? " so far this year (year-to-date)" : $" for {targetYear}";
+
+                double target = 75.0;
+                double gap = Math.Round(Math.Abs(dsrValue - target), 1);
+                string aboveOrBelow = dsrValue >= target ? "above" : "below";
+
+                string interpretationLine;
+                if (dsrValue >= 90)
+                    interpretationLine = "This is an excellent result — data coverage is strong and readings can be used with high confidence for official reporting.";
+                else if (dsrValue >= 75)
+                    interpretationLine = "Data coverage meets the HAWAQM minimum standard. Results are reliable for reporting, though any gap from 100% means some readings were missed.";
+                else if (dsrValue >= 50)
+                    interpretationLine = "Data coverage is below the acceptable threshold. Use results with caution and quote the DSR alongside any figures, as averages are built on incomplete data.";
+                else
+                    interpretationLine = "Data coverage is significantly below the minimum standard. Reliability is low — findings should not be used for official reporting without investigation into the missing readings.";
+
+                var dsrAnswer = $"A Data Success Rate of {dsrValue}%{ytdSuffix} means that {dsrValue}% of the readings expected from the devices during that period actually arrived. " +
+                    $"Devices report every 5 minutes, so the expected count for {targetYear} is known exactly. " +
+                    $"The HAWAQM target is at least 75%, and {dsrValue}% is {aboveOrBelow} the target by {gap} percentage points. " +
+                    interpretationLine;
+
+                var dsrTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "faq_answer");
+                if (dsrTemplate is not null)
+                {
+                    var dsrMsgId = Guid.NewGuid();
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: dsrMsgId,
+                        assistantContent: dsrAnswer,
+                        sql: null,
+                        responseType: "text",
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: "DSR_CALC",
+                        dateRange: null,
+                        modelUsed: "rule",
+                        executionTimeMs: 0,
+                        tokenCount: 0,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: dsrMsgId,
+                        template: dsrTemplate,
+                        llmSummary: dsrAnswer,
+                        rows: [],
+                        rowCount: 0,
+                        executionTimeMs: 0,
+                        scope: scope,
+                        modelUsed: "rule",
+                        tokenCount: 0));
+                }
+            }
+        }
+
         // ── 2b. Hard pre-check: AQI range/definition questions must always go to FAQ ──
         // These questions ask WHAT a category means (numeric range), not which sites are in it.
         // Pattern scorer can be confused by words like "good", "moderate", "aqi" matching
         // site_aqi_by_category patterns, so we intercept here before routing.
-        var lowerMsg = enrichedMessage.ToLowerInvariant();
         var aqiRangeDefinitionKeywords = new[] {
             // range-based phrasings
             "what aqi range", "aqi range is considered", "range considered good", "range considered moderate",
             "range considered unhealthy", "range considered hazardous", "range considered very unhealthy",
             "range of aqi", "range for good", "range for moderate", "range for unhealthy", "range for hazardous",
+            "range for very unhealthy", "range for good air", "range for good air quality",
+            "what's the range for", "whats the range for",
             "aqi good range", "aqi moderate range", "aqi unhealthy range", "aqi hazardous range",
             "what aqi range is", "aqi range for",
+            "when is aqi considered good", "when is aqi considered moderate",
+            "when is aqi considered unhealthy", "when is aqi considered hazardous",
+            "when is aqi considered very unhealthy",
+            "which aqi values are classified", "what aqi values are classified",
+            "which aqi values fall", "what aqi values fall",
+            "aqi values classified as", "aqi value for hazardous", "aqi value for good",
+            "aqi value for moderate", "aqi value for unhealthy", "aqi value for very unhealthy",
+            "hazardous aqi value", "very unhealthy aqi value", "good aqi value",
+            "moderate aqi value", "unhealthy aqi value",
+            "unhealthy for sensitive groups", "aqi for sensitive groups",
+            "classified as unhealthy", "classified as good", "classified as moderate",
+            "classified as hazardous", "classified as very unhealthy",
+            "fall within the moderate", "fall within the good", "fall within the unhealthy",
+            "fall within the hazardous", "fall under the moderate", "fall under the good",
+            "fall under the unhealthy", "fall under the hazardous",
+            "aqi numbers mean", "what aqi numbers mean", "aqi counts as",
+            "what aqi counts as", "aqi is good", "acceptable aqi range",
+            "what is acceptable aqi", "aqi mean good", "aqi mean moderate",
+            "acceptable aqi range for", "aqi range for the good",
+            "aqi range for the moderate", "aqi range for the unhealthy",
+            "aqi range for the hazardous", "aqi range for the very unhealthy",
+            "aqi range for the sensitive", "what is the acceptable aqi",
             // "considered" phrasings — "what aqi value/range/level is considered X"
+            // NOTE: use specific phrases only — "considered good" alone is too broad and blocks
+            // valid site-filter questions like "show me sites considered hazardous"
             "what aqi is considered", "aqi is considered good", "aqi is considered moderate",
             "aqi is considered unhealthy", "aqi is considered hazardous",
             "aqi value is considered", "aqi level is considered",
-            "considered good", "considered moderate", "considered unhealthy",
-            "considered hazardous", "considered very unhealthy",
+            "aqi range is considered good", "aqi range is considered moderate",
+            "aqi range is considered unhealthy", "aqi range is considered hazardous",
+            "range is considered good", "range is considered moderate",
+            "range is considered unhealthy", "range is considered hazardous",
             // "what aqi is X" phrasings
             "what is good aqi", "what is moderate aqi", "what is unhealthy aqi", "what is hazardous aqi",
             "what aqi is good", "what aqi is moderate", "what aqi is unhealthy", "what aqi is hazardous",
-            "what aqi is very unhealthy", "what aqi is hazardous",
+            "what aqi is very unhealthy",
             // "what value is X" phrasings
             "what value is good", "what value is moderate", "what value is unhealthy", "what value is hazardous",
             "what aqi value is good", "what aqi value is moderate", "what aqi value is unhealthy",
             "what aqi value is hazardous", "what aqi value is very unhealthy",
-            // calculation / general
+            // calculation / general — only definition questions, NOT "show sites by aqi category"
             "how is aqi calculated", "how is site aqi calculated",
-            "aqi categories", "aqi levels", "aqi classification", "aqi category breakdown",
-            "what are the aqi", "what are aqi categories", "what are aqi levels",
+            "aqi classification", "aqi category breakdown",
+            "what are the aqi categories", "what are the aqi levels", "what are aqi categories", "what are aqi levels",
             "aqi scale", "aqi meaning", "what does aqi mean",
+            "explain aqi", "explain the aqi", "aqi explained",
             // advisory / operational FAQ phrases — these are generic knowledge questions,
             // not requests for live device/site data
             "which offline devices should be checked first",
@@ -252,19 +384,110 @@ public sealed class ChatController : ControllerBase
             "which air-quality parameters are monitored",
             "what parameters are monitored",
             "does hawaqm monitor temperature",
+            "does hawaqm measure temperature",
+            "does hawaqm measure temperature and humidity",
+            "does hawaqm track temperature",
+            "are temperature, humidity and noise monitored",
+            "are temperature and humidity monitored",
+            "does it track noise",
+            "does hawaqm track noise",
+            "does hawaqm monitor noise",
+            "does hawaqm measure noise",
+            "besides pollutants, does hawaqm",
+            "besides pollutants does hawaqm",
+            "does hawaqm also measure temperature",
+            "does hawaqm track environmental conditions",
+            "does hawaqm also monitor temperature",
+            "does hawaqm track humidity",
+            "does hawaqm measure humidity",
+            "how does the system calculate the overall aqi for a site",
+            "how is the overall aqi for a site calculated",
+            "how is the site aqi calculated for multiple devices",
+            "how does site aqi work with more than one device",
+            "site with more than one device",
+            "site with multiple devices",
+            "overall aqi for a site with",
+            "calculate the overall aqi",
             "can i export hawaqm data",
             "can i view both indoor and ambient",
+            "can i see indoor and ambient",
+            "does the map show both indoor and ambient",
+            "does hawaqm map show indoor and ambient",
+            "does the map show indoor",
+            "does the map show ambient",
+            "indoor and ambient air-quality locations on the map",
+            "indoor and ambient locations on the map",
+            "indoor & ambient air-quality locations on map",
+            "indoor & ambient air-quality locations",
+            "indoor & ambient locations",
+            "indoor & ambient",
+            "map show both indoor and ambient",
+            "show indoor and outdoor on the map",
+            "see indoor and ambient air-quality",
+            "indoor outdoor map",
+            "ambient stations on the map",
             "what happens if a site has no geographic",
+            "what happens when a site has no geographic",
+            "what happens when a site has no location",
+            "site has no location coordinates",
+            "site has no geographic coordinates",
+            "site with no geographic coordinates",
+            "site with no location coordinates",
+            "site without coordinates",
+            "no geographic coordinates",
+            "no location coordinates",
+            "can a site without geographic coordinates",
+            "can a site without coordinates",
+            "site without geographic coordinates still",
+            "shown on the map without coordinates",
+            "site without coordinates",
             "what is moccae",
             "what are the total regions",
             "which regions are covered",
+            "which areas are covered by hawaqm",
+            "which areas does hawaqm cover",
+            "what areas are covered by hawaqm",
+            "areas covered by hawaqm",
+            "which regions does hawaqm cover",
+            "what regions does hawaqm cover",
+            "hawaqm covered regions",
+            "hawaqm regions",
+            "regions in hawaqm",
+            "regions available in hawaqm",
+            "can you tell me the regions",
             "what data am i able to see",
+            "what kind of data can i see",
+            "what can i view in hawaqm",
+            "what can i see in hawaqm",
+            "what data can i see",
+            "what data can i access",
+            "what information is available in hawaqm",
+            "can you tell me what information is available",
+            "what information can i access in hawaqm",
+            "information available in hawaqm",
+            "hawaqm data available",
+            "data available in hawaqm",
+            "data available hawaqm",
             "what is the current data success rate",
             "what does data success rate mean",
             "why do the total device",
             "why is a site missing from the geographical map",
             "why is a site not showing on the geographical map",
             "can i get the last 24 hours of readings for a device",
+            "can i see the readings from the last 24 hours",
+            "can i see the last 24 hours",
+            "can i view the last 24 hours",
+            "show readings from the last 24 hours for a device",
+            "readings from the last 24 hours for a device",
+            "last 24 hours for a device",
+            "24 hours of readings for a device",
+            "see the readings from the last 24",
+            "get the last 24 hours for a device",
+            "device readings — last 24 hours",
+            "device readings - last 24 hours",
+            "device readings last 24 hours",
+            "device readings — last 24",
+            "device readings - last 24",
             "can i use the statistical report",
             "can i use the exceedance report",
             "which averaging intervals should be used",
@@ -277,6 +500,26 @@ public sealed class ChatController : ControllerBase
             "weather forecast",
             "can you prove the ventilation",
             "ventilation system caused",
+            "ventilation system cause",
+            "did the ventilation",
+            "cause the aqi spike",
+            "cause yesterday's aqi",
+            "cause the spike",
+            "caused the aqi spike",
+            "caused yesterday's aqi",
+            // Causation questions — HAWAQM cannot prove what caused a spike/reading
+            "what caused the spike",
+            "what caused the aqi",
+            "what caused the pollution",
+            "what caused the reading",
+            "what caused the high",
+            "why did the aqi spike",
+            "why was the aqi high",
+            "why is the aqi high",
+            "what caused the increase",
+            "what caused the rise",
+            "reason for the spike",
+            "reason for the aqi",
             "nearest ambient station and indoor site have different update",
             "if the nearest ambient station"
         };
@@ -290,17 +533,29 @@ public sealed class ChatController : ControllerBase
             "safe", "safety", "attend", "suitable",
             "can children", "should children", "can people", "should people",
             "good for children", "good for elderly", "good for disabled",
-            // quality judgement — "is the air good or bad", "is it good", "how is the air"
+            // quality judgement — must be specific to a SITE, not a region
+            // NOTE: "how is the air" alone is too broad — it matches region questions like
+            // "How is the air quality in the Abu Dhabi region today?" — use more specific phrases only.
             "good or bad", "is it good", "is it bad", "is the air good", "is the air bad",
-            "how is the air", "how is the quality", "air quality good", "air quality bad",
             "is the aqi good", "is the aqi bad", "is it healthy", "is it unhealthy",
             "is the air ok", "is it ok to", "is it fine", "is it safe",
-            "unhealthy for",
+            "how is the air quality at", // specific to a named site ("how is the air quality at Al Reyada")
+            // NOTE: "how is the air", "how is the quality", "how is the air quality today" removed —
+            // they falsely match region-level questions. Keep only the "at <site>" variant above.
+            // NOTE: "unhealthy for sensitive groups" is an AQI definition phrase, not a site safety phrase.
+            // Only match "unhealthy for" when followed by people-words, not "sensitive groups".
+            "unhealthy for children", "unhealthy for elderly", "unhealthy for people",
+            "unhealthy for pregnant", "unhealthy for patients", "unhealthy for visitors",
             // AQI category questions about a specific site — "categorize the air quality at X",
             // "what category does the air quality at X fall under", "tell me the air quality at X"
-            "categorize the air", "categorise the air", "what category does", "fall under",
-            "air quality today for", "how is the air quality at", "how is the air quality today"
+            "categorize the air", "categorise the air", "what category does",
+            // NOTE: "fall under" removed — it falsely matches "which AQI values fall under the Unhealthy..."
+            "air quality today for"
         };
+        // Region-level questions are never site safety questions — guard explicitly.
+        var knownRegions = new[] { "abu dhabi", "al ain", "al dhafra", "dhafra" };
+        bool isRegionQuestion = knownRegions.Any(r => lowerMsg.Contains(r))
+            && (lowerMsg.Contains("region") || lowerMsg.Contains("in abu dhabi") || lowerMsg.Contains("in al ain") || lowerMsg.Contains("in al dhafra") || lowerMsg.Contains("in dhafra"));
         var siteTypeWords = new[] { "school", "residential", "commercial", "institutional", "site", "station",
                                      "reyada", "saad", "naeem", "bateen", "khalifa", "kaltham", "gems" };
         // Detect a site name reference using any common preposition or phrasing.
@@ -318,10 +573,30 @@ public sealed class ChatController : ControllerBase
             request.Message,
             @"(?:belongs\s+to|located\s+at|deployed\s+at|installed\s+at)\s+[A-Z][a-zA-Z]{1,}(?:\s+[A-Za-z]{2,}){0,5}",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        bool isSiteSafetyQuestion = safetyWords.Any(s => lowerMsg.Contains(s))
+        // AQI definition questions are NEVER site safety questions — guard before safetyWords check.
+        bool isDefinitelyAqiDefinition = aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k));
+        bool isSiteSafetyQuestion = !isDefinitelyAqiDefinition
+            && !isRegionQuestion
+            && safetyWords.Any(s => lowerMsg.Contains(s))
             && (siteTypeWords.Any(s => lowerMsg.Contains(s)) || hasAtSitePattern);
 
-        if (!isSiteSafetyQuestion && aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k)))
+        // Guard: if the user is asking for a LIST of sites filtered by AQI category/range,
+        // do NOT force FAQ even if a definition keyword matched. Site-list indicators override.
+        var siteListIndicators = new[] {
+            "show me sites", "show sites", "list sites", "find sites", "which sites",
+            "sites with good", "sites with moderate", "sites with unhealthy", "sites with hazardous",
+            "sites with very unhealthy", "sites where aqi", "sites in good", "sites in moderate",
+            "sites in unhealthy", "sites in hazardous", "sites in very unhealthy",
+            "sites for good", "sites for moderate", "sites for unhealthy", "sites for hazardous",
+            "sites currently", "sites that are good", "sites that are moderate",
+            "sites that are unhealthy", "sites that are hazardous", "sites that are very unhealthy",
+            "good air quality sites", "moderate air quality sites", "hazardous air quality sites",
+            "sites in the good", "sites in the moderate", "sites in the unhealthy",
+            "sites in the hazardous", "critical sites", "hotspot sites",
+            "schools with good", "schools with moderate", "schools with unhealthy", "schools where aqi"
+        };
+        bool isSiteListAqiQuestion = siteListIndicators.Any(k => lowerMsg.Contains(k));
+        if (!isSiteSafetyQuestion && !isSiteListAqiQuestion && aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k)))
         {
             _log.Debug("ChatController: AQI range-definition pre-check fired → forcing faq_answer");
             var faqTemplatePre = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "faq_answer");
@@ -426,12 +701,26 @@ public sealed class ChatController : ControllerBase
                         tokenCount: safetyParamResult.TokensUsed));
                 }
 
-                // API call failed — return error, do NOT fall through to routing
+                // API call failed — return user-friendly error, do NOT fall through to routing
                 _log.Warning("ChatController: site safety pre-check API call failed for message: {Msg}", request.Message);
                 await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
-                return Ok(_formatter.FormatError(session.SessionId,
-                    "I wasn't able to retrieve current air quality data for that site. The device may be offline. Please try again shortly.",
-                    "API_ERROR"));
+                string safetyErrMsg;
+                if (!string.IsNullOrWhiteSpace(safetyApiResult.Error)
+                    && (safetyApiResult.Error.Contains("doesn't match any known site", StringComparison.OrdinalIgnoreCase)
+                        || safetyApiResult.Error.Contains("do not have access", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var askedSiteName = safetyParamResult.Parameters.GetValueOrDefault("stationName")
+                                     ?? safetyParamResult.Parameters.GetValueOrDefault("siteName")
+                                     ?? safetyParamResult.Parameters.GetValueOrDefault("station");
+                    safetyErrMsg = string.IsNullOrWhiteSpace(askedSiteName)
+                        ? "There is no site with that name in the system. Please check the name and try again. You can ask \"Show me all sites\" to see the full list."
+                        : $"There is no site called \"{askedSiteName}\" in the system. Please check the name and try again. You can ask \"Show me all sites\" to see the full list.";
+                }
+                else
+                {
+                    safetyErrMsg = "I wasn't able to retrieve current air quality data for that site. The device may be offline. Please try again shortly.";
+                }
+                return Ok(_formatter.FormatError(session.SessionId, safetyErrMsg, "API_ERROR"));
             }
 
             // Template not found — return error, do NOT fall through to routing
@@ -1248,6 +1537,265 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 2i. Hard pre-check: "list/count devices for/at <site>" → force devices_by_filter ──
+        // Catches queries like "List devices for Mubarak Bin Mohammed School Cycle 2" and
+        // "How many devices does Al Ain School have?" which can be mis-routed to device_live_reading
+        // when the site name contains number-like tokens (e.g. "Cycle 2") that fool QuestionHasDeviceName.
+        var siteDeviceListPhrases = new[] {
+            "list devices for", "list devices at", "list devices in",
+            "devices for", "devices at", "devices installed at", "devices under",
+            "sensors for", "sensors at", "sensors installed at",
+            "how many devices does", "how many devices at", "how many devices are at",
+            "how many devices in", "how many sensors does", "how many sensors at",
+            "what devices are at", "what devices are in", "what sensors are at",
+            "device count at", "device count for", "show devices at", "show devices for"
+        };
+        // Only fire when NO actual device code (BA/SEI100M) is present — site queries don't have codes
+        bool hasBaOrSeiCode = System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\b(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})\b");
+        bool isSiteDeviceListQuestion = !hasBaOrSeiCode
+            && siteDeviceListPhrases.Any(p => lowerMsg.Contains(p))
+            && !lowerMsg.Contains("aqi") && !lowerMsg.Contains("reading")
+            && !lowerMsg.Contains("pm2.5") && !lowerMsg.Contains("co2")
+            && !lowerMsg.Contains("temperature");
+
+        if (isSiteDeviceListQuestion)
+        {
+            _log.Debug("ChatController: site-device-list pre-check fired → forcing devices_by_filter");
+            var siteDevTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "devices_by_filter");
+            if (siteDevTemplate is not null)
+            {
+                var siteDevFill = await _azureAI.FillParametersAsync(enrichedMessage, siteDevTemplate, history, scope, ct);
+                var (siteDevSafeSql, siteDevSqlParams) =
+                    _rbac.BuildSafeQuery(siteDevTemplate, siteDevFill.Parameters, user, scope);
+                var (siteDevSqlValid, siteDevSqlError) = SqlValidator.Validate(siteDevSafeSql);
+                if (siteDevSqlValid)
+                {
+                    var siteDevResult = await _sqlExecutor.ExecuteAsync(siteDevSafeSql, siteDevSqlParams, ct);
+                    if (siteDevResult.Success)
+                    {
+                        var siteDevSummary = await _azureAI.SummarizeResultsAsync(
+                            request.Message, siteDevTemplate, siteDevResult.Rows, scope, ct);
+                        var siteDevMsgId = Guid.NewGuid();
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: siteDevMsgId,
+                            assistantContent: siteDevSummary,
+                            sql: siteDevSafeSql,
+                            responseType: siteDevTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: null,
+                            dataSource: siteDevTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: siteDevFill.ModelUsed,
+                            executionTimeMs: (int)siteDevResult.ExecutionTimeMs,
+                            tokenCount: siteDevFill.TokensUsed,
+                            ct: ct);
+                        return Ok(_formatter.Format(session.SessionId, siteDevMsgId, siteDevTemplate,
+                            siteDevSummary, siteDevResult.Rows, siteDevResult.Rows.Count,
+                            (int)siteDevResult.ExecutionTimeMs, scope, siteDevFill.ModelUsed, siteDevFill.TokensUsed));
+                    }
+                }
+                _log.Warning("ChatController: site-device-list pre-check failed (valid={V} err='{E}'), falling through to routing",
+                    siteDevSqlValid, siteDevSqlError ?? "(none)");
+            }
+        }
+
+        // ── 2j. Hard pre-check: "critical/hotspot sites right now / currently" → force site_aqi_by_category ──
+        // priority_hotspots uses Compliancestatas (yearly averages, threshold all devices > 150) which
+        // almost always returns 0 sites. For "live / right now / currently" questions use the live
+        // GetAllSiteData path (site_aqi_by_category with aqiCategory=critical = AQI > 100).
+        var criticalNowPhrases = new[] {
+            "right now", "at the moment", "currently", "current number", "at this moment", "live",
+            "today", "now", "site names", "show me", "list", "give me"
+        };
+        var criticalHotspotWords = new[] {
+            "hotspot", "critical site", "critical air quality", "critical air-quality",
+            "any critical", "total critical", "number of critical", "how many critical",
+            "how many hotspot", "classified as critical", "currently critical",
+            "critical sites", "critical locations", "sites are critical",
+            "sites under critical", "sites in critical"
+        };
+        bool isCriticalNowQuestion = criticalHotspotWords.Any(p => lowerMsg.Contains(p));
+
+        if (isCriticalNowQuestion)
+        {
+            _log.Debug("ChatController: critical-sites-live pre-check fired → forcing site_aqi_by_category(critical)");
+            var critTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_aqi_by_category");
+            if (critTemplate is not null && critTemplate.ApiCall is not null)
+            {
+                var critBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                // Force aqiCategory = "critical" so BuildAqiCategoryRows returns AQI > 100 sites
+                var critFill = await _azureAI.FillParametersAsync(enrichedMessage, critTemplate, history, scope, ct);
+                critFill.Parameters["aqiCategory"] = "critical";
+
+                var critApiResult = await _externalApi.CallAsync(critTemplate.ApiCall, critFill.Parameters, scope, critBearerToken, user, critTemplate.Id, ct);
+                if (critApiResult.Success)
+                {
+                    var critSummary = await _azureAI.SummarizeResultsAsync(
+                        request.Message, critTemplate, critApiResult.Rows, scope, ct);
+                    var critMsgId = Guid.NewGuid();
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: critMsgId,
+                        assistantContent: critSummary,
+                        sql: null,
+                        responseType: critTemplate.ResponseType,
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: critTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: critFill.ModelUsed,
+                        executionTimeMs: (int)critApiResult.ExecutionTimeMs,
+                        tokenCount: critFill.TokensUsed,
+                        ct: ct);
+                    return Ok(_formatter.Format(session.SessionId, critMsgId, critTemplate,
+                        critSummary, critApiResult.Rows, critApiResult.Rows.Count,
+                        (int)critApiResult.ExecutionTimeMs, scope, critFill.ModelUsed, critFill.TokensUsed));
+                }
+                _log.Warning("ChatController: critical-sites-live pre-check API failed, falling through to routing");
+            }
+        }
+
+        // ── 2k. Hard pre-check: sites filtered by AQI category → force site_aqi_by_category ──
+        // Catches "total good sites", "show moderate sites", "sites in hazardous", "unhealthy sites today"
+        // before the pattern scorer can route them to site_aqi_all.
+        var aqiCategoryTriggerPhrases = new[] {
+            // good
+            "good sites", "sites with good", "sites in good", "sites where aqi is good",
+            "sites that are good", "show good", "list good sites", "good air quality sites",
+            "total good", "how many good",
+            // moderate
+            "moderate sites", "sites with moderate", "sites in moderate", "sites where aqi is moderate",
+            "sites that are moderate", "show moderate", "list moderate sites",
+            "total moderate", "how many moderate",
+            // unhealthy for sensitive groups
+            "sensitive groups sites", "sites with sensitive", "sensitive group sites",
+            // unhealthy
+            "unhealthy sites", "sites with unhealthy", "sites in unhealthy", "sites where aqi is unhealthy",
+            "sites that are unhealthy", "show unhealthy", "list unhealthy sites",
+            "total unhealthy", "how many unhealthy",
+            // very unhealthy
+            "very unhealthy sites", "sites with very unhealthy", "sites in very unhealthy",
+            "total very unhealthy", "how many very unhealthy",
+            // hazardous
+            "hazardous sites", "sites with hazardous", "sites in hazardous", "sites where aqi is hazardous",
+            "sites that are hazardous", "show hazardous", "list hazardous sites",
+            "total hazardous", "how many hazardous",
+            // critical / hotspot (without needing a time phrase)
+            "critical sites", "sites that are critical", "sites in critical", "sites under critical",
+            "total critical sites", "how many critical sites", "list critical sites", "show critical sites"
+        };
+        bool isAqiCategoryListQuestion = aqiCategoryTriggerPhrases.Any(p => lowerMsg.Contains(p));
+
+        if (isAqiCategoryListQuestion && !isCriticalNowQuestion)
+        {
+            _log.Debug("ChatController: AQI-category-list pre-check fired → forcing site_aqi_by_category");
+            var catTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_aqi_by_category");
+            if (catTemplate is not null && catTemplate.ApiCall is not null)
+            {
+                var catBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var catFill = await _azureAI.FillParametersAsync(enrichedMessage, catTemplate, history, scope, ct);
+
+                var catApiResult = await _externalApi.CallAsync(catTemplate.ApiCall, catFill.Parameters, scope, catBearerToken, user, catTemplate.Id, ct);
+                if (catApiResult.Success)
+                {
+                    var catSummary = await _azureAI.SummarizeResultsAsync(
+                        request.Message, catTemplate, catApiResult.Rows, scope, ct);
+                    var catMsgId = Guid.NewGuid();
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: catMsgId,
+                        assistantContent: catSummary,
+                        sql: null,
+                        responseType: catTemplate.ResponseType,
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: catTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: catFill.ModelUsed,
+                        executionTimeMs: (int)catApiResult.ExecutionTimeMs,
+                        tokenCount: catFill.TokensUsed,
+                        ct: ct);
+                    return Ok(_formatter.Format(session.SessionId, catMsgId, catTemplate,
+                        catSummary, catApiResult.Rows, catApiResult.Rows.Count,
+                        (int)catApiResult.ExecutionTimeMs, scope, catFill.ModelUsed, catFill.TokensUsed));
+                }
+                _log.Warning("ChatController: AQI-category-list pre-check API failed, falling through to routing");
+            }
+        }
+
+        // ── 2l. Hard pre-check: schools/sector sites by AQI category → force site_aqi_by_category ──
+        // Catches "how many schools are in each AQI category", "schools by AQI category by region",
+        // "MOE schools in each AQI category" before routing to schools_latest_pollutant.
+        var schoolsAqiCategoryPhrases = new[] {
+            "schools are in each aqi category", "schools in each aqi category",
+            "schools by aqi category", "schools grouped by aqi",
+            "how many schools in each aqi", "schools in each aqi",
+            "schools are in each aqi", "school sites by aqi category",
+            "public and government schools in each aqi", "public & government schools in each aqi",
+            "moe schools in each aqi", "govt schools in each aqi", "gov schools in each aqi",
+            "government schools in each aqi", "government schools by aqi",
+            "schools in aqi category", "schools per aqi category",
+            "commercial sites in each aqi", "residential sites in each aqi",
+            "sites in each aqi category", "sites by aqi category", "sites per aqi category",
+            "sites grouped by aqi category", "sites grouped by aqi level",
+            "how many sites in each aqi category", "how many sites are in each aqi"
+        };
+        bool isSchoolsAqiCategoryQuestion = schoolsAqiCategoryPhrases.Any(p => lowerMsg.Contains(p));
+
+        if (isSchoolsAqiCategoryQuestion)
+        {
+            _log.Debug("ChatController: schools-by-AQI-category pre-check fired → forcing site_aqi_by_category");
+            var sectorCatTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_aqi_by_category");
+            if (sectorCatTemplate is not null && sectorCatTemplate.ApiCall is not null)
+            {
+                var sectorCatBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var sectorCatFill = await _azureAI.FillParametersAsync(enrichedMessage, sectorCatTemplate, history, scope, ct);
+
+                // Ensure sectorName is extracted — force school sector if "school" / "moe" / "govt" words present
+                if (!sectorCatFill.Parameters.ContainsKey("sectorName") || string.IsNullOrWhiteSpace(sectorCatFill.Parameters.GetValueOrDefault("sectorName")))
+                {
+                    var msgLower2 = lowerMsg;
+                    if (msgLower2.Contains("school") || msgLower2.Contains("moe") || msgLower2.Contains("gov"))
+                        sectorCatFill.Parameters["sectorName"] = "Public & Govt-School";
+                    else if (msgLower2.Contains("commercial"))
+                        sectorCatFill.Parameters["sectorName"] = "Commercial";
+                    else if (msgLower2.Contains("residential"))
+                        sectorCatFill.Parameters["sectorName"] = "Residential";
+                }
+
+                var sectorCatResult = await _externalApi.CallAsync(sectorCatTemplate.ApiCall, sectorCatFill.Parameters, scope, sectorCatBearer, user, sectorCatTemplate.Id, ct);
+                if (sectorCatResult.Success)
+                {
+                    var sectorCatSummary = await _azureAI.SummarizeResultsAsync(
+                        request.Message, sectorCatTemplate, sectorCatResult.Rows, scope, ct);
+                    var sectorCatMsgId = Guid.NewGuid();
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: sectorCatMsgId,
+                        assistantContent: sectorCatSummary,
+                        sql: null,
+                        responseType: sectorCatTemplate.ResponseType,
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: sectorCatTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: sectorCatFill.ModelUsed,
+                        executionTimeMs: (int)sectorCatResult.ExecutionTimeMs,
+                        tokenCount: sectorCatFill.TokensUsed,
+                        ct: ct);
+                    return Ok(_formatter.Format(session.SessionId, sectorCatMsgId, sectorCatTemplate,
+                        sectorCatSummary, sectorCatResult.Rows, sectorCatResult.Rows.Count,
+                        (int)sectorCatResult.ExecutionTimeMs, scope, sectorCatFill.ModelUsed, sectorCatFill.TokensUsed));
+                }
+                _log.Warning("ChatController: schools-by-AQI-category pre-check API failed, falling through to routing");
+            }
+        }
+
         // ── 3. Route the question to an approved template ───────────────────
         var routeResult = await _queryRouter.RouteAsync(enrichedMessage, user, history, ct);
 
@@ -1456,7 +2004,26 @@ public sealed class ChatController : ControllerBase
                 // Render as a friendly white assistant bubble (Success=true, text type)
                 // so the user sees a calm message, not a red technical error.
                 var errMsgId = Guid.NewGuid();
-                const string friendlyMsg = "Sorry, I'm unable to retrieve that information right now. Please try again in a moment.";
+
+                // Use the specific error text when the site wasn't found or access was denied —
+                // these are permanent user errors, not transient API failures.
+                string friendlyMsg;
+                if (!string.IsNullOrWhiteSpace(apiResult.Error)
+                    && (apiResult.Error.Contains("doesn't match any known site", StringComparison.OrdinalIgnoreCase)
+                        || apiResult.Error.Contains("do not have access", StringComparison.OrdinalIgnoreCase)))
+                {
+                    // Extract the site name the user asked for from llmParams for a cleaner message
+                    var askedSite = llmParams.GetValueOrDefault("stationName")
+                                ?? llmParams.GetValueOrDefault("siteName")
+                                ?? llmParams.GetValueOrDefault("station");
+                    friendlyMsg = string.IsNullOrWhiteSpace(askedSite)
+                        ? apiResult.Error
+                        : $"There is no site called \"{askedSite}\" in the system. Please check the name and try again. You can ask \"Show me all sites\" to see the full list.";
+                }
+                else
+                {
+                    friendlyMsg = "Sorry, I'm unable to retrieve that information right now. Please try again in a moment.";
+                }
                 await _sessionService.SaveBothMessagesAsync(
                     sessionId: session.SessionId,
                     userContent: request.Message,
@@ -2817,16 +3384,23 @@ public sealed class ChatController : ControllerBase
 
     private static string BuildNoDataMessage(string templateId, ResolvedScope scope)
     {
-        var region = string.IsNullOrWhiteSpace(scope.Region) ? "the selected region" : scope.Region;
+        var region = string.IsNullOrWhiteSpace(scope.Region) ? null : scope.Region;
+        var sector = string.IsNullOrWhiteSpace(scope.Sector) ? null : scope.Sector;
         var date = scope.DateRangeLabel ?? "the selected date";
 
         return templateId switch
         {
             "current_all_stations" or "site_aqi_all" =>
-                $"No air quality readings are currently available for {region}. This may be because devices are still syncing or no active sites have reported data yet. Please try again shortly.",
+                $"No air quality readings are currently available{(region != null ? $" for {region}" : "")}. This may be because devices are still syncing or no active sites have reported data yet. Please try again shortly.",
 
             "sites_by_filter" or "count_sites_in_region" =>
-                $"No sites were found for {region}. Please check that the region name is correct or try a different filter.",
+                sector != null && region != null
+                    ? $"No {sector} sites were found in {region}."
+                    : sector != null
+                        ? $"No {sector} sites were found."
+                        : region != null
+                            ? $"No sites were found in {region}."
+                            : "No sites were found matching the specified filter.",
 
             "sites_outside_safe_range" or "site_aqi_by_category" =>
                 $"Great news — no sites in {region} are currently outside the safe air quality range.",
@@ -2847,7 +3421,7 @@ public sealed class ChatController : ControllerBase
                 "No current readings are available for that device. It may be offline or still syncing. Please try again shortly.",
 
             _ =>
-                $"No data was found for your query in {region} for {date}. The devices may be syncing or no readings match the selected filters. Please try adjusting your filters or check back shortly."
+                "No data was found for your query. The devices may be syncing or no readings match the selected filters. Please try adjusting your filters or check back shortly."
         };
     }
 }

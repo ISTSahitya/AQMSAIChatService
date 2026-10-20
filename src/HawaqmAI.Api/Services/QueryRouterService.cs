@@ -177,7 +177,10 @@ public sealed class QueryRouterService : IQueryRouterService
         ["can you prove", "prove that", "prove the", "prove what caused",
          "what caused the spike", "what caused the pollution", "caused the spike",
          "caused yesterday", "caused the reading", "caused this reading",
-         "ventilation caused", "ventilation system caused"];
+         "ventilation caused", "ventilation system caused",
+         "ventilation system cause", "did the ventilation",
+         "cause the aqi spike", "cause yesterday's aqi",
+         "cause the spike", "caused the aqi spike", "caused yesterday's aqi"];
 
     private static bool IsCausationQuestion(string lowerQuestion)
         => CausationPhrases.Any(p => lowerQuestion.Contains(p));
@@ -303,7 +306,11 @@ public sealed class QueryRouterService : IQueryRouterService
                          or "AL" or "PM2" or "NO2" or "SO2" or "CO2" or "O3" or "CH2"
                          or "AQI" or "TOP" or "P" or "S" or "M" or "N" or "H" or "C"
                          or "T" or "F" or "D" or "E" or "G" or "I" or "J" or "K"
-                         or "L" or "Q" or "R" or "U" or "V" or "W" or "X" or "Y" or "Z")
+                         or "L" or "Q" or "R" or "U" or "V" or "W" or "X" or "Y" or "Z"
+                         // Site-name ordinals/sequences common in UAE school/building names
+                         or "CYCLE" or "PHASE" or "STAGE" or "BLOCK" or "ZONE"
+                         or "WING" or "GRADE" or "PART" or "UNIT" or "BUILDING"
+                         or "FLOOR" or "SECTION" or "TYPE" or "CLASS" or "LEVEL")
                     continue;
 
                 // Prefix must be at least 2 chars OR be "B" followed by context word "device"
@@ -325,7 +332,11 @@ public sealed class QueryRouterService : IQueryRouterService
             {
                 var prefix = m.Groups[1].Value.ToUpperInvariant();
                 if (prefix is "PM" or "NO" or "SO" or "CO" or "O" or "CH" or "VOC"
-                         or "PM2" or "NO2" or "SO2" or "CO2" or "CH2" or "AQI" or "TOP")
+                         or "PM2" or "NO2" or "SO2" or "CO2" or "CH2" or "AQI" or "TOP"
+                         // Site-name ordinals/sequences common in UAE school/building names
+                         or "CYCLE" or "PHASE" or "STAGE" or "BLOCK" or "ZONE"
+                         or "WING" or "GRADE" or "PART" or "UNIT" or "BUILDING"
+                         or "FLOOR" or "SECTION" or "TYPE" or "CLASS" or "LEVEL")
                     continue;
                 return true;
             }
@@ -356,7 +367,8 @@ public sealed class QueryRouterService : IQueryRouterService
         "mushrif", "mussafah", "baniyas", "karama", "shakhbout", "shahama",
         "madinat", "khalidiyah", "corniche", "mangrove", "reem", "yas",
         "wahda", "rowdah", "muroor", "electra", "hameem", "liwa", "gayathi",
-        "reyada", "reayada", "kaltham", "obeidli", "gems", "british"
+        "reyada", "reayada", "kaltham", "obeidli", "gems", "british",
+        "shawamekh", "al shawamekh"
     ];
 
     // Sector name words — "residential", "commercial", "institutional" appear in both sector filters
@@ -379,6 +391,7 @@ public sealed class QueryRouterService : IQueryRouterService
     private static readonly string[] NamedSchoolIndicators =
     [
         "reyada", "reayada", "saad", "naeem", "naim", "bateen", "gems", "kaltham",
+        "shawamekh", "shahama", "baniyas", "mushrif", "khalifa",
         "indian school", "british school", "american school", "international school",
         "al ain school", "abu dhabi school", "al dhafra school"
     ];
@@ -602,6 +615,11 @@ public sealed class QueryRouterService : IQueryRouterService
         if (template.Id == "list_devices" && isDeviceAtSiteQuestion)
             maxScore *= 0.05;
 
+        // Boost devices_by_filter for site-specific device listing ("list devices for <school>",
+        // "devices at <site>", "what devices are installed at <station>")
+        if (template.Id == "devices_by_filter" && isDeviceAtSiteQuestion)
+            maxScore = Math.Max(maxScore, 0.95);
+
         // Route device_info when question has device name + metadata keywords (site/region/sector/deployed etc.)
         var deviceMetaKeywords = new[] {
             "which site", "what site", "site name", "which station", "what station",
@@ -824,6 +842,13 @@ public sealed class QueryRouterService : IQueryRouterService
         bool isSectorSiteListQuestion = isSiteListQuestion && isSectorListQuestion;
         if (template.Id == "list_stations" && isSectorSiteListQuestion)
             maxScore = Math.Max(maxScore, 0.97);
+
+        // Boost sites_by_filter and penalise sites_filtered for sector-based listing questions.
+        // sites_filtered has no sectorName param — it cannot filter by sector at all.
+        if (isSectorListQuestion && template.Id == "sites_by_filter")
+            maxScore = Math.Max(maxScore, 0.98);
+        if (isSectorListQuestion && template.Id == "sites_filtered")
+            maxScore *= 0.05;
 
         // Penalise chart templates when user asks for a plain site list (no chart keywords) —
         // "what are the sites under commercial sector" is NOT a chart request.
@@ -1089,13 +1114,85 @@ public sealed class QueryRouterService : IQueryRouterService
             "aqi range for hazardous", "aqi range for very unhealthy",
             "what aqi is good", "what aqi is moderate", "what aqi is unhealthy", "what aqi is hazardous",
             "aqi good range", "aqi moderate range", "aqi unhealthy range", "aqi hazardous range",
-            "aqi level for good", "aqi level for moderate", "what level is good", "what level is moderate"
+            "aqi level for good", "aqi level for moderate", "what level is good", "what level is moderate",
+            "hazardous aqi value", "hazardous aqi range", "aqi value for hazardous",
+            "aqi value for good", "aqi value for moderate", "aqi value for unhealthy",
+            "aqi value for very unhealthy", "good aqi value", "moderate aqi value",
+            "unhealthy aqi value", "very unhealthy aqi value", "very unhealthy aqi range",
+            "tell me the aqi value for", "aqi value hazardous", "aqi value good",
+            "aqi value moderate", "aqi value unhealthy", "which aqi values are classified",
+            "what aqi values are classified", "what aqi values fall under",
+            "which aqi values fall", "aqi values classified as", "aqi numbers mean",
+            "what range of aqi is classified", "which range of aqi is classified",
+            "range of aqi is classified", "range of aqi classified",
+            "aqi range classified as", "classified as unhealthy for sensitive",
+            "classified as good", "classified as moderate", "classified as hazardous",
+            "classified as very unhealthy", "classified as unhealthy",
+            "fall under the unhealthy", "fall under the good", "fall under the moderate",
+            "fall under the hazardous", "fall within the", "aqi fall under",
+            "unhealthy for sensitive groups", "aqi range is unhealthy for sensitive",
+            "what aqi range is unhealthy", "what aqi range is good", "what aqi range is moderate",
+            "what aqi range is hazardous", "what aqi range is very unhealthy",
+            "aqi range is good", "aqi range is moderate", "aqi range is hazardous",
+            "aqi range is very unhealthy", "aqi is unhealthy for sensitive",
+            "aqi for sensitive groups", "sensitive groups aqi",
+            "fall within the moderate", "fall within the good", "fall within the unhealthy",
+            "fall within the hazardous", "fall within the very unhealthy",
+            "within the moderate category", "within the good category",
+            "within the unhealthy category", "within the hazardous category",
+            "within the very unhealthy category", "within the sensitive",
+            "under the moderate category", "under the good category",
+            "under the unhealthy category", "under the hazardous category",
+            "values fall within", "aqi values fall",
+            "range for good air", "range for moderate air", "range for unhealthy air",
+            "range for hazardous air", "range for good air quality",
+            "range for moderate air quality", "what's the range for",
+            "whats the range for", "range for good", "range for moderate",
+            "range for unhealthy", "range for hazardous", "range for very unhealthy",
+            "acceptable aqi range for", "what is the acceptable aqi",
+            "aqi range for the good", "aqi range for the moderate",
+            "aqi range for the unhealthy", "aqi range for the hazardous",
+            "aqi range for the very unhealthy", "aqi range for the sensitive",
+            "when is aqi considered good", "when is aqi considered moderate",
+            "when is aqi considered unhealthy", "when is aqi considered hazardous",
+            "aqi numbers mean", "what aqi numbers mean",
+            "aqi values fall under the good", "aqi values fall under the moderate",
+            "aqi values fall under the unhealthy", "aqi values fall under the hazardous",
+            "values fall under the good", "values fall under the moderate",
+            // temperature / humidity / noise FAQ phrases
+            "does hawaqm measure temperature", "does hawaqm monitor temperature",
+            "does hawaqm track temperature", "does hawaqm measure humidity",
+            "does hawaqm track humidity", "does hawaqm monitor humidity",
+            "does hawaqm measure noise", "does hawaqm monitor noise",
+            "does hawaqm track noise", "does hawaqm also measure",
+            "does hawaqm also monitor", "does hawaqm also track",
+            "does it track noise", "are temperature, humidity and noise",
+            "are temperature and humidity monitored", "besides pollutants",
+            "temperature, humidity and ambient", "temperature and humidity too",
+            "track noise as well", "measure noise as well",
+            "does hawaqm track environmental",
+            // site AQI averaging FAQ phrases
+            "how does the system calculate the overall aqi for a site",
+            "how is the overall aqi for a site calculated",
+            "how is site aqi calculated for multiple devices",
+            "how does site aqi work with more than one device",
+            "site with more than one device", "site with multiple devices"
         };
-        if (template.Id == "site_aqi_by_category"
-            && aqiRangeDefinitionPhrases.Any(k => lowerQuestion.Contains(k)))
-        {
+        bool isAqiRangeDefinitionQuestion = aqiRangeDefinitionPhrases.Any(k => lowerQuestion.Contains(k));
+        // Guard: site-list questions override the FAQ boost even when a definition phrase matched.
+        var siteListAqiPhrases = new[] {
+            "show me sites", "show sites", "list sites", "which sites", "find sites",
+            "sites with good", "sites with moderate", "sites with unhealthy", "sites with hazardous",
+            "sites where aqi", "sites in good", "sites in moderate", "sites in unhealthy",
+            "sites for good", "sites for moderate", "sites for hazardous",
+            "sites currently", "sites that are", "good air quality sites", "critical sites",
+            "hotspot sites", "schools with good", "schools with moderate", "schools where aqi"
+        };
+        bool isSiteListAqiQuery = siteListAqiPhrases.Any(k => lowerQuestion.Contains(k));
+        if (template.Id == "site_aqi_by_category" && isAqiRangeDefinitionQuestion && !isSiteListAqiQuery)
             maxScore *= 0.02;
-        }
+        if (template.Id == "faq_answer" && isAqiRangeDefinitionQuestion && !isSiteListAqiQuery)
+            maxScore = Math.Max(maxScore, 0.98);
 
         // Penalise site_aqi_by_category and site_aqi_all when user explicitly asks for a pie/donut chart —
         // those should route to schools_aqi_pie which returns aggregated category counts for pie rendering.
@@ -1163,14 +1260,21 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
-        // Boost sector_latest_pollutant when the question asks for a pollutant reading
-        // across sites in a named sector (residential, commercial, institutional etc.).
-        // "Show me a table of all Abu Dhabi sites under Residential sector with their latest CO2 reading"
-        // must route here, not to site_aqi_single.
-        bool isSectorPollutantQuestion = isSectorListQuestion && isAqiOrReadingQuestion
-            && (lowerQuestion.Contains("all") || lowerQuestion.Contains("sites") || lowerQuestion.Contains("table") || lowerQuestion.Contains("show") || lowerQuestion.Contains("list"));
-        if (template.Id == "sector_latest_pollutant" && isSectorPollutantQuestion && !isGenericSchoolQuestion)
+        // Boost sector_latest_pollutant ONLY when question names a sector AND an explicit pollutant/reading.
+        // "Show me Abu Dhabi commercial sites with their latest CO2" → boost.
+        // "What are the sites under commercial in Abu Dhabi" (no pollutant) → penalise, goes to sites_by_filter.
+        var hasPollutantWord = lowerQuestion.Contains("co2") || lowerQuestion.Contains("pm2.5")
+            || lowerQuestion.Contains("pm10") || lowerQuestion.Contains("co ") || lowerQuestion.Contains(" co ")
+            || lowerQuestion.Contains("no2") || lowerQuestion.Contains("so2") || lowerQuestion.Contains("o3")
+            || lowerQuestion.Contains("tvoc") || lowerQuestion.Contains("ch2o")
+            || lowerQuestion.Contains("temperature") || lowerQuestion.Contains("humidity")
+            || lowerQuestion.Contains("reading") || lowerQuestion.Contains("aqi");
+        bool isSectorPollutantQuestion = isSectorListQuestion && hasPollutantWord && !isGenericSchoolQuestion;
+        if (template.Id == "sector_latest_pollutant" && isSectorPollutantQuestion)
             maxScore = Math.Max(maxScore, 0.97);
+        // Penalise sector_latest_pollutant when no pollutant is mentioned — it's a plain site list question
+        if (template.Id == "sector_latest_pollutant" && isSectorListQuestion && !hasPollutantWord)
+            maxScore *= 0.05;
         // Penalise site_aqi_single for sector-pollutant questions — must not resolve to one site
         if (template.Id == "site_aqi_single" && isSectorPollutantQuestion)
             maxScore *= 0.05;
@@ -1229,25 +1333,51 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.02;
         }
 
-        // Penalise schools_latest_pollutant when the question contains a NUMERIC AQI threshold —
-        // "how many schools have an AQI above 30" is a filter question → site_aqi_by_category.
-        // schools_latest_pollutant returns all schools' raw readings, not filtered by threshold.
+        // Detect a numeric AQI threshold phrase — "above 50", "more than 30", "higher than 100" etc.
         var hasNumericThreshold = System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"\b\d+\b")
             && (lowerQuestion.Contains("above") || lowerQuestion.Contains("below") || lowerQuestion.Contains("more than")
                 || lowerQuestion.Contains("less than") || lowerQuestion.Contains("greater than")
+                || lowerQuestion.Contains("higher than") || lowerQuestion.Contains("lower than")
                 || lowerQuestion.Contains("over") || lowerQuestion.Contains("under") || lowerQuestion.Contains("exceeds")
                 || lowerQuestion.Contains("between") || lowerQuestion.Contains("at least") || lowerQuestion.Contains("at most"));
-        if (template.Id == "schools_latest_pollutant" && hasNumericThreshold)
+
+        // Detect whether the question is scoped to the school sector
+        bool isSchoolSectorQuestion =
+            lowerQuestion.Contains("school") || lowerQuestion.Contains("schools") ||
+            lowerQuestion.Contains("govt school") || lowerQuestion.Contains("government school") ||
+            lowerQuestion.Contains("private school") || lowerQuestion.Contains("public school") ||
+            lowerQuestion.Contains("moe school");
+
+        // Penalise schools_latest_pollutant when the question has a numeric threshold
+        // AND there is NO school context — e.g. "how many sites have AQI above 30" → site_aqi_by_category.
+        // DO NOT penalise when school context is present — schools_latest_pollutant supports minValue/maxValue.
+        if (template.Id == "schools_latest_pollutant" && hasNumericThreshold && !isSchoolSectorQuestion)
         {
             maxScore *= 0.02;
         }
 
-        // Boost site_aqi_by_category when question has a numeric AQI threshold —
-        // these are always filter/count questions that the aqi_category_filter API handles.
-        if (template.Id == "site_aqi_by_category" && hasNumericThreshold
+        // Boost schools_latest_pollutant when school context + numeric threshold present —
+        // "Al Ain schools with AQI higher than 50" must go to schools_latest_pollutant, not site_aqi_by_category.
+        if (template.Id == "schools_latest_pollutant" && hasNumericThreshold && isSchoolSectorQuestion
             && (lowerQuestion.Contains("aqi") || lowerQuestion.Contains("air quality")))
         {
+            maxScore = Math.Max(maxScore, 0.95);
+        }
+
+        // Boost site_aqi_by_category when question has a numeric AQI threshold —
+        // but NOT when the question is about schools (those stay in schools_latest_pollutant).
+        if (template.Id == "site_aqi_by_category" && hasNumericThreshold
+            && (lowerQuestion.Contains("aqi") || lowerQuestion.Contains("air quality"))
+            && !isSchoolSectorQuestion)
+        {
             maxScore = Math.Max(maxScore, 0.97);
+        }
+
+        // Penalise site_aqi_by_category when school context is present — school threshold questions
+        // must stay in schools_latest_pollutant which returns the school sector data.
+        if (template.Id == "site_aqi_by_category" && isSchoolSectorQuestion && hasNumericThreshold)
+        {
+            maxScore *= 0.05;
         }
 
         // Penalise schools_latest_pollutant when the question mentions an AQI quality level —
@@ -1354,6 +1484,25 @@ public sealed class QueryRouterService : IQueryRouterService
             && isAllRegionsSiteListQuestion)
             maxScore *= 0.05;
 
+        // Penalise schools_latest_pollutant when a past date is present —
+        // "yesterday's AQI at X school", "last week's readings at X" → site_daily_averages, not live poll.
+        if (template.Id == "schools_latest_pollutant" && hasSpecificDate)
+            maxScore *= 0.02;
+
+        // Penalise offline_devices when "school" is mentioned — offline_devices has no sector filter
+        // and will return devices from ALL sectors. School device questions must use devices_by_filter
+        // which supports sectorName="Public & Govt-School" filtering.
+        bool isSchoolDeviceQuestion =
+            lowerQuestion.Contains("school") &&
+            (lowerQuestion.Contains("offline") || lowerQuestion.Contains("inactive") ||
+             lowerQuestion.Contains("device") || lowerQuestion.Contains("sensor"));
+        if (template.Id == "offline_devices" && isSchoolDeviceQuestion)
+            maxScore *= 0.02;
+
+        // Boost devices_by_filter when school + device status word present
+        if (template.Id == "devices_by_filter" && isSchoolDeviceQuestion)
+            maxScore = Math.Max(maxScore, 0.95);
+
         // Penalise schools_latest_pollutant / sector_latest_pollutant when the question
         // is asking for AQI region-wise — those return per-site lists, not regional summaries.
         // "region wise" or "by region" + "aqi" without school/sector context must go to region_aqi_geographical.
@@ -1414,7 +1563,25 @@ public sealed class QueryRouterService : IQueryRouterService
         };
         bool isHotspotCriticalQuestion = hotspotCriticalPhrases.Any(p => lowerQuestion.Contains(p));
 
-        if (template.Id == "priority_hotspots" && isHotspotCriticalQuestion)
+        // "Right now / currently / at the moment" critical/hotspot questions must use
+        // site_aqi_by_category (live GetAllSiteData, AQI > 100) — NOT priority_hotspots which
+        // uses Compliancestatas yearly averages and almost always returns 0 sites on dev/prod.
+        var liveNowWords = new[] {
+            "right now", "at the moment", "currently", "current number", "right now",
+            "at this moment", "today", "at the moment", "live"
+        };
+        bool isLiveNowCritical = isHotspotCriticalQuestion
+            && liveNowWords.Any(w => lowerQuestion.Contains(w));
+
+        if (template.Id == "site_aqi_by_category" && isLiveNowCritical)
+            maxScore = Math.Max(maxScore, 0.97);
+
+        // priority_hotspots uses yearly averages — penalise it for "right now" questions
+        if (template.Id == "priority_hotspots" && isLiveNowCritical)
+            maxScore *= 0.15;
+
+        // For non-"right now" hotspot/critical questions still boost priority_hotspots
+        if (template.Id == "priority_hotspots" && isHotspotCriticalQuestion && !isLiveNowCritical)
             maxScore = Math.Max(maxScore, 0.97);
 
         // Penalise data_success_rate when the user wants critical site NAMES or a count of hotspots —
@@ -1432,14 +1599,20 @@ public sealed class QueryRouterService : IQueryRouterService
             "aqi at its worst", "aqi currently worst", "currently worst",
             "currently highest", "currently reporting the highest", "identify the site with the highest",
             "identify the site with the worst", "where is the aqi highest", "where is the aqi worst",
-            "where is air quality worst"
+            "where is air quality worst", "aqi currently at its worst", "at its worst",
+            "worst right now", "highest right now", "which site is worst", "which site has the worst",
+            "site with the worst", "site with the highest", "worst site"
         };
         bool isHighestAqiNow = highestAqiNowPhrases.Any(p => lowerQuestion.Contains(p))
-            && (lowerQuestion.Contains("site") || lowerQuestion.Contains("location") || lowerQuestion.Contains("where") || lowerQuestion.Contains("which"))
+            && (lowerQuestion.Contains("site") || lowerQuestion.Contains("location") || lowerQuestion.Contains("where") || lowerQuestion.Contains("which") || lowerQuestion.Contains("at which"))
             && !isYearlyAqiRanking && !isWorstMonth && !isRegionTrend && !isRegionSingleYear;
 
         if (template.Id == "highest_aqi_today" && isHighestAqiNow)
             maxScore = Math.Max(maxScore, 0.97);
+        // Penalise site_aqi_by_category for "worst/highest single site" questions —
+        // the user wants the ONE peak site, not a filtered list of all sites by category.
+        if (template.Id == "site_aqi_by_category" && isHighestAqiNow)
+            maxScore *= 0.05;
 
         // Boost lowest_aqi_today for "best/lowest/cleanest AQI right now / currently" questions —
         // these ask for the single site with the lowest AQI at this moment, not a category filter.

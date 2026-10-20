@@ -237,7 +237,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP (@topN) d.DeviceName, s.StationName, r.RegionName, sec.SectorName, MAX(p.ParameterReadingUpdateTime) AS LastReading, DATEDIFF(DAY, MAX(p.ParameterReadingUpdateTime), GETDATE()) AS DaysSinceLastReading FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName), ' ', '') = REPLACE(LOWER(@regionName), ' ', '')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%') AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName HAVING MAX(p.ParameterReadingUpdateTime) IS NOT NULL AND MAX(p.ParameterReadingUpdateTime) < DATEADD(MINUTE, -15, GETDATE()) ORDER BY LastReading ASC",
+      "sql": "SELECT TOP (@topN) d.DeviceName, s.StationName, r.RegionName, sec.SectorName, MAX(p.ParameterReadingUpdateTime) AS LastReading, DATEDIFF(DAY, MAX(p.ParameterReadingUpdateTime), GETDATE()) AS DaysSinceLastReading FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName), ' ', '') = REPLACE(LOWER(@regionName), ' ', '')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%') AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName HAVING MAX(p.ParameterReadingUpdateTime) IS NOT NULL AND MAX(p.ParameterReadingUpdateTime) < DATEADD(MINUTE, -1440, GETDATE()) ORDER BY LastReading ASC",
       "params": [
         {
           "name": "topN",
@@ -332,7 +332,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT ISNULL(SUM(IsActive), 0) AS ActiveDeviceCount, COUNT(*) AS TotalDeviceCount FROM (SELECT d.DeviceId, CASE WHEN (MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(p.LastCommunicationTime) >= DATEADD(MINUTE, -10, GETDATE())) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId AND p.DriverID = 4 JOIN DMN_Stations s ON d.StationID = s.ID WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 GROUP BY d.DeviceId) AS t",
+      "sql": "SELECT ISNULL(SUM(IsActive), 0) AS ActiveDeviceCount, COUNT(*) AS TotalDeviceCount FROM (SELECT d.DeviceId, CASE WHEN (MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(p.LastCommunicationTime) >= DATEADD(MINUTE, -10, GETDATE())) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId AND p.DriverID = 4 JOIN DMN_Stations s ON d.StationID = s.ID WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 GROUP BY d.DeviceId) AS t",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -392,7 +392,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT r.RegionName, sec.SectorName, COUNT(*) AS TotalDevices, SUM(CASE WHEN live.LastReading >= DATEADD(MINUTE, -15, GETDATE()) THEN 1 ELSE 0 END) AS ActiveDevices, SUM(CASE WHEN live.LastReading < DATEADD(MINUTE, -15, GETDATE()) OR live.LastReading IS NULL THEN 1 ELSE 0 END) AS InactiveDevices FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN (SELECT p.DeviceID, MAX(p.ParameterReadingUpdateTime) AS LastReading FROM DMN_Parameters p GROUP BY p.DeviceID) live ON live.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) GROUP BY r.RegionName, sec.SectorName ORDER BY r.RegionName, sec.SectorName",
+      "sql": "SELECT r.RegionName, sec.SectorName, COUNT(*) AS TotalDevices, SUM(CASE WHEN live.LastReading >= DATEADD(MINUTE, -1440, GETDATE()) OR live.LastComm >= DATEADD(MINUTE, -10, GETDATE()) THEN 1 ELSE 0 END) AS ActiveDevices, SUM(CASE WHEN (live.LastReading < DATEADD(MINUTE, -1440, GETDATE()) OR live.LastReading IS NULL) AND (live.LastComm < DATEADD(MINUTE, -10, GETDATE()) OR live.LastComm IS NULL) THEN 1 ELSE 0 END) AS InactiveDevices FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN (SELECT p.DeviceID, MAX(p.ParameterReadingUpdateTime) AS LastReading, MAX(p.LastCommunicationTime) AS LastComm FROM DMN_Parameters p WHERE p.DriverID = 4 GROUP BY p.DeviceID) live ON live.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) GROUP BY r.RegionName, sec.SectorName ORDER BY r.RegionName, sec.SectorName",
       "params": [
         {
           "name": "regionName",
@@ -418,6 +418,40 @@
         }
       ],
       "responseType": "text",
+      "tableUsed": "DMN_Devices",
+      "skipSiteFilter": false
+    },
+    {
+      "id": "offline_devices",
+      "description": "List all currently offline/inactive devices system-wide. A device is offline when its last reading is older than 1440 minutes (24 hours). Use when the user asks which devices are offline, inactive, not sending, not connected, or not transmitting — with no site/region/sector filter.",
+      "patterns": [
+        "which devices are offline",
+        "which devices are currently offline",
+        "which devices are not connected",
+        "are there any devices that are not connected",
+        "show me the offline devices",
+        "show offline devices",
+        "list offline devices",
+        "list all offline devices",
+        "devices that are offline",
+        "devices currently offline",
+        "offline devices right now",
+        "which devices are inactive",
+        "devices that are inactive",
+        "devices currently inactive",
+        "show inactive devices",
+        "list inactive devices",
+        "devices not sending",
+        "devices not reporting",
+        "devices not transmitting",
+        "not connected devices",
+        "disconnected devices"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT d.DeviceName, s.StationName, r.RegionName, sec.SectorName, MAX(p.ParameterReadingUpdateTime) AS LastActive FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId AND p.DriverID = 4 JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName HAVING MAX(p.ParameterReadingUpdateTime) IS NULL OR MAX(p.ParameterReadingUpdateTime) < DATEADD(MINUTE, -1440, GETDATE()) ORDER BY r.RegionName, sec.SectorName, s.StationName, d.DeviceName",
+      "params": [],
+      "responseType": "table",
       "tableUsed": "DMN_Devices",
       "skipSiteFilter": false
     },
@@ -535,6 +569,8 @@
         "inactive devices in commercial",
         "inactive devices in residential",
         "inactive devices in school",
+        "offline devices in school",
+        "offline school devices",
         "devices per sector",
         "devices in subsector",
         "devices under subsector",
@@ -542,11 +578,36 @@
         "devices at site",
         "devices at station",
         "devices offline at",
-        "devices online at"
+        "devices online at",
+        "school sites that have an offline device",
+        "school sites with an offline device",
+        "school sites currently have an offline",
+        "school sites that currently have",
+        "schools with offline devices",
+        "schools with inactive devices",
+        "schools with offline",
+        "schools with inactive",
+        "school sites offline",
+        "school devices offline",
+        "school devices inactive",
+        "offline devices at schools",
+        "inactive devices at schools",
+        "devices offline in schools",
+        "devices inactive in schools",
+        "which school sites have offline",
+        "which schools have offline",
+        "which schools have inactive",
+        "show school sites offline",
+        "show me school sites offline",
+        "show all school sites offline",
+        "private and government school devices",
+        "govt school devices",
+        "government school devices offline",
+        "public school devices offline"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status, MAX(p.ParameterReadingUpdateTime) AS LastActive, MAX(CASE WHEN p.ParameterName = 'AQI Index' THEN p.ParameterValue END) AS AQI FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING 1=1 AND (@statusFilter IS NULL OR CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 'Active' ELSE 'Inactive' END = @statusFilter) ORDER BY r.RegionName, sec.SectorName, s.StationName, d.DeviceName",
+      "sql": "SELECT d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN MAX(pm.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(pm.LastCommunicationTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status, MAX(pm.ParameterReadingUpdateTime) AS LastActive, MAX(CASE WHEN pa.ParameterName = 'AQI Index' THEN pa.ParameterValue END) AS AQI FROM DMN_Devices d LEFT JOIN DMN_Parameters pm ON pm.DeviceID = d.DeviceId AND pm.DriverID = 4 LEFT JOIN DMN_Parameters pa ON pa.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING 1=1 AND (@statusFilter IS NULL OR CASE WHEN MAX(pm.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(pm.LastCommunicationTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END = @statusFilter) ORDER BY r.RegionName, sec.SectorName, s.StationName, d.DeviceName",
       "params": [
         {
           "name": "regionName",
@@ -757,7 +818,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 d.DeviceName, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
+      "sql": "SELECT TOP 1 d.DeviceName, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
       "params": [
         {
           "name": "deviceName",
@@ -836,7 +897,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, d.DeviceModel, d.CreatedOn AS DeployedOn, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -15, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName, d.DeviceModel, d.CreatedOn ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
+      "sql": "SELECT TOP 1 d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, d.DeviceModel, d.CreatedOn AS DeployedOn, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName, d.DeviceModel, d.CreatedOn ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
       "params": [
         {
           "name": "deviceName",
