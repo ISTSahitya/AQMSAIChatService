@@ -554,13 +554,14 @@ public sealed class ExternalApiService : IExternalApiService
                 var aqiCategory  = llmParams.GetValueOrDefault("aqiCategory");
                 var sectorFilter = llmParams.GetValueOrDefault("sectorName");
                 var regionFilter2 = llmParams.GetValueOrDefault("regionName");
+                var liveStatusFilter = llmParams.GetValueOrDefault("liveStatus"); // null/"Active"=online only, "All"=all, "Inactive"=offline only
                 double? minAqi = llmParams.TryGetValue("minValue", out var minStr2) && double.TryParse(minStr2, out var mn2) ? mn2 : null;
                 double? maxAqi = llmParams.TryGetValue("maxValue", out var maxStr2) && double.TryParse(maxStr2, out var mx2) ? mx2 : null;
 
-                _log.Information("ExternalApiService: aqi_category_filter — aqiCategory='{Cat}' sector='{Sec}' region='{Reg}' min={Min} max={Max}",
-                    aqiCategory ?? "(none)", sectorFilter ?? "(none)", regionFilter2 ?? "(none)", minAqi, maxAqi);
+                _log.Information("ExternalApiService: aqi_category_filter — aqiCategory='{Cat}' sector='{Sec}' region='{Reg}' liveStatus='{Status}' min={Min} max={Max}",
+                    aqiCategory ?? "(none)", sectorFilter ?? "(none)", regionFilter2 ?? "(none)", liveStatusFilter ?? "Active", minAqi, maxAqi);
 
-                var rows2 = await BuildAqiCategoryRows(json, aqiCategory, sectorFilter, user, ct, regionFilter2, minAqi, maxAqi);
+                var rows2 = await BuildAqiCategoryRows(json, aqiCategory, sectorFilter, user, ct, regionFilter2, minAqi, maxAqi, liveStatusFilter);
                 _log.Information("ExternalApiService: aqi_category_filter → {Count} rows returned", rows2.Count);
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
@@ -840,9 +841,10 @@ public sealed class ExternalApiService : IExternalApiService
             if (apiCall.ResponseShape == "schools_pollutant")
             {
                 var parameterName = llmParams.GetValueOrDefault("parameterName") ?? "AQI Index";
-                var rows2 = await BuildSchoolPollutantRows(json, parameterName, regionFilter, llmParams, ct);
-                _log.Debug("ExternalApiService: schools_pollutant → {Count} rows for param={Param} region={Region}",
-                    rows2.Count, parameterName, regionFilter ?? "all");
+                var liveStatusSch = llmParams.GetValueOrDefault("liveStatus");
+                var rows2 = await BuildSchoolPollutantRows(json, parameterName, regionFilter, llmParams, ct, liveStatusSch);
+                _log.Debug("ExternalApiService: schools_pollutant → {Count} rows for param={Param} region={Region} liveStatus={Status}",
+                    rows2.Count, parameterName, regionFilter ?? "all", liveStatusSch ?? "All");
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
@@ -1344,9 +1346,12 @@ public sealed class ExternalApiService : IExternalApiService
             (el.TryGetProperty("Device_Name", out var dn3) ? dn3.GetString() : null) ??
             (el.TryGetProperty("Name",        out var dn4) ? dn4.GetString() : null) ??
             "";
-        var isOnline    =
-            (el.TryGetProperty("IsOnline",    out var io)  ? io.GetBoolean()  :
-             el.TryGetProperty("isOnline",    out var io2) ? io2.GetBoolean() : false);
+        // Check whether the JSON element explicitly carries an IsOnline field.
+        // GetAllSiteData returns SiteDataDtoList which has NO IsOnline — we derive it from timestamps.
+        bool hasExplicitOnline = el.TryGetProperty("IsOnline", out var io) || el.TryGetProperty("isOnline", out var io2);
+        bool isOnline = hasExplicitOnline
+            ? (el.TryGetProperty("IsOnline", out var io3) ? io3.GetBoolean() : (el.TryGetProperty("isOnline", out var io4) && io4.GetBoolean()))
+            : false; // will be overridden below from parameter timestamps when not explicit
 
         // Try common timestamp field names at the device level
         var lastUpdated =
@@ -1358,6 +1363,7 @@ public sealed class ExternalApiService : IExternalApiService
             string.Empty;
 
         var parameters = new Dictionary<string, (double, string)>(StringComparer.OrdinalIgnoreCase);
+        DateTime? latestParamTime = null;
         if (el.TryGetProperty("paramaterDtos", out var dtos))
         {
             foreach (var p in dtos.EnumerateArray())
@@ -1366,20 +1372,36 @@ public sealed class ExternalApiService : IExternalApiService
                 var value = p.TryGetProperty("ParameterValue", out var pv) && pv.ValueKind == JsonValueKind.Number ? pv.GetDouble() : 0;
                 var unit  = p.TryGetProperty("Unit",           out var pu) ? pu.GetString() ?? "" : "";
 
-                // Pick up timestamp from parameter level if not found at device level
-                if (string.IsNullOrEmpty(lastUpdated))
-                {
-                    lastUpdated =
-                        (p.TryGetProperty("ParameterReadingUpdateTime", out var prut) ? prut.GetString()  : null) ??
-                        (p.TryGetProperty("LastUpdated",                out var plu)  ? plu.GetString()   : null) ??
-                        (p.TryGetProperty("CreatedTime",                out var pct)  ? pct.GetString()   : null) ??
-                        (p.TryGetProperty("ReadingTime",                out var prt)  ? prt.GetString()   : null) ??
-                        string.Empty;
-                }
+                // Pick up timestamp from parameter level
+                var paramTimeStr =
+                    (p.TryGetProperty("ParameterReadingUpdateTime", out var prut) ? prut.GetString() : null) ??
+                    (p.TryGetProperty("LastUpdated",                out var plu)  ? plu.GetString()  : null) ??
+                    (p.TryGetProperty("CreatedTime",                out var pct)  ? pct.GetString()  : null) ??
+                    (p.TryGetProperty("ReadingTime",                out var prt)  ? prt.GetString()  : null);
+
+                if (string.IsNullOrEmpty(lastUpdated) && paramTimeStr is not null)
+                    lastUpdated = paramTimeStr;
+
+                // Track latest parameter timestamp so we can derive IsOnline for GetAllSiteData responses
+                if (paramTimeStr is not null && DateTime.TryParse(paramTimeStr, out var parsedParamTime))
+                    if (latestParamTime is null || parsedParamTime > latestParamTime)
+                        latestParamTime = parsedParamTime;
 
                 if (!string.IsNullOrWhiteSpace(name))
                     parameters[name] = (value, unit);
             }
+        }
+
+        // Derive IsOnline from parameter timestamps when the JSON does not carry an explicit flag.
+        // GetAllSiteData (SiteDataDtoList) has no IsOnline — any site with a reading within 24h is online.
+        if (!hasExplicitOnline)
+        {
+            if (latestParamTime.HasValue)
+                isOnline = latestParamTime.Value >= DateTime.Now.AddMinutes(-1440);
+            else if (!string.IsNullOrEmpty(lastUpdated) && DateTime.TryParse(lastUpdated, out var parsedLu))
+                isOnline = parsedLu >= DateTime.Now.AddMinutes(-1440);
+            else
+                isOnline = parameters.Count > 0; // has params but no parseable timestamp — include it
         }
 
         // A site with no devices has an empty paramaterDtos array — exclude it from AQI aggregation
@@ -1521,7 +1543,8 @@ public sealed class ExternalApiService : IExternalApiService
         string parameterName,
         string? regionFilter,
         Dictionary<string, string> llmParams,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? liveStatusFilter = null)
     {
         // Fetch all school-sector sites from DB, optionally filtered by region
         var sql = regionFilter is not null
@@ -1566,6 +1589,27 @@ public sealed class ExternalApiService : IExternalApiService
         double? minValue = llmParams.TryGetValue("minValue", out var minStr) && double.TryParse(minStr, out var mn) ? mn : null;
         double? maxValue = llmParams.TryGetValue("maxValue", out var maxStr) && double.TryParse(maxStr, out var mx) ? mx : null;
 
+        // topN: return only the top/bottom N results after sorting
+        int? topN = llmParams.TryGetValue("topN", out var topNStr) && int.TryParse(topNStr, out var tn) && tn > 0 ? tn : null;
+
+        // sortOrder: "desc" = highest first (default when topN present), "asc" = lowest first
+        var sortOrder = llmParams.GetValueOrDefault("sortOrder") ?? (topN.HasValue ? "desc" : null);
+        var sortDesc = !string.Equals(sortOrder, "asc", StringComparison.OrdinalIgnoreCase);
+
+        // Resolve live-status mode:
+        //   null (default) → "All": include all school sites (Active + Inactive) so listings/counts
+        //                    are not silently missing inactive schools. Matches UI which shows all sites.
+        //   "Active"       → online devices only (user explicitly asked for active/live)
+        //   "Inactive"     → offline devices only
+        //   "All"          → all devices regardless of status
+        var statusMode = string.IsNullOrWhiteSpace(liveStatusFilter) ? "All"
+            : liveStatusFilter.Trim().ToLowerInvariant() switch
+            {
+                "active" or "online" or "live" => "Active",
+                "inactive" or "offline"        => "Inactive",
+                _                              => "All"
+            };
+
         var allDevices = ParseDevicesFromJson(json);
         var results = new List<Dictionary<string, object?>>();
 
@@ -1578,12 +1622,25 @@ public sealed class ExternalApiService : IExternalApiService
             if (!schoolSiteIds.TryGetValue(group.Key, out var siteInfo))
                 continue;
 
+            // Apply live-status filter at site level
+            bool siteHasOnline  = group.Any(d => d.IsOnline);
+            bool siteHasOffline = group.Any(d => !d.IsOnline);
+            if (statusMode == "Active"   && !siteHasOnline)  continue;
+            if (statusMode == "Inactive" && !siteHasOffline) continue;
+
+            // Select devices to read parameter from based on mode
+            var targetDevices = statusMode == "Inactive"
+                ? group.Where(d => !d.IsOnline).ToList()
+                : statusMode == "All"
+                    ? group.ToList()
+                    : group.Where(d => d.IsOnline).ToList(); // Active
+
             double? value = null;
             string unit = "";
             string lastUpdated = "";
 
-            // Average the parameter across all devices at this station — matches UI dashboard behaviour.
-            var paramReadings = group
+            // Average the parameter across target devices at this station — matches UI dashboard behaviour.
+            var paramReadings = targetDevices
                 .SelectMany(d => paramVariants
                     .Where(v => d.Params.ContainsKey(v))
                     .Select(v => d.Params[v]))
@@ -1593,7 +1650,7 @@ public sealed class ExternalApiService : IExternalApiService
             {
                 value       = Math.Round(paramReadings.Select(r => r.Value).Average(), 2);
                 unit        = paramReadings.First().Unit;
-                lastUpdated = group.Select(d => d.LastUpdated)
+                lastUpdated = targetDevices.Select(d => d.LastUpdated)
                                    .Where(t => !string.IsNullOrWhiteSpace(t))
                                    .OrderByDescending(t => t)
                                    .FirstOrDefault() ?? "";
@@ -1616,7 +1673,15 @@ public sealed class ExternalApiService : IExternalApiService
             });
         }
 
-        return results;
+        // Sort and apply topN limit
+        IEnumerable<Dictionary<string, object?>> ordered = sortDesc
+            ? results.OrderByDescending(r => Convert.ToDouble(r["Value"]))
+            : results.OrderBy(r => Convert.ToDouble(r["Value"]));
+
+        if (topN.HasValue)
+            ordered = ordered.Take(topN.Value);
+
+        return ordered.ToList();
     }
 
     /// <summary>
@@ -1948,7 +2013,8 @@ public sealed class ExternalApiService : IExternalApiService
         CancellationToken ct,
         string? regionFilter = null,
         double? minAqi = null,
-        double? maxAqi = null)
+        double? maxAqi = null,
+        string? liveStatusFilter = null)
     {
         // If a sector filter is requested, fetch permitted site IDs from DB.
         // Try exact match first; if that returns nothing, fall back to LIKE match
@@ -2000,9 +2066,31 @@ public sealed class ExternalApiService : IExternalApiService
         if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
             allDevices = allDevices.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
 
-        // Sector filter: restrict to sites in the requested sector
+        // Sector filter: restrict to sites in the requested sector.
+        // Primary: use DB-resolved site IDs. Fallback: filter by SectorName from API response directly.
         if (sectorSiteIds is not null)
+        {
             allDevices = allDevices.Where(d => sectorSiteIds.Contains(d.StationId)).ToList();
+        }
+        else if (!string.IsNullOrWhiteSpace(sectorFilter))
+        {
+            // DB lookup returned nothing — filter by SectorName from API response as fallback
+            var normSectorFb = sectorFilter.Trim();
+            if (normSectorFb.Contains("school", StringComparison.OrdinalIgnoreCase)
+                || normSectorFb.Contains("govt", StringComparison.OrdinalIgnoreCase)
+                || normSectorFb.Contains("gov", StringComparison.OrdinalIgnoreCase))
+                normSectorFb = "Public & Govt-School";
+            allDevices = allDevices
+                .Where(d => !string.IsNullOrWhiteSpace(d.SectorName)
+                    && d.SectorName.Contains(
+                        normSectorFb.Contains("School", StringComparison.OrdinalIgnoreCase) ? "School"
+                        : normSectorFb.Contains("Commercial", StringComparison.OrdinalIgnoreCase) ? "Commercial"
+                        : normSectorFb.Contains("Residential", StringComparison.OrdinalIgnoreCase) ? "Residential"
+                        : normSectorFb,
+                        StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            _log.Warning("ExternalApiService: sector filter fallback via SectorName → {Count} devices", allDevices.Count);
+        }
 
         // Region filter: restrict to sites in the requested region (case/space-insensitive).
         // Applied at device level first; re-applied at site-row level after grouping as a safety net,
@@ -2017,18 +2105,44 @@ public sealed class ExternalApiService : IExternalApiService
                 .ToList();
         }
 
-        // One row per station — API already pre-averages parameters per station
+        // Resolve live-status mode:
+        //   null / "Active" (default) → online devices only
+        //   "All"                     → all devices regardless of status
+        //   "Inactive"                → offline/inactive devices only
+        var statusMode = string.IsNullOrWhiteSpace(liveStatusFilter) ? "Active"
+            : liveStatusFilter.Trim().ToLowerInvariant() switch
+            {
+                "all"                    => "All",
+                "inactive" or "offline"  => "Inactive",
+                _                        => "Active"
+            };
+
+        // One row per station — API already pre-averages parameters per station.
         var siteRows = allDevices
             .GroupBy(d => d.StationId)
             .Select(g =>
             {
                 var first = g.First();
-                // Average AQI Index across all devices at this station (mirrors site_aqi_single logic)
-                var aqiValues = g.Where(d => d.Params.ContainsKey("AQI Index"))
+                bool siteHasOnline  = g.Any(d => d.IsOnline);
+                bool siteHasOffline = g.Any(d => !d.IsOnline);
+
+                // Apply live-status filter at site level
+                if (statusMode == "Active"   && !siteHasOnline)  return null;
+                if (statusMode == "Inactive" && !siteHasOffline) return null;
+
+                // Select devices to read AQI from based on mode
+                var targetDevices = statusMode == "Inactive"
+                    ? g.Where(d => !d.IsOnline).ToList()
+                    : statusMode == "All"
+                        ? g.ToList()
+                        : g.Where(d => d.IsOnline).ToList(); // Active
+
+                // Average AQI Index across target devices at this station
+                var aqiValues = targetDevices.Where(d => d.Params.ContainsKey("AQI Index"))
                                   .Select(d => d.Params["AQI Index"].Value)
                                   .ToList();
                 double? aqi = aqiValues.Count > 0 ? Math.Round(aqiValues.Average(), 0) : (double?)null;
-                string lastUpdated = g.Select(d => d.LastUpdated)
+                string lastUpdated = targetDevices.Select(d => d.LastUpdated)
                                       .Where(t => !string.IsNullOrWhiteSpace(t))
                                       .OrderByDescending(t => t)
                                       .FirstOrDefault() ?? "";
@@ -2081,8 +2195,8 @@ public sealed class ExternalApiService : IExternalApiService
                 or "vulnerable" or "kids" or "children" or "elderly"  => "Unhealthy for Sensitive Groups",
             "unhealthy" or "poor" or "bad" or "harmful" or "polluted" => "Unhealthy",
             "very unhealthy" or "very bad" or "very poor" or "severe" => "Very Unhealthy",
-            "hazardous" or "dangerous" or "deadly" or "toxic"         => "Hazardous",
-            "critical" or "hotspot" or "hotspots"                     => "critical",  // special: AQI > 100
+            "hazardous" or "dangerous" or "deadly" or "toxic"
+                or "critical" or "hotspot" or "hotspots"              => "Hazardous",
             _ => null
         };
 
@@ -2115,21 +2229,10 @@ public sealed class ExternalApiService : IExternalApiService
         if (resolvedCategories.Count == 0)
             return siteRows; // unknown filter — return all rather than empty
 
-        bool wantsCritical = resolvedCategories.Contains("critical");
-        var exactCategories = resolvedCategories
-            .Where(c => !c.Equals("critical", StringComparison.OrdinalIgnoreCase))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
         return siteRows.Where(r =>
         {
             var cat = r["AQICategory"]?.ToString() ?? "";
-            var aqiVal = r["AQI"] is double d ? d : (r["AQI"] is int i ? (double)i : (double?)null);
-
-            if (wantsCritical && aqiVal.HasValue && aqiVal.Value > 100)
-                return true;
-            if (exactCategories.Count > 0 && exactCategories.Contains(cat))
-                return true;
-            return false;
+            return resolvedCategories.Contains(cat);
         }).ToList();
     }
 
@@ -2430,6 +2533,7 @@ public sealed class ExternalApiService : IExternalApiService
         var indoorLastUpdated = matched.Devices
             .Where(d => !string.IsNullOrWhiteSpace(d.LastUpdated))
             .Select(d => d.LastUpdated)
+            .OrderByDescending(d => d)
             .FirstOrDefault();
 
         // ── Step 2: Get indoor site coordinates from DMN_Stations ──
@@ -2437,149 +2541,159 @@ public sealed class ExternalApiService : IExternalApiService
         try
         {
             var coordSql = $"""
-                SELECT TOP 1 CoordinateX, CoordinateY
+                SELECT TOP 1 TRY_CAST(CoordinateX AS FLOAT) AS Lng, TRY_CAST(CoordinateY AS FLOAT) AS Lat
                 FROM DMN_Stations
                 WHERE StationName LIKE '%{stationName.Replace("'", "''")}%'
-                  AND Status = 1
-                  AND CoordinateX IS NOT NULL AND LTRIM(RTRIM(CAST(CoordinateX AS NVARCHAR(50)))) <> '' AND LTRIM(RTRIM(CAST(CoordinateX AS NVARCHAR(50)))) <> '0'
-                  AND CoordinateY IS NOT NULL AND LTRIM(RTRIM(CAST(CoordinateY AS NVARCHAR(50)))) <> '' AND LTRIM(RTRIM(CAST(CoordinateY AS NVARCHAR(50)))) <> '0'
+                  AND ISNULL(IsDeleted, 0) = 0
+                  AND TRY_CAST(CoordinateX AS FLOAT) IS NOT NULL
+                  AND TRY_CAST(CoordinateY AS FLOAT) IS NOT NULL
+                  AND TRY_CAST(CoordinateX AS FLOAT) <> 0
+                  AND TRY_CAST(CoordinateY AS FLOAT) <> 0
                 """;
             var coordResult = await _sqlExecutor.ExecuteAsync(coordSql, new Dictionary<string, object>(), ct);
-            var coordRows = coordResult.Rows;
-            if (coordRows.Count > 0)
+            if (coordResult.Rows.Count > 0)
             {
-                var r = coordRows[0];
-                if (r.TryGetValue("CoordinateX", out var cx) && double.TryParse(cx?.ToString(), out var lng))
+                var r = coordResult.Rows[0];
+                if (r.TryGetValue("Lng", out var cx) && double.TryParse(cx?.ToString(), out var lng))
                     indoorLng = lng;
-                if (r.TryGetValue("CoordinateY", out var cy) && double.TryParse(cy?.ToString(), out var lat))
+                if (r.TryGetValue("Lat", out var cy) && double.TryParse(cy?.ToString(), out var lat))
                     indoorLat = lat;
             }
+            _log.Debug("indoor_ambient_compare: indoor coords Lng={Lng} Lat={Lat}", indoorLng, indoorLat);
         }
         catch (Exception ex)
         {
             _log.Warning(ex, "indoor_ambient_compare: failed to fetch coordinates for '{Site}'", stationName);
         }
 
-        // ── Step 3: Fetch ambient stations from Abu Dhabi SDI ArcGIS ──
-        using var arcgisHttp = new HttpClient();
-        arcgisHttp.Timeout = TimeSpan.FromSeconds(15);
+        if (!indoorLng.HasValue || !indoorLat.HasValue)
+        {
+            return [new Dictionary<string, object?>
+            {
+                ["IndoorSite"]     = matched.StationName,
+                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
+                ["AmbientStation"] = "N/A",
+                ["AmbientAQI"]     = "N/A",
+                ["Distance_km"]    = "N/A",
+                ["Timestamp"]      = indoorLastUpdated ?? "N/A",
+                ["Error"]          = $"Coordinates not found for '{matched.StationName}' — cannot locate nearest ambient station."
+            }];
+        }
 
-        string stationsJson, aqiJson;
+        // ── Step 3: Find nearest ambient station and its latest AQI from DB ──
+        // AmbientStations has Latitude/Longitude float columns.
+        // AmbientData stores hourly readings; we want the latest AQI reading from today.
+        // AmbientParameters maps ParameterName to Id; AQI is stored as "AQI Index".
+        var ambientSql = $"""
+            WITH NearestStation AS (
+                SELECT TOP 1
+                    amb.Id AS AmbientStationID,
+                    amb.StationName AS AmbientStationName,
+                    ROUND(SQRT(
+                        (({indoorLng.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)} - amb.Longitude) * COS(RADIANS((amb.Latitude + {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) / 2.0)) * 111.32) *
+                        (({indoorLng.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)} - amb.Longitude) * COS(RADIANS((amb.Latitude + {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) / 2.0)) * 111.32) +
+                        ((amb.Latitude - {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) * 111.32) *
+                        ((amb.Latitude - {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) * 111.32)
+                    ), 2) AS Distance_km
+                FROM AmbientStations amb
+                WHERE amb.Status = 'Active'
+                  AND amb.Latitude IS NOT NULL AND amb.Longitude IS NOT NULL
+                ORDER BY SQRT(
+                    (({indoorLng.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)} - amb.Longitude) * COS(RADIANS((amb.Latitude + {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) / 2.0)) * 111.32) *
+                    (({indoorLng.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)} - amb.Longitude) * COS(RADIANS((amb.Latitude + {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) / 2.0)) * 111.32) +
+                    ((amb.Latitude - {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) * 111.32) *
+                    ((amb.Latitude - {indoorLat.Value.ToString("F6", System.Globalization.CultureInfo.InvariantCulture)}) * 111.32)
+                )
+            ),
+            LatestAQI AS (
+                SELECT TOP 1
+                    ad.ParameterValue AS AmbientAQI,
+                    ad.RecordedDate   AS AmbientTimestamp
+                FROM AmbientData ad
+                JOIN AmbientParameters ap ON ad.ParameterId = ap.Id
+                JOIN NearestStation ns    ON ad.StationId   = ns.AmbientStationID
+                WHERE ap.ParameterName LIKE '%AQI%'
+                  AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL
+                ORDER BY TRY_CONVERT(DATE, ad.RecordedDate, 105) DESC
+            )
+            SELECT
+                ns.AmbientStationName,
+                ns.Distance_km,
+                la.AmbientAQI,
+                la.AmbientTimestamp
+            FROM NearestStation ns
+            LEFT JOIN LatestAQI la ON 1 = 1
+            """;
+
+        string? ambientStationName = null;
+        double? ambientAqi = null;
+        double? distanceKm = null;
+        string? ambientTimestamp = null;
+
         try
         {
-            var stationsTask = arcgisHttp.GetStringAsync(ArcGisStationsUrl, ct);
-            var aqiTask     = arcgisHttp.GetStringAsync(ArcGisAqiDataUrl, ct);
-            await Task.WhenAll(stationsTask, aqiTask);
-            stationsJson = stationsTask.Result;
-            aqiJson      = aqiTask.Result;
+            var ambResult = await _sqlExecutor.ExecuteAsync(ambientSql, new Dictionary<string, object>(), ct);
+            if (ambResult.Rows.Count > 0)
+            {
+                var r = ambResult.Rows[0];
+                ambientStationName = r["AmbientStationName"]?.ToString();
+                if (r.TryGetValue("Distance_km", out var dk) && double.TryParse(dk?.ToString(), out var d))
+                    distanceKm = d;
+                if (r.TryGetValue("AmbientAQI", out var aq) && double.TryParse(aq?.ToString(), out var a))
+                    ambientAqi = Math.Round(a, 0);
+                ambientTimestamp = r["AmbientTimestamp"]?.ToString();
+            }
+            _log.Information("indoor_ambient_compare: nearest ambient='{Station}' dist={Dist}km AQI={AQI}",
+                ambientStationName ?? "(none)", distanceKm, ambientAqi);
         }
         catch (Exception ex)
         {
-            _log.Warning(ex, "indoor_ambient_compare: ArcGIS fetch failed");
+            _log.Warning(ex, "indoor_ambient_compare: DB query for nearest ambient station failed");
             return [new Dictionary<string, object?>
             {
-                ["IndoorSite"]    = matched.StationName,
-                ["IndoorAQI"]     = indoorAqi.HasValue ? Math.Round(indoorAqi.Value, 0) : (object?)"N/A",
+                ["IndoorSite"]     = matched.StationName,
+                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
                 ["AmbientStation"] = "N/A",
-                ["AmbientAQI"]    = "N/A",
-                ["Distance_km"]   = "N/A",
-                ["Timestamp"]     = indoorLastUpdated ?? "N/A",
-                ["Error"]         = "Ambient station data temporarily unavailable."
+                ["AmbientAQI"]     = "N/A",
+                ["Distance_km"]    = "N/A",
+                ["Timestamp"]      = indoorLastUpdated ?? "N/A",
+                ["Error"]          = "Ambient station data temporarily unavailable."
             }];
         }
 
-        // ── Step 4: Parse ArcGIS responses and join on station name ──
-        var aqiByAlias = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
-        using var aqiDoc = JsonDocument.Parse(aqiJson);
-        foreach (var feat in aqiDoc.RootElement.GetProperty("features").EnumerateArray())
-        {
-            var attrs = feat.GetProperty("attributes");
-            var alias = attrs.TryGetProperty("StationAlias", out var sa) ? sa.GetString() ?? ""
-                      : attrs.TryGetProperty("StationName",  out var sn) ? sn.GetString() ?? "" : "";
-            if (!string.IsNullOrWhiteSpace(alias) && !aqiByAlias.ContainsKey(alias))
-                aqiByAlias[alias] = attrs;
-        }
-
-        // ── Step 5: Merge stations with AQI, compute distance, find nearest ──
-        double? bestDist = null;
-        string? bestAmbientName = null;
-        double? bestAmbientAqi = null;
-        string? bestAmbientTimestamp = null;
-
-        using var stationsDoc = JsonDocument.Parse(stationsJson);
-        foreach (var feat in stationsDoc.RootElement.GetProperty("features").EnumerateArray())
-        {
-            var attrs  = feat.GetProperty("attributes");
-            var geom   = feat.TryGetProperty("geometry", out var g) ? g : default;
-
-            var name = attrs.TryGetProperty("NAME",        out var n1) ? n1.GetString() ?? ""
-                     : attrs.TryGetProperty("StationName", out var n2) ? n2.GetString() ?? "" : "";
-            if (string.IsNullOrWhiteSpace(name)) continue;
-
-            // Get coordinates
-            double ambLng = 0, ambLat = 0;
-            if (geom.ValueKind == JsonValueKind.Object)
-            {
-                if (geom.TryGetProperty("x", out var gx)) ambLng = gx.GetDouble();
-                if (geom.TryGetProperty("y", out var gy)) ambLat = gy.GetDouble();
-            }
-            if (ambLng == 0 && attrs.TryGetProperty("E", out var ea)) ambLng = ea.GetDouble();
-            if (ambLat == 0 && attrs.TryGetProperty("N", out var na)) ambLat = na.GetDouble();
-            if (ambLng == 0 || ambLat == 0) continue;
-
-            // Get AQI for this station
-            double? ambAqi = null;
-            string? ambTimestamp = null;
-            if (aqiByAlias.TryGetValue(name, out var aqiAttrs))
-            {
-                if (aqiAttrs.TryGetProperty("AQI", out var aqiEl) && aqiEl.ValueKind != JsonValueKind.Null)
-                    ambAqi = aqiEl.TryGetDouble(out var av) ? av : null;
-                if (aqiAttrs.TryGetProperty("ObservedAt", out var tsEl) && tsEl.ValueKind != JsonValueKind.Null)
-                    ambTimestamp = tsEl.GetString();
-            }
-
-            // Haversine distance (km) — only if indoor coordinates are known
-            double dist = double.MaxValue;
-            if (indoorLng.HasValue && indoorLat.HasValue)
-                dist = HaversineKm(indoorLat.Value, indoorLng.Value, ambLat, ambLng);
-
-            if (bestDist == null || dist < bestDist)
-            {
-                bestDist = dist;
-                bestAmbientName = name;
-                bestAmbientAqi = ambAqi;
-                bestAmbientTimestamp = ambTimestamp;
-            }
-        }
-
-        if (bestAmbientName is null)
+        if (ambientStationName is null)
         {
             return [new Dictionary<string, object?>
             {
-                ["IndoorSite"] = matched.StationName,
-                ["IndoorAQI"]  = indoorAqi.HasValue ? Math.Round(indoorAqi.Value, 0) : (object?)"N/A",
-                ["Error"]      = "No ambient stations returned from the ArcGIS service."
+                ["IndoorSite"]     = matched.StationName,
+                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
+                ["AmbientStation"] = "N/A",
+                ["AmbientAQI"]     = "N/A",
+                ["Distance_km"]    = "N/A",
+                ["Timestamp"]      = indoorLastUpdated ?? "N/A",
+                ["Error"]          = "No active ambient stations found in the database."
             }];
         }
 
-        // ── Step 6: Compute difference and assemble result row ──
-        double? diff = (indoorAqi.HasValue && bestAmbientAqi.HasValue)
-            ? Math.Round(Math.Abs(indoorAqi.Value - bestAmbientAqi.Value), 1) : null;
-        string higherOrLower = (indoorAqi.HasValue && bestAmbientAqi.HasValue)
-            ? (indoorAqi.Value > bestAmbientAqi.Value ? "higher" : indoorAqi.Value < bestAmbientAqi.Value ? "lower" : "the same")
+        // ── Step 4: Compute difference and assemble result row ──
+        double? diff = (indoorAqi.HasValue && ambientAqi.HasValue)
+            ? Math.Round(Math.Abs(indoorAqi.Value - ambientAqi.Value), 0) : null;
+        string higherOrLower = (indoorAqi.HasValue && ambientAqi.HasValue)
+            ? (indoorAqi.Value > ambientAqi.Value ? "higher"
+               : indoorAqi.Value < ambientAqi.Value ? "lower"
+               : "the same")
             : "unknown";
 
         return [new Dictionary<string, object?>
         {
-            ["IndoorSite"]      = matched.StationName,
-            ["IndoorAQI"]       = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
-            ["AmbientStation"]  = bestAmbientName,
-            ["AmbientAQI"]      = bestAmbientAqi.HasValue ? (object?)Math.Round(bestAmbientAqi.Value, 0) : "N/A",
-            ["Difference"]      = diff.HasValue ? (object?)diff.Value : "N/A",
-            ["HigherOrLower"]   = higherOrLower,
-            ["Distance_km"]     = bestDist.HasValue && bestDist < double.MaxValue
-                                    ? (object?)Math.Round(bestDist.Value, 1) : "N/A",
-            ["Timestamp"]       = indoorLastUpdated ?? bestAmbientTimestamp ?? "N/A",
+            ["IndoorSite"]     = matched.StationName,
+            ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
+            ["AmbientStation"] = ambientStationName,
+            ["AmbientAQI"]     = ambientAqi.HasValue ? (object?)ambientAqi.Value : "N/A",
+            ["Difference"]     = diff.HasValue ? (object?)diff.Value : "N/A",
+            ["HigherOrLower"]  = higherOrLower,
+            ["Distance_km"]    = distanceKm.HasValue ? (object?)distanceKm.Value : "N/A",
+            ["Timestamp"]      = indoorLastUpdated ?? ambientTimestamp ?? "N/A",
         }];
     }
 

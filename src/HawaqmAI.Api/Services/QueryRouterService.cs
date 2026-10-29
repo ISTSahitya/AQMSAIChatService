@@ -775,10 +775,43 @@ public sealed class QueryRouterService : IQueryRouterService
         if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion && !hasSpecificDate)
             maxScore = Math.Max(maxScore, 0.96);
 
+        // Detect DSR / AQI-exceedance questions — these must route to the DSR/exceedance templates,
+        // NOT to schools_latest_pollutant, even though they mention "schools" generically.
+        var dsrExceedanceSignals = new[] {
+            "data success rate", "dsr", "repeatedly exceeded", "repeated exceedance",
+            "exceeded aqi", "exceed aqi", "exceeded threshold", "exceed threshold",
+            "exceedance with", "exceedance and", "active days", "device active",
+            "below 75%", "above 75%", "below 80%", "above 80%", "at least 75%",
+            "at least 80%", "less than 75%", "less than 80%", "success rate below",
+            "success rate above", "success rate of at least", "data availability below",
+            "data availability above", "dsr below", "dsr above"
+        };
+        bool isDsrOrExceedanceQuestion = dsrExceedanceSignals.Any(s => lowerQuestion.Contains(s));
+
         // Boost schools_latest_pollutant for generic school questions with a pollutant signal.
         // "Abu Dhabi schools CO2", "schools in Al Ain with AQI", "all schools PM2.5" etc.
-        if (template.Id == "schools_latest_pollutant" && isGenericSchoolQuestion)
+        // But NOT when the question is about DSR or AQI exceedance — those route to dedicated templates.
+        // AQI category questions (good/moderate/unhealthy) are handled below by site_aqi_by_category boost.
+        var aqiQualitySignals = new[] {
+            "good", "moderate", "unhealthy", "hazardous", "very unhealthy", "critical",
+            "hotspot", "safe", "unsafe", "bad air", "poor air", "healthy air",
+            "sensitive groups", "vulnerable", "harmful", "dangerous"
+        };
+        bool hasAqiQualitySignal = aqiQualitySignals.Any(k => lowerQuestion.Contains(k));
+        if (template.Id == "schools_latest_pollutant" && isGenericSchoolQuestion && !isDsrOrExceedanceQuestion && !hasAqiQualitySignal)
             maxScore = Math.Max(maxScore, 0.96);
+        // Penalise schools_latest_pollutant for DSR/exceedance questions
+        if (template.Id == "schools_latest_pollutant" && isDsrOrExceedanceQuestion)
+            maxScore *= 0.05;
+
+        // Boost DSR/exceedance templates when the question contains DSR or exceedance signals
+        if ((template.Id == "sites_repeated_aqi_exceedance_with_dsr"
+             || template.Id == "sites_dsr_below_threshold"
+             || template.Id == "sites_dsr_above_threshold")
+            && isDsrOrExceedanceQuestion)
+        {
+            maxScore = Math.Max(maxScore, 0.97);
+        }
         // Penalise site_aqi_single for generic school questions — must not ask for a site name
         if (template.Id == "site_aqi_single" && isGenericSchoolQuestion)
             maxScore *= 0.1;
@@ -1346,7 +1379,8 @@ public sealed class QueryRouterService : IQueryRouterService
             lowerQuestion.Contains("school") || lowerQuestion.Contains("schools") ||
             lowerQuestion.Contains("govt school") || lowerQuestion.Contains("government school") ||
             lowerQuestion.Contains("private school") || lowerQuestion.Contains("public school") ||
-            lowerQuestion.Contains("moe school");
+            lowerQuestion.Contains("moe school") || lowerQuestion.Contains("moe schools") ||
+            lowerQuestion.Contains(" moe ") || lowerQuestion.StartsWith("moe ") || lowerQuestion.EndsWith(" moe");
 
         // Penalise schools_latest_pollutant when the question has a numeric threshold
         // AND there is NO school context — e.g. "how many sites have AQI above 30" → site_aqi_by_category.
@@ -1416,9 +1450,11 @@ public sealed class QueryRouterService : IQueryRouterService
 
         // Boost site_aqi_by_category for ANY question that mentions an AQI category/level
         // regardless of whether a region, sector, or school is specified.
+        // Use 1.15 to exceed HighConfidenceThreshold (1.10) and bypass the LLM entirely —
+        // the LLM has been observed picking schools_latest_pollutant for school+category questions.
         if (template.Id == "site_aqi_by_category" && isAqiCategoryQuestion && !isPieChartQuestion)
         {
-            maxScore = Math.Max(maxScore, 0.96);
+            maxScore = Math.Max(maxScore, 1.15);
         }
 
         // Penalise sites_by_filter / list_stations / sites_by_filter when the question
@@ -1429,14 +1465,32 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
+        // Detect comparative category phrases: "worse than Moderate", "better than Good", "beyond Unhealthy" etc.
+        // These are AQI range queries (not category queries) — must route to site_aqi_by_category with minValue/maxValue.
+        var comparativeCategoryPhrases = new[] {
+            "worse than good", "worse than moderate", "worse than unhealthy", "worse than very unhealthy", "worse than hazardous",
+            "better than moderate", "better than unhealthy", "better than very unhealthy", "better than hazardous",
+            "beyond good", "beyond moderate", "beyond unhealthy",
+            "above good", "above moderate", "above unhealthy",
+            "more than good", "more than moderate", "more than unhealthy",
+            "not good", "not moderate", "no longer good",
+            "outside good", "outside moderate",
+            "air quality is worse", "air quality worse than", "quality worse than"
+        };
+        bool hasComparativeCategoryPhrase = comparativeCategoryPhrases.Any(p => lowerQuestion.Contains(p));
+
         // Boost site_aqi_by_category for AQI numeric range queries (more than X / less than X)
         // possibly filtered by region — "AQI more than 30 in Al Ain", "sites with AQI below 100 in Abu Dhabi"
         var aqiRangeWords = new[] { "more than", "greater than", "above", "over", "less than", "below", "under", "between" };
         var hasAqiRange = lowerQuestion.Contains("aqi") && aqiRangeWords.Any(k => lowerQuestion.Contains(k));
-        if (template.Id == "site_aqi_by_category" && hasAqiRange)
+        if (template.Id == "site_aqi_by_category" && (hasAqiRange || hasComparativeCategoryPhrase))
         {
-            maxScore = Math.Max(maxScore, 0.96);
+            // Use 1.15 to bypass LLM for comparative phrases too — same as category questions
+            maxScore = Math.Max(maxScore, hasComparativeCategoryPhrase ? 1.15 : 0.96);
         }
+        // Penalise schools_latest_pollutant for comparative category phrases
+        if (template.Id == "schools_latest_pollutant" && hasComparativeCategoryPhrase)
+            maxScore *= 0.05;
         // Penalise region_aqi_geographical for AQI range queries — that template gives regional averages,
         // not a filtered list of sites. site_aqi_by_category returns per-site results with range filter.
         if (template.Id == "region_aqi_geographical" && hasAqiRange)

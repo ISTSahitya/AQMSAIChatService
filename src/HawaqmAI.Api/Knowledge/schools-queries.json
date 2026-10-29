@@ -76,7 +76,7 @@
     },
     {
       "id": "schools_latest_pollutant",
-      "description": "Get the latest reading of a specific pollutant (e.g. CO2, PM2.5, AQI) across ALL school sites (Public & Govt-School sector), optionally filtered by region. Use when user asks about schools generically (e.g. 'all schools', 'Abu Dhabi region schools', 'schools in Al Ain') WITH a pollutant or air quality context — even if phrased as 'where CO2 is the main pollutant', 'table view for schools', 'show schools with CO2'. NEVER use when a specific school name is mentioned — use site_aqi_single instead.",
+      "description": "Get the latest reading of a specific pollutant (e.g. CO2, PM2.5, AQI) across ALL school sites (Public & Govt-School sector), optionally filtered by region. Use when user asks about schools generically (e.g. 'all schools', 'Abu Dhabi region schools', 'schools in Al Ain') WITH a pollutant or air quality context — even if phrased as 'where CO2 is the main pollutant', 'table view for schools', 'show schools with CO2'. NEVER use when a specific school name is mentioned — use site_aqi_single instead. Default (no liveStatus) = Active/online devices only. If user says 'all' set liveStatus=All. If user says 'offline' or 'inactive' set liveStatus=Inactive.",
       "patterns": [
         "latest aqi for schools",
         "school aqi",
@@ -174,7 +174,20 @@
         "schools aqi higher than",
         "schools aqi above",
         "schools aqi more than",
-        "schools aqi greater than"
+        "schools aqi greater than",
+        "moe schools aqi",
+        "moe schools co2",
+        "moe schools pm2.5",
+        "moe schools air quality",
+        "air quality at moe schools",
+        "latest aqi for moe schools",
+        "moe school aqi",
+        "moe schools in al ain aqi",
+        "moe schools in abu dhabi aqi",
+        "moe schools in al dhafra aqi",
+        "al ain moe schools aqi",
+        "abu dhabi moe schools aqi",
+        "moe school pollutant levels"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
@@ -229,6 +242,22 @@
           "type": "int",
           "source": "question",
           "optional": true
+        },
+        {
+          "name": "sortOrder",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": ["desc", "asc"],
+          "description": "desc = highest first (top N highest), asc = lowest first (bottom N / lowest N). Omit when not ranking."
+        },
+        {
+          "name": "liveStatus",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": ["Active", "Inactive", "All"],
+          "description": "Omit or 'Active' = online devices only (default). 'All' = include both Active and Inactive sites. 'Inactive' = offline/inactive sites only."
         }
       ],
       "responseType": "table",
@@ -239,6 +268,58 @@
         "path": "/api/AirQuality/GetAllSiteData",
         "responseShape": "schools_pollutant"
       }
+    },
+    {
+      "id": "sites_repeated_aqi_exceedance_with_dsr",
+      "description": "List schools or sites that repeatedly exceeded a given AQI threshold AND maintained a Data Success Rate at or above a minimum. Use when user asks which schools/sites exceeded AQI N but still had DSR of at least X%, or any variation combining AQI exceedance history with data success/availability rate.",
+      "patterns": [
+        "schools that repeatedly exceeded aqi",
+        "schools repeatedly exceeded aqi",
+        "show me the schools that repeatedly exceeded aqi",
+        "schools that exceeded aqi 100 but still had data success rate",
+        "exceeded aqi 100 but still had data success rate of at least 75",
+        "exceeded aqi but still had data success rate",
+        "repeatedly exceeded aqi 100 but still had data success rate",
+        "schools repeatedly exceeded aqi 100 data success rate",
+        "schools exceeded aqi data success rate",
+        "schools exceeded aqi and data success rate",
+        "repeatedly exceeded aqi with data success rate",
+        "repeatedly exceeded aqi with at least",
+        "repeatedly exceeded aqi but had",
+        "schools exceeded aqi 100 with good dsr",
+        "schools with repeated aqi exceedance and dsr",
+        "schools aqi exceedance data success rate",
+        "exceeded aqi threshold with data success rate",
+        "sites exceeding aqi with good data success rate",
+        "sites exceeding aqi with dsr",
+        "exceeded aqi threshold with acceptable dsr",
+        "aqi exceedance with data success rate",
+        "aqi exceeded with data success rate",
+        "schools that crossed aqi 100 with dsr",
+        "schools crossed aqi threshold data success rate"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        {
+          "name": "aqiThreshold",
+          "type": "float",
+          "source": "question",
+          "optional": true,
+          "default": 100
+        },
+        {
+          "name": "dsrThreshold",
+          "type": "float",
+          "source": "question",
+          "optional": true,
+          "default": 75
+        }
+      ],
+      "responseType": "table",
+      "tableUsed": "SiteParameterAverages + DeviceCompliance + DMN_Stations",
+      "skipSiteFilter": false
     },
     {
       "id": "sector_latest_pollutant",

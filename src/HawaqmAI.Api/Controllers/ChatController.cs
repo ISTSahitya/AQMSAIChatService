@@ -521,7 +521,21 @@ public sealed class ChatController : ControllerBase
             "reason for the spike",
             "reason for the aqi",
             "nearest ambient station and indoor site have different update",
-            "if the nearest ambient station"
+            "if the nearest ambient station",
+            // General AQI information/level questions
+            "what is aqi", "tell me about aqi", "about aqi", "aqi information",
+            "aqi overview", "aqi basics", "aqi guide", "aqi intro",
+            "what is the aqi", "what does aqi stand for", "aqi stands for",
+            "what does an aqi", "what does an aqi value", "what does an aqi of",
+            "what does aqi of", "aqi of 50", "aqi of 100", "aqi of 150", "aqi of 200", "aqi of 300",
+            "what is a good aqi level", "what is a bad aqi level", "what is a safe aqi level",
+            "what aqi level is safe", "what aqi level is good", "what aqi level is bad",
+            "what aqi level is dangerous", "what aqi level is unhealthy",
+            "aqi level meaning", "aqi level information", "aqi levels explained",
+            "aqi categories explained", "aqi category meaning", "aqi category information",
+            "explain aqi levels", "explain aqi categories", "explain the aqi levels",
+            "tell me about aqi levels", "tell me about aqi categories",
+            "what level of aqi", "which level of aqi", "what aqi level"
         };
         // Safety/health questions about a NAMED site must NOT go to FAQ — they need live data.
         // Detect if the question is a site-specific safety/quality question by looking for:
@@ -575,8 +589,25 @@ public sealed class ChatController : ControllerBase
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         // AQI definition questions are NEVER site safety questions — guard before safetyWords check.
         bool isDefinitelyAqiDefinition = aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k));
+        // Multi-site list questions ("which sites are outside the safe range") are NOT single-site safety questions.
+        bool isMultiSiteListQuestion = lowerMsg.Contains("which sites") || lowerMsg.Contains("what sites")
+            || lowerMsg.Contains("all sites") || lowerMsg.Contains("sites outside")
+            || lowerMsg.Contains("sites currently") || lowerMsg.Contains("sites are outside")
+            || lowerMsg.Contains("sites exceed") || lowerMsg.Contains("sites with")
+            || lowerMsg.Contains("list of sites") || lowerMsg.Contains("show sites")
+            // Numeric AQI threshold questions about multiple sites/schools
+            || (lowerMsg.Contains("aqi") && (lowerMsg.Contains("above") || lowerMsg.Contains("below")
+                || lowerMsg.Contains("more than") || lowerMsg.Contains("less than")
+                || lowerMsg.Contains("greater than") || lowerMsg.Contains("higher than")
+                || lowerMsg.Contains("lower than") || lowerMsg.Contains("between")))
+            || lowerMsg.Contains("how many schools") || lowerMsg.Contains("how many sites")
+            // Relational AQI category phrases
+            || (lowerMsg.Contains("worse than") && (lowerMsg.Contains("good") || lowerMsg.Contains("moderate") || lowerMsg.Contains("unhealthy")))
+            || (lowerMsg.Contains("better than") && (lowerMsg.Contains("moderate") || lowerMsg.Contains("unhealthy") || lowerMsg.Contains("hazardous")))
+            || lowerMsg.Contains("schools where air quality") || lowerMsg.Contains("sites where air quality");
         bool isSiteSafetyQuestion = !isDefinitelyAqiDefinition
             && !isRegionQuestion
+            && !isMultiSiteListQuestion
             && safetyWords.Any(s => lowerMsg.Contains(s))
             && (siteTypeWords.Any(s => lowerMsg.Contains(s)) || hasAtSitePattern);
 
@@ -593,7 +624,21 @@ public sealed class ChatController : ControllerBase
             "good air quality sites", "moderate air quality sites", "hazardous air quality sites",
             "sites in the good", "sites in the moderate", "sites in the unhealthy",
             "sites in the hazardous", "critical sites", "hotspot sites",
-            "schools with good", "schools with moderate", "schools with unhealthy", "schools where aqi"
+            "schools with good", "schools with moderate", "schools with unhealthy", "schools where aqi",
+            // Numeric AQI threshold indicators — "schools with AQI above 100", "sites with AQI below 50"
+            "sites with aqi above", "sites with aqi below", "sites with aqi more than", "sites with aqi less than",
+            "schools with aqi above", "schools with aqi below", "schools with aqi more than",
+            "how many schools have aqi", "how many sites have aqi", "how many schools with aqi",
+            "how many sites with aqi", "sites where aqi is above", "sites where aqi is below",
+            "schools where aqi is above", "schools where aqi is below",
+            "aqi above", "aqi below", "aqi more than", "aqi less than", "aqi greater than",
+            "aqi higher than", "aqi lower than", "aqi between", "aqi over", "aqi under",
+            // Relational / comparative AQI category phrases
+            "worse than moderate", "worse than good", "worse than unhealthy", "worse than hazardous",
+            "better than moderate", "better than unhealthy", "better than hazardous",
+            "air quality is worse", "air quality worse than", "worse air quality",
+            "schools where air quality", "sites where air quality", "all schools where",
+            "not good", "not in good", "not safe", "poor air quality"
         };
         bool isSiteListAqiQuestion = siteListIndicators.Any(k => lowerMsg.Contains(k));
         if (!isSiteSafetyQuestion && !isSiteListAqiQuestion && aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k)))
@@ -761,14 +806,32 @@ public sealed class ChatController : ControllerBase
         // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
         var deviceCountKeywords = new[] { "devices per site", "device per site", "devices at each site", "number of devices", "device count", "total devices", "devices in the application", "devices in the system" };
         bool isDeviceCountQuestion = deviceCountKeywords.Any(k => lowerMsg.Contains(k));
+        // Detect a specific date reference (YYYY-MM-DD, D/M/YYYY, "on March 20", "on the 15th")
+        bool msgHasSpecificDateRef =
+            System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
+                @"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}") ||
+            System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
+                @"\bon\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}|\bon\s+\d{1,2}(st|nd|rd|th)?\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        // Detect a month-only reference (with or without year): "in March", "for January 2025",
+        // "last month", "this month", "March 2025", "in September"
+        bool msgHasMonthRef =
+            System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
+                @"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+            lowerMsg.Contains("last month") || lowerMsg.Contains("previous month") ||
+            lowerMsg.Contains("this month") || lowerMsg.Contains("current month");
+        // A month ref paired with a 4-digit year is still a month question, NOT a year question.
+        // msgHasYearRef is defined later; month takes priority when both match.
+
         // Exclude past-date site questions — "AQI at Al Reyada School yesterday" must route to site_daily_averages, NOT site_aqi_single
         bool msgHasPastDate =
             lowerMsg.Contains("yesterday") || lowerMsg.Contains("last monday") || lowerMsg.Contains("last tuesday") ||
             lowerMsg.Contains("last wednesday") || lowerMsg.Contains("last thursday") || lowerMsg.Contains("last friday") ||
             lowerMsg.Contains("last saturday") || lowerMsg.Contains("last sunday") ||
             lowerMsg.Contains("previous day") || lowerMsg.Contains("day before") || lowerMsg.Contains("last night") ||
-            System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
-                @"(on\s+20\d{2}|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|on\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))");
+            msgHasSpecificDateRef;
         // Exclude sector-filter questions — "all Abu Dhabi sites under Residential sector with their latest CO2"
         // is a sector-wide listing, NOT a single-site parameter lookup. These must route to sector_latest_pollutant.
         var sectorFilterPhrases = new[] {
@@ -790,10 +853,138 @@ public sealed class ChatController : ControllerBase
         bool isGenericSchoolMsg = genericSchoolPhrases.Any(p => lowerMsg.Contains(p))
             || (lowerMsg.Contains("schools") && (lowerMsg.Contains("all") || lowerMsg.Contains("table") || lowerMsg.Contains("list") || lowerMsg.Contains("show")));
 
+        // ── 2d-pre0. Hard pre-check: numeric AQI threshold query → force site_aqi_by_category ──
+        // Fires for questions like:
+        //   "how many schools have AQI above 100 in Abu Dhabi?"
+        //   "sites with AQI below 50 in Al Ain"
+        //   "show me schools where AQI is more than 150 in the Commercial sector"
+        //   "how many sites have AQI between 100 and 200 in Abu Dhabi?"
+        // Must run BEFORE 2d-pre (schools_latest_pollutant) so "schools + AQI above N" doesn't
+        // get mis-routed to schools_latest_pollutant which doesn't do numeric AQI filtering.
+        var aqiThresholdRegex = new System.Text.RegularExpressions.Regex(
+            @"aqi\s*(?:above|over|more\s+than|greater\s+than|higher\s+than|below|under|less\s+than|lower\s+than|equal\s+to|equals?|=|between)\s*\d+",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var numericAqiThreshold = aqiThresholdRegex.IsMatch(lowerMsg)
+            || (System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\b(above|below|more than|less than|greater than|higher than|lower than|over|under)\s+\d+")
+                && lowerMsg.Contains("aqi"));
+        bool isBetweenQuery = System.Text.RegularExpressions.Regex.IsMatch(lowerMsg,
+            @"\baqi\s+between\s+\d+\s+and\s+\d+|\bbetween\s+\d+\s+and\s+\d+.*aqi|aqi.*between\s+\d+\s+and\s+\d+",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        if (numericAqiThreshold || isBetweenQuery)
+        {
+            _log.Debug("ChatController: numeric-AQI-threshold pre-check fired → forcing site_aqi_by_category");
+            var aqiThreshTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_aqi_by_category");
+            if (aqiThreshTemplate is not null && aqiThreshTemplate.ApiCall is not null)
+            {
+                var aqiThreshBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var aqiThreshFill = await _azureAI.FillParametersAsync(enrichedMessage, aqiThreshTemplate, history, scope, ct);
+
+                // --- Extract minValue / maxValue from message if LLM didn't ---
+                if (!aqiThreshFill.Parameters.ContainsKey("minValue") && !aqiThreshFill.Parameters.ContainsKey("maxValue"))
+                {
+                    // "between N and M" → minValue=N, maxValue=M
+                    var betweenMatch = System.Text.RegularExpressions.Regex.Match(lowerMsg,
+                        @"between\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)");
+                    if (betweenMatch.Success)
+                    {
+                        aqiThreshFill.Parameters["minValue"] = betweenMatch.Groups[1].Value;
+                        aqiThreshFill.Parameters["maxValue"] = betweenMatch.Groups[2].Value;
+                    }
+                    else
+                    {
+                        // "above/over/more than/greater than/higher than N" → minValue=N
+                        var aboveMatch = System.Text.RegularExpressions.Regex.Match(lowerMsg,
+                            @"(?:above|over|more\s+than|greater\s+than|higher\s+than)\s+(\d+(?:\.\d+)?)");
+                        if (aboveMatch.Success)
+                            aqiThreshFill.Parameters["minValue"] = aboveMatch.Groups[1].Value;
+
+                        // "below/under/less than/lower than N" → maxValue=N
+                        var belowMatch = System.Text.RegularExpressions.Regex.Match(lowerMsg,
+                            @"(?:below|under|less\s+than|lower\s+than)\s+(\d+(?:\.\d+)?)");
+                        if (belowMatch.Success)
+                            aqiThreshFill.Parameters["maxValue"] = belowMatch.Groups[1].Value;
+
+                        // "equal to N" / "equals N" → set both min and max to N-1 and N for exact match
+                        var equalMatch = System.Text.RegularExpressions.Regex.Match(lowerMsg,
+                            @"(?:equal\s+to|equals?|=)\s+(\d+(?:\.\d+)?)");
+                        if (equalMatch.Success && !aboveMatch.Success && !belowMatch.Success)
+                        {
+                            var eqVal = equalMatch.Groups[1].Value;
+                            aqiThreshFill.Parameters["minValue"] = (double.Parse(eqVal) - 1).ToString();
+                            aqiThreshFill.Parameters["maxValue"] = eqVal;
+                        }
+                    }
+                }
+
+                // --- Force sector from keyword if LLM missed it ---
+                if (!aqiThreshFill.Parameters.ContainsKey("sectorName") || string.IsNullOrWhiteSpace(aqiThreshFill.Parameters.GetValueOrDefault("sectorName")))
+                {
+                    if (lowerMsg.Contains("school") || lowerMsg.Contains("moe") || lowerMsg.Contains("gov"))
+                        aqiThreshFill.Parameters["sectorName"] = "Public & Govt-School";
+                    else if (lowerMsg.Contains("commercial"))
+                        aqiThreshFill.Parameters["sectorName"] = "Commercial";
+                    else if (lowerMsg.Contains("residential"))
+                        aqiThreshFill.Parameters["sectorName"] = "Residential";
+                }
+
+                // --- Force regionName from keywords if LLM missed it ---
+                if (!aqiThreshFill.Parameters.ContainsKey("regionName") || string.IsNullOrWhiteSpace(aqiThreshFill.Parameters.GetValueOrDefault("regionName")))
+                {
+                    if (lowerMsg.Contains("abu dhabi"))
+                        aqiThreshFill.Parameters["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al ain"))
+                        aqiThreshFill.Parameters["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                        aqiThreshFill.Parameters["regionName"] = "Al Dhafra";
+                }
+
+                _log.Information("ChatController: numeric-AQI-threshold params — min={Min} max={Max} sector={Sec} region={Reg}",
+                    aqiThreshFill.Parameters.GetValueOrDefault("minValue") ?? "(none)",
+                    aqiThreshFill.Parameters.GetValueOrDefault("maxValue") ?? "(none)",
+                    aqiThreshFill.Parameters.GetValueOrDefault("sectorName") ?? "(none)",
+                    aqiThreshFill.Parameters.GetValueOrDefault("regionName") ?? "(none)");
+
+                var aqiThreshResult = await _externalApi.CallAsync(aqiThreshTemplate.ApiCall, aqiThreshFill.Parameters, scope, aqiThreshBearer, user, aqiThreshTemplate.Id, ct);
+                if (aqiThreshResult.Success)
+                {
+                    var aqiThreshSummary = await _azureAI.SummarizeResultsAsync(
+                        request.Message, aqiThreshTemplate, aqiThreshResult.Rows, scope, ct);
+                    var aqiThreshMsgId = Guid.NewGuid();
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: aqiThreshMsgId,
+                        assistantContent: aqiThreshSummary,
+                        sql: null,
+                        responseType: aqiThreshTemplate.ResponseType,
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: aqiThreshTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: aqiThreshFill.ModelUsed,
+                        executionTimeMs: (int)aqiThreshResult.ExecutionTimeMs,
+                        tokenCount: aqiThreshFill.TokensUsed,
+                        ct: ct);
+                    return Ok(_formatter.Format(session.SessionId, aqiThreshMsgId, aqiThreshTemplate,
+                        aqiThreshSummary, aqiThreshResult.Rows, aqiThreshResult.Rows.Count,
+                        (int)aqiThreshResult.ExecutionTimeMs, scope, aqiThreshFill.ModelUsed, aqiThreshFill.TokensUsed));
+                }
+                _log.Warning("ChatController: numeric-AQI-threshold pre-check API failed, falling through to routing");
+            }
+        }
+
         // ── 2d-pre. Hard pre-check: generic schools + pollutant → force schools_latest_pollutant ──
         // "Show me a table of all Abu Dhabi schools with their latest CO2 reading" must never
         // resolve to site_aqi_single. Force schools_latest_pollutant directly.
-        if (isGenericSchoolMsg && hasParameterKeyword && !isChartDistribution)
+        // EXCEPTION: if the question asks about an AQI quality level (Moderate, Good, Unhealthy, etc.)
+        // it must route to site_aqi_by_category — schools_latest_pollutant cannot filter by category.
+        var aqiQualityCategoryWords = new[] {
+            "moderate", "good", "unhealthy", "hazardous", "very unhealthy",
+            "sensitive groups", "critical", "hotspot"
+        };
+        bool hasAqiQualityCategoryWord = aqiQualityCategoryWords.Any(k => lowerMsg.Contains(k));
+        if (isGenericSchoolMsg && hasParameterKeyword && !isChartDistribution && !hasAqiQualityCategoryWord)
         {
             _log.Debug("ChatController: generic-school-pollutant pre-check fired → forcing schools_latest_pollutant");
             var schoolPollTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "schools_latest_pollutant");
@@ -840,7 +1031,24 @@ public sealed class ChatController : ControllerBase
             // Fall through to normal routing if template missing or API failed
         }
 
-        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion && !isChartDistribution && !isDeviceCountQuestion && !msgHasPastDate && !isSectorFilterQuestion && !isGenericSchoolMsg;
+        bool isAmbientAllStationsQuery = (lowerMsg.Contains("list of outdoor") || lowerMsg.Contains("list outdoor")
+            || lowerMsg.Contains("list ambient") || lowerMsg.Contains("list of ambient")
+            || lowerMsg.Contains("all outdoor stations") || lowerMsg.Contains("all ambient stations")
+            || lowerMsg.Contains("show outdoor stations") || lowerMsg.Contains("show ambient stations")
+            || lowerMsg.Contains("outdoor stations list") || lowerMsg.Contains("ambient stations list")
+            || lowerMsg.Contains("show me outdoor stations") || lowerMsg.Contains("show me ambient stations")
+            || lowerMsg.Contains("what are the outdoor stations") || lowerMsg.Contains("what are the ambient stations")
+            || lowerMsg.Contains("which outdoor stations"));
+
+        bool isAmbientStationQuery = !isAmbientAllStationsQuery
+            && (lowerMsg.Contains("outdoor station") || lowerMsg.Contains("ambient station"))
+            && hasAtSiteRef;
+
+        bool msgHasYearRef = System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\bin\s+(19|20)\d{2}\b|\bfor\s+(19|20)\d{2}\b|\b(19|20)\d{2}\b")
+            && !System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}")
+            && !msgHasMonthRef;  // "March 2025" is a month question, not a year question
+
+        bool isParameterAtSiteQuestion = hasParameterKeyword && hasAtSiteRef && !isSiteSafetyQuestion && !isChartDistribution && !isDeviceCountQuestion && !msgHasPastDate && !isSectorFilterQuestion && !isGenericSchoolMsg && !msgHasYearRef && !msgHasMonthRef;
 
         if (isParameterAtSiteQuestion)
         {
@@ -1334,7 +1542,6 @@ public sealed class ChatController : ControllerBase
             "devices offline", "devices not sending", "devices not reporting",
             "which devices are offline", "which device is offline",
             "how many devices are offline", "list offline", "show offline",
-            "active or inactive", "active and inactive",
             // "connected" / "not connected" — connectivity language maps to online/offline status
             "not connected", "disconnected", "devices that are not connected",
             "which devices are not connected", "are there any devices that are not connected",
@@ -1342,7 +1549,12 @@ public sealed class ChatController : ControllerBase
             "devices not transmitting", "which devices are inactive", "devices that are inactive",
             "devices currently inactive", "show inactive", "list inactive"
         };
+        // A specific device code (BA 0001, SEI100M 0009) means the user is asking about ONE device,
+        // not requesting a list of all offline devices — exclude those from the offline pre-check.
+        bool msgHasSpecificDeviceCode = System.Text.RegularExpressions.Regex.IsMatch(
+            lowerMsg, @"(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})");
         bool isOfflineDeviceQuestion = offlineKeywords.Any(k => lowerMsg.Contains(k))
+            && !msgHasSpecificDeviceCode   // single-device status queries must NOT be treated as list queries
             && !lowerMsg.Contains("should be checked first")   // FAQ advisory → already handled above
             && !lowerMsg.Contains("when is a device considered");  // FAQ definition → already handled above
 
@@ -1482,7 +1694,8 @@ public sealed class ChatController : ControllerBase
         var devFilterSectorPhrases = new[] {
             "commercial sector", "residential sector", "school sector", "industrial sector", "public sector",
             "in commercial", "in residential", "under commercial", "under residential",
-            "under industrial", "in industrial"
+            "under industrial", "in industrial",
+            "school sites", "school site"
         };
         var devFilterDeviceWords  = new[] { "devices", "sensors", "device", "sensor" };
         bool devHasRegionWord  = devFilterRegionWords.Any(r => lowerMsg.Contains(r));
@@ -1501,6 +1714,18 @@ public sealed class ChatController : ControllerBase
             if (devFilterTemplate is not null)
             {
                 var devFilterFill = await _azureAI.FillParametersAsync(enrichedMessage, devFilterTemplate, history, scope, ct);
+
+                // Hard-override sectorName when message mentions school but LLM left it blank
+                if (string.IsNullOrWhiteSpace(devFilterFill.Parameters.GetValueOrDefault("sectorName")))
+                {
+                    if (lowerMsg.Contains("school"))
+                        devFilterFill.Parameters["sectorName"] = "Public & Govt-School";
+                    else if (lowerMsg.Contains("commercial"))
+                        devFilterFill.Parameters["sectorName"] = "Commercial";
+                    else if (lowerMsg.Contains("residential"))
+                        devFilterFill.Parameters["sectorName"] = "Residential";
+                }
+
                 var (devFilterSafeSql, devFilterSqlParams) =
                     _rbac.BuildSafeQuery(devFilterTemplate, devFilterFill.Parameters, user, scope);
                 var (devFilterSqlValid, devFilterSqlError) = SqlValidator.Validate(devFilterSafeSql);
@@ -1543,7 +1768,14 @@ public sealed class ChatController : ControllerBase
         // when the site name contains number-like tokens (e.g. "Cycle 2") that fool QuestionHasDeviceName.
         var siteDeviceListPhrases = new[] {
             "list devices for", "list devices at", "list devices in",
+            "list the devices installed at", "list the devices installed in",
+            "list the devices for", "list the devices at",
             "devices for", "devices at", "devices installed at", "devices under",
+            "which devices are installed at", "which devices are installed in",
+            "which devices are currently available at", "which devices are currently available in",
+            "which devices are available at", "which devices are available in",
+            "which devices are at", "which devices are in",
+            "currently available at", "currently available in",
             "sensors for", "sensors at", "sensors installed at",
             "how many devices does", "how many devices at", "how many devices are at",
             "how many devices in", "how many sensors does", "how many sensors at",
@@ -1625,9 +1857,9 @@ public sealed class ChatController : ControllerBase
             if (critTemplate is not null && critTemplate.ApiCall is not null)
             {
                 var critBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
-                // Force aqiCategory = "critical" so BuildAqiCategoryRows returns AQI > 100 sites
+                // Force aqiCategory = "Hazardous" so BuildAqiCategoryRows returns AQI > 300 sites only
                 var critFill = await _azureAI.FillParametersAsync(enrichedMessage, critTemplate, history, scope, ct);
-                critFill.Parameters["aqiCategory"] = "critical";
+                critFill.Parameters["aqiCategory"] = "Hazardous";
 
                 var critApiResult = await _externalApi.CallAsync(critTemplate.ApiCall, critFill.Parameters, scope, critBearerToken, user, critTemplate.Id, ct);
                 if (critApiResult.Success)
@@ -1685,9 +1917,147 @@ public sealed class ChatController : ControllerBase
             "total hazardous", "how many hazardous",
             // critical / hotspot (without needing a time phrase)
             "critical sites", "sites that are critical", "sites in critical", "sites under critical",
-            "total critical sites", "how many critical sites", "list critical sites", "show critical sites"
+            "total critical sites", "how many critical sites", "list critical sites", "show critical sites",
+            // relational / comparative AQI category phrases
+            "worse than moderate", "worse than good", "worse than unhealthy", "worse than hazardous",
+            "better than moderate", "better than unhealthy", "better than hazardous",
+            "not good sites", "not in good", "not in moderate", "not safe sites",
+            "air quality is worse", "schools where air quality", "sites where air quality",
+            "all schools where", "all sites where aqi",
+            // "schools where [the] [current] AQI is [category]" — region may appear anywhere
+            "schools where the current aqi is", "schools where aqi is", "schools where the aqi is",
+            "schools where current aqi is",
+            // "sites where [the] [current] AQI is [category]"
+            "sites where the current aqi is", "sites where the aqi is", "sites where current aqi is"
         };
         bool isAqiCategoryListQuestion = aqiCategoryTriggerPhrases.Any(p => lowerMsg.Contains(p));
+
+        // ── 2k-rel. Hard pre-check: relational AQI category phrases → site_aqi_by_category with numeric range ──
+        // Handles: "worse than Moderate", "better than Unhealthy", "not Good", "above Good",
+        //          "schools where air quality is worse than Moderate", "sites not in Good", etc.
+        // AQI ranges (from HAWAQM legend):
+        //   Good: 0–50   Moderate: 51–100   Unhealthy for Sensitive Groups: 101–150
+        //   Unhealthy: 151–200   Very Unhealthy: 201–300   Hazardous: 301–500
+        // Category upper bounds (used as minValue thresholds for "worse than X"):
+        static (string? min, string? max) ResolveRelationalAqiRange(string msg)
+        {
+            // "worse than X" / "above X category" / "beyond X" / "exceeds X" / "not X or better"
+            //  → minValue = upper bound of category X
+            // "better than X" / "below X category" / "not worse than X"
+            //  → maxValue = lower bound of category X (exclusive, i.e. upper of the category below)
+            var worsePhrases  = new[] { "worse than", "worst than", "beyond", "above the", "above category",
+                                        "not good enough", "exceed", "not in good", "not in moderate",
+                                        "not good", "not safe", "poor", "bad air", "unhealthy air",
+                                        "air quality is worse", "air quality worse", "worse air" };
+            var betterPhrases = new[] { "better than", "below the", "below category", "not worse than",
+                                        "not unhealthy", "not hazardous", "acceptable", "ok or better",
+                                        "good or better", "within safe", "safe range" };
+
+            bool isWorse  = worsePhrases.Any(p => msg.Contains(p));
+            bool isBetter = betterPhrases.Any(p => msg.Contains(p));
+
+            // Identify referenced category
+            string? cat = msg.Contains("hazardous") ? "Hazardous"
+                : msg.Contains("very unhealthy")     ? "Very Unhealthy"
+                : msg.Contains("unhealthy for sensitive") ? "Unhealthy for Sensitive Groups"
+                : msg.Contains("unhealthy")           ? "Unhealthy"
+                : msg.Contains("moderate")            ? "Moderate"
+                : msg.Contains("good")                ? "Good"
+                : null;
+
+            if (cat is null) return (null, null);
+
+            // Upper bound of each category (AQI ≤ this value = IN category)
+            var upperBound = cat switch
+            {
+                "Good"                           => 50,
+                "Moderate"                       => 100,
+                "Unhealthy for Sensitive Groups" => 150,
+                "Unhealthy"                      => 200,
+                "Very Unhealthy"                 => 300,
+                "Hazardous"                      => 500,
+                _                                => (int?)null
+            };
+            if (!upperBound.HasValue) return (null, null);
+
+            if (isWorse)
+                // Sites WORSE than X → AQI > upper bound of X
+                return (upperBound.Value.ToString(), null);   // minValue = upper bound
+            if (isBetter)
+                // Sites BETTER than X → AQI ≤ lower bound of X (= upper bound of previous category)
+                return (null, (upperBound.Value - (cat == "Hazardous" ? 200 : 50)).ToString()); // maxValue
+
+            return (null, null);
+        }
+
+        var relationalAqiPhrases = new[] {
+            "worse than", "worst than", "better than", "above the good", "above the moderate",
+            "above good", "above moderate", "above unhealthy", "above hazardous",
+            "not good", "not in good", "not safe", "poor air", "bad air quality",
+            "air quality is worse", "air quality worse", "worse air quality",
+            "not acceptable", "beyond moderate", "beyond good", "beyond unhealthy",
+            "all schools where air quality", "all sites where air quality",
+            "schools where air quality is", "sites where air quality is"
+        };
+        bool isRelationalAqiQuestion = relationalAqiPhrases.Any(p => lowerMsg.Contains(p))
+            && (lowerMsg.Contains("good") || lowerMsg.Contains("moderate") || lowerMsg.Contains("unhealthy")
+                || lowerMsg.Contains("hazardous") || lowerMsg.Contains("very unhealthy") || lowerMsg.Contains("safe"));
+
+        if (isRelationalAqiQuestion && !isCriticalNowQuestion)
+        {
+            _log.Debug("ChatController: relational-AQI pre-check fired for '{Msg}'", lowerMsg);
+            var relTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_aqi_by_category");
+            if (relTemplate is not null && relTemplate.ApiCall is not null)
+            {
+                var relBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var relFill = await _azureAI.FillParametersAsync(enrichedMessage, relTemplate, history, scope, ct);
+
+                // Override category param — numeric range handles the filter, not category string
+                var (relMin, relMax) = ResolveRelationalAqiRange(lowerMsg);
+                if (relMin is not null) { relFill.Parameters["minValue"] = relMin; relFill.Parameters.Remove("aqiCategory"); }
+                if (relMax is not null) { relFill.Parameters["maxValue"] = relMax; relFill.Parameters.Remove("aqiCategory"); }
+
+                // Inject sector / region from keywords if LLM missed them
+                if (!relFill.Parameters.ContainsKey("sectorName") || string.IsNullOrWhiteSpace(relFill.Parameters.GetValueOrDefault("sectorName")))
+                {
+                    if (lowerMsg.Contains("school") || lowerMsg.Contains("moe") || lowerMsg.Contains("gov"))
+                        relFill.Parameters["sectorName"] = "Public & Govt-School";
+                    else if (lowerMsg.Contains("commercial")) relFill.Parameters["sectorName"] = "Commercial";
+                    else if (lowerMsg.Contains("residential")) relFill.Parameters["sectorName"] = "Residential";
+                }
+                if (!relFill.Parameters.ContainsKey("regionName") || string.IsNullOrWhiteSpace(relFill.Parameters.GetValueOrDefault("regionName")))
+                {
+                    if (lowerMsg.Contains("abu dhabi"))      relFill.Parameters["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al ain"))    relFill.Parameters["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                        relFill.Parameters["regionName"] = "Al Dhafra";
+                }
+
+                _log.Information("ChatController: relational-AQI params — min={Min} max={Max} sector={Sec} region={Reg}",
+                    relFill.Parameters.GetValueOrDefault("minValue") ?? "(none)",
+                    relFill.Parameters.GetValueOrDefault("maxValue") ?? "(none)",
+                    relFill.Parameters.GetValueOrDefault("sectorName") ?? "(none)",
+                    relFill.Parameters.GetValueOrDefault("regionName") ?? "(none)");
+
+                var relResult = await _externalApi.CallAsync(relTemplate.ApiCall, relFill.Parameters, scope, relBearer, user, relTemplate.Id, ct);
+                if (relResult.Success)
+                {
+                    var relSummary = await _azureAI.SummarizeResultsAsync(request.Message, relTemplate, relResult.Rows, scope, ct);
+                    var relMsgId = Guid.NewGuid();
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId, userContent: request.Message,
+                        assistantMessageId: relMsgId, assistantContent: relSummary,
+                        sql: null, responseType: relTemplate.ResponseType,
+                        chartType: null, chartDataJson: null, dataSource: relTemplate.TableUsed,
+                        dateRange: null, modelUsed: relFill.ModelUsed,
+                        executionTimeMs: (int)relResult.ExecutionTimeMs, tokenCount: relFill.TokensUsed, ct: ct);
+                    return Ok(_formatter.Format(session.SessionId, relMsgId, relTemplate,
+                        relSummary, relResult.Rows, relResult.Rows.Count,
+                        (int)relResult.ExecutionTimeMs, scope, relFill.ModelUsed, relFill.TokensUsed));
+                }
+                _log.Warning("ChatController: relational-AQI pre-check API failed, falling through");
+            }
+        }
 
         if (isAqiCategoryListQuestion && !isCriticalNowQuestion)
         {
@@ -1698,11 +2068,54 @@ public sealed class ChatController : ControllerBase
                 var catBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
                 var catFill = await _azureAI.FillParametersAsync(enrichedMessage, catTemplate, history, scope, ct);
 
+                // Inject aqiCategory from keywords if LLM missed it
+                if (!catFill.Parameters.ContainsKey("aqiCategory") || string.IsNullOrWhiteSpace(catFill.Parameters.GetValueOrDefault("aqiCategory")))
+                {
+                    if (lowerMsg.Contains("hazardous") || lowerMsg.Contains("critical") || lowerMsg.Contains("hotspot"))
+                        catFill.Parameters["aqiCategory"] = "Hazardous";
+                    else if (lowerMsg.Contains("very unhealthy"))
+                        catFill.Parameters["aqiCategory"] = "Very Unhealthy";
+                    else if (lowerMsg.Contains("unhealthy for sensitive"))
+                        catFill.Parameters["aqiCategory"] = "Unhealthy for Sensitive Groups";
+                    else if (lowerMsg.Contains("unhealthy"))
+                        catFill.Parameters["aqiCategory"] = "Unhealthy";
+                    else if (lowerMsg.Contains("moderate"))
+                        catFill.Parameters["aqiCategory"] = "Moderate";
+                    else if (lowerMsg.Contains("good"))
+                        catFill.Parameters["aqiCategory"] = "Good";
+                }
+
+                // Inject sector / region from keywords if LLM missed them
+                if (!catFill.Parameters.ContainsKey("sectorName") || string.IsNullOrWhiteSpace(catFill.Parameters.GetValueOrDefault("sectorName")))
+                {
+                    if (lowerMsg.Contains("school") || lowerMsg.Contains("moe") || lowerMsg.Contains("gov"))
+                        catFill.Parameters["sectorName"] = "Public & Govt-School";
+                    else if (lowerMsg.Contains("commercial")) catFill.Parameters["sectorName"] = "Commercial";
+                    else if (lowerMsg.Contains("residential")) catFill.Parameters["sectorName"] = "Residential";
+                }
+                if (!catFill.Parameters.ContainsKey("regionName") || string.IsNullOrWhiteSpace(catFill.Parameters.GetValueOrDefault("regionName")))
+                {
+                    if (lowerMsg.Contains("abu dhabi"))      catFill.Parameters["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al ain"))    catFill.Parameters["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                        catFill.Parameters["regionName"] = "Al Dhafra";
+                }
+
                 var catApiResult = await _externalApi.CallAsync(catTemplate.ApiCall, catFill.Parameters, scope, catBearerToken, user, catTemplate.Id, ct);
                 if (catApiResult.Success)
                 {
-                    var catSummary = await _azureAI.SummarizeResultsAsync(
-                        request.Message, catTemplate, catApiResult.Rows, scope, ct);
+                    string catSummary;
+                    if (catApiResult.Rows.Count == 0)
+                    {
+                        catSummary = BuildNoDataMessage(catTemplate.Id, scope,
+                            catFill.Parameters.GetValueOrDefault("aqiCategory"),
+                            catFill.Parameters.GetValueOrDefault("sectorName"));
+                    }
+                    else
+                    {
+                        catSummary = await _azureAI.SummarizeResultsAsync(
+                            request.Message, catTemplate, catApiResult.Rows, scope, ct);
+                    }
                     var catMsgId = Guid.NewGuid();
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
@@ -1710,7 +2123,7 @@ public sealed class ChatController : ControllerBase
                         assistantMessageId: catMsgId,
                         assistantContent: catSummary,
                         sql: null,
-                        responseType: catTemplate.ResponseType,
+                        responseType: catApiResult.Rows.Count == 0 ? "text" : catTemplate.ResponseType,
                         chartType: null,
                         chartDataJson: null,
                         dataSource: catTemplate.TableUsed,
@@ -1746,6 +2159,17 @@ public sealed class ChatController : ControllerBase
         };
         bool isSchoolsAqiCategoryQuestion = schoolsAqiCategoryPhrases.Any(p => lowerMsg.Contains(p));
 
+        // Detect "count by AQI category [by region]" intent — transforms raw site rows into a grouped summary table.
+        // Fires for: "how many in each AQI category", "by region", "grouped by AQI", "breakdown by AQI"
+        var aqiCategoryGroupPhrases = new[] {
+            "in each aqi category", "in each aqi level", "by aqi category", "by aqi level",
+            "grouped by aqi", "per aqi category", "per aqi level", "aqi category breakdown",
+            "aqi level breakdown", "each aqi category", "each aqi level",
+            "how many in each", "by region", "by sector"
+        };
+        bool isAqiCategoryGroupByQuestion = isSchoolsAqiCategoryQuestion
+            || (lowerMsg.Contains("aqi") && aqiCategoryGroupPhrases.Any(p => lowerMsg.Contains(p)));
+
         if (isSchoolsAqiCategoryQuestion)
         {
             _log.Debug("ChatController: schools-by-AQI-category pre-check fired → forcing site_aqi_by_category");
@@ -1767,11 +2191,32 @@ public sealed class ChatController : ControllerBase
                         sectorCatFill.Parameters["sectorName"] = "Residential";
                 }
 
+                // Force regionName from keywords if LLM missed it
+                if (!sectorCatFill.Parameters.ContainsKey("regionName") || string.IsNullOrWhiteSpace(sectorCatFill.Parameters.GetValueOrDefault("regionName")))
+                {
+                    if (lowerMsg.Contains("abu dhabi"))
+                        sectorCatFill.Parameters["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al ain"))
+                        sectorCatFill.Parameters["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                        sectorCatFill.Parameters["regionName"] = "Al Dhafra";
+                }
+
                 var sectorCatResult = await _externalApi.CallAsync(sectorCatTemplate.ApiCall, sectorCatFill.Parameters, scope, sectorCatBearer, user, sectorCatTemplate.Id, ct);
                 if (sectorCatResult.Success)
                 {
-                    var sectorCatSummary = await _azureAI.SummarizeResultsAsync(
-                        request.Message, sectorCatTemplate, sectorCatResult.Rows, scope, ct);
+                    // Group raw site rows into {Region, AQICategory, Count} when user asked for a category breakdown
+                    bool wantsByRegion = lowerMsg.Contains("by region") || lowerMsg.Contains("per region")
+                        || lowerMsg.Contains("each region") || lowerMsg.Contains("region");
+                    var displayRows = isAqiCategoryGroupByQuestion
+                        ? GroupAqiCategoryRows(sectorCatResult.Rows, wantsByRegion)
+                        : sectorCatResult.Rows;
+
+                    var sectorCatSummary = displayRows.Count == 0
+                        ? BuildNoDataMessage(sectorCatTemplate.Id, scope,
+                            sectorCatFill.Parameters.GetValueOrDefault("aqiCategory"),
+                            sectorCatFill.Parameters.GetValueOrDefault("sectorName"))
+                        : BuildAqiCategorySummary(displayRows, request.Message, lowerMsg, isAqiCategoryGroupByQuestion);
                     var sectorCatMsgId = Guid.NewGuid();
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
@@ -1779,7 +2224,7 @@ public sealed class ChatController : ControllerBase
                         assistantMessageId: sectorCatMsgId,
                         assistantContent: sectorCatSummary,
                         sql: null,
-                        responseType: sectorCatTemplate.ResponseType,
+                        responseType: displayRows.Count == 0 ? "text" : sectorCatTemplate.ResponseType,
                         chartType: null,
                         chartDataJson: null,
                         dataSource: sectorCatTemplate.TableUsed,
@@ -1789,11 +2234,87 @@ public sealed class ChatController : ControllerBase
                         tokenCount: sectorCatFill.TokensUsed,
                         ct: ct);
                     return Ok(_formatter.Format(session.SessionId, sectorCatMsgId, sectorCatTemplate,
-                        sectorCatSummary, sectorCatResult.Rows, sectorCatResult.Rows.Count,
+                        sectorCatSummary, displayRows, displayRows.Count,
                         (int)sectorCatResult.ExecutionTimeMs, scope, sectorCatFill.ModelUsed, sectorCatFill.TokensUsed));
                 }
                 _log.Warning("ChatController: schools-by-AQI-category pre-check API failed, falling through to routing");
             }
+        }
+
+        // ── 2n. Hard pre-check: ambient station query → force ambient_station_readings ──
+        // Fires when isAmbientStationQuery=true (outdoor/ambient station + site reference).
+        // Extracts stationName via LLM, falls back to regex, and guards against missing stationName.
+        if (isAmbientStationQuery)
+        {
+            var ambTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "ambient_station_readings");
+            if (ambTemplate is not null && !string.IsNullOrWhiteSpace(ambTemplate.Sql))
+            {
+                var ambFill = await _azureAI.FillParametersAsync(request.Message, ambTemplate, history, scope, ct);
+
+                // If the LLM couldn't extract stationName, try regex fallback before calling SQL.
+                if (!ambFill.Parameters.ContainsKey("stationName") || string.IsNullOrWhiteSpace(ambFill.Parameters.GetValueOrDefault("stationName")))
+                {
+                    var ambStMatch = System.Text.RegularExpressions.Regex.Match(
+                        request.Message,
+                        @"\b(?:at|for|of|about|from)\s+(?:the\s+)?([A-Z][a-zA-Z]{1,}(?:\s+[A-Za-z]{2,}){0,5})(?:\s+(?:outdoor|ambient|station|readings?|pm|aqi|now|today|current)|\?|$)",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (ambStMatch.Success)
+                        ambFill.Parameters["stationName"] = ambStMatch.Groups[1].Value.Trim();
+                }
+
+                // Guard: if stationName is still missing, fall through to normal routing rather than crash.
+                if (!ambFill.Parameters.ContainsKey("stationName") || string.IsNullOrWhiteSpace(ambFill.Parameters.GetValueOrDefault("stationName")))
+                {
+                    _log.Warning("ChatController: ambient_station_readings skipped — stationName not extracted from '{Msg}'", request.Message);
+                    goto skipAmbientStationPreCheck;
+                }
+
+                var (ambSafeSql, ambSqlParams) = _rbac.BuildSafeQuery(ambTemplate, ambFill.Parameters, user, scope);
+                var (ambSqlValid, ambSqlError) = SqlValidator.Validate(ambSafeSql);
+                if (ambSqlValid)
+                {
+                    var ambResult = await _sqlExecutor.ExecuteAsync(ambSafeSql, ambSqlParams, ct);
+                    if (ambResult.Success)
+                    {
+                        var ambMsgId = Guid.NewGuid();
+                        var ambSummary = await _azureAI.SummarizeResultsAsync(request.Message, ambTemplate, ambResult.Rows, scope, ct);
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: ambMsgId,
+                            assistantContent: ambSummary,
+                            sql: ambSafeSql,
+                            responseType: ambTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: null,
+                            dataSource: ambTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: ambFill.ModelUsed,
+                            executionTimeMs: (int)ambResult.ExecutionTimeMs,
+                            tokenCount: ambFill.TokensUsed,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: ambMsgId,
+                            template: ambTemplate,
+                            llmSummary: ambSummary,
+                            rows: ambResult.Rows,
+                            rowCount: ambResult.Rows.Count,
+                            executionTimeMs: (int)ambResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: ambFill.ModelUsed,
+                            tokenCount: ambFill.TokensUsed));
+                    }
+                    _log.Warning("ChatController: ambient_station_readings SQL execution failed: {Error}", ambResult.Error);
+                }
+                else
+                {
+                    _log.Warning("ChatController: ambient_station_readings SQL validation failed: {Error}", ambSqlError);
+                }
+            }
+            skipAmbientStationPreCheck: ;
         }
 
         // ── 3. Route the question to an approved template ───────────────────
@@ -1846,11 +2367,55 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 3b2. Hard override: specific device + status question → device_status ──
+        // Catches "is device SEI100M 0009 active or inactive?" being mis-routed to offline_devices.
+        var deviceStatusKeywords = new[] { "active or inactive", "inactive or active", "online or offline",
+            "offline or online", "is it active", "is it inactive", "is it online", "is it offline",
+            "active right now", "inactive right now", "currently active", "currently inactive",
+            "currently online", "currently offline", "is active", "is inactive", "is online", "is offline",
+            "device status", "status of device" };
+        if (msgHasDeviceCode && deviceStatusKeywords.Any(k => lowerMsg.Contains(k))
+            && routeResult.Template?.Id is not "device_status")
+        {
+            var devStatusTemplate = _queryRouter.GetPermittedTemplates(user)
+                .FirstOrDefault(t => t.Id == "device_status");
+            if (devStatusTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → device_status (device code + status keyword detected)",
+                    routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult
+                {
+                    Template = devStatusTemplate,
+                    PreviousTemplateId = routeResult.PreviousTemplateId
+                };
+            }
+        }
+
         // ── 3c. Hard override: named site + past date → site_daily_averages ──
         // Covers cases where pre-checks or the router still selected site_aqi_single despite a past date.
         // Must run AFTER device_reading_history override (3b) so device+date questions are unaffected.
         bool msgHasSiteRef = siteTypeWords.Any(s => lowerMsg.Contains(s)) || hasAtSitePattern;
-        if (msgHasPastDate && msgHasSiteRef && !msgHasDeviceCode
+
+        // Detect indoor-ambient-historical queries (compare indoor vs outdoor on a past date)
+        var indoorHistoricalKeywords = new[]
+        {
+            "more likely coming from indoors", "more likely coming from outdoor",
+            "indoor or outdoor source", "indoor vs outdoor", "indoor outdoor ratio",
+            "from indoor sources", "from outdoor", "indoor source", "outdoor source",
+            "from indoors or outdoor", "indoors or outdoor", "indoor or outdoor",
+            "is it indoor or outdoor", "from outdoor pollution", "from indoor pollution",
+            "due to outdoor pollution", "due to indoor sources", "due to outdoor sources",
+            "outdoor pollution rather than indoor", "rather than indoor sources",
+            "mainly due to outdoor", "mainly due to indoor",
+            "outdoor dust contributor", "is outdoor dust",
+            "respond during the dust event", "how did indoor air quality"
+        };
+        var dustKeywords = new[] { "dust event", "dust storm", "sandstorm" };
+        bool isIndoorAmbientHistorical = hasAtSiteRef
+            && indoorHistoricalKeywords.Any(k => lowerMsg.Contains(k))
+            && (msgHasPastDate || dustKeywords.Any(k => lowerMsg.Contains(k)));
+
+        if (msgHasPastDate && msgHasSiteRef && !msgHasDeviceCode && !isIndoorAmbientHistorical && !isAmbientStationQuery
             && routeResult.Template?.Id is "site_aqi_single" or "site_readings_all" or "main_pollutant_at_station"
                 or null)
         {
@@ -1863,6 +2428,107 @@ public sealed class ChatController : ControllerBase
                 routeResult = new QueryRouterResult
                 {
                     Template = dailyTemplate,
+                    Score = 1.0,
+                    Candidates = [],
+                    PreviousTemplateId = routeResult.PreviousTemplateId
+                };
+            }
+        }
+
+        // ── 3c-month. Hard override: named site + month reference → site_monthly_averages ──
+        // Fires for: "AQI at Al Reyada in March 2025", "average for January", "last month at X".
+        // Month takes priority over year — must run BEFORE 3c-year.
+        string? preExtractedMonth = null;
+        string? preExtractedMonthYear = null;
+        if (msgHasMonthRef && msgHasSiteRef && !msgHasDeviceCode && !isIndoorAmbientHistorical && !isAmbientStationQuery
+            && routeResult.Template?.Id is "site_aqi_single" or "site_daily_averages" or "site_readings_all"
+                or "main_pollutant_at_station" or "site_yearly_averages" or null)
+        {
+            var monthlyTemplate = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "site_monthly_averages");
+            if (monthlyTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → site_monthly_averages (month ref + site ref detected)",
+                    routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult
+                {
+                    Template = monthlyTemplate,
+                    Score = 1.0,
+                    Candidates = [],
+                    PreviousTemplateId = routeResult.PreviousTemplateId
+                };
+
+                // Extract month number from name
+                var monthNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["january"] = "1", ["february"] = "2", ["march"] = "3", ["april"] = "4",
+                    ["may"] = "5", ["june"] = "6", ["july"] = "7", ["august"] = "8",
+                    ["september"] = "9", ["october"] = "10", ["november"] = "11", ["december"] = "12"
+                };
+                var monthMatch = System.Text.RegularExpressions.Regex.Match(lowerMsg,
+                    @"\b(january|february|march|april|may|june|july|august|september|october|november|december)\b",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (monthMatch.Success)
+                    preExtractedMonth = monthNames[monthMatch.Value.ToLowerInvariant()];
+
+                // "last month" → derive month and year
+                if (lowerMsg.Contains("last month") || lowerMsg.Contains("previous month"))
+                {
+                    var lastMonth = DateTime.Today.AddMonths(-1);
+                    preExtractedMonth = lastMonth.Month.ToString();
+                    preExtractedMonthYear = lastMonth.Year.ToString();
+                }
+                else if (lowerMsg.Contains("this month") || lowerMsg.Contains("current month"))
+                {
+                    preExtractedMonth = DateTime.Today.Month.ToString();
+                    preExtractedMonthYear = DateTime.Today.Year.ToString();
+                }
+                else
+                {
+                    // Extract year if present alongside month name (e.g. "March 2025")
+                    var yearMatch2 = System.Text.RegularExpressions.Regex.Match(lowerMsg, @"\b(19|20)\d{2}\b");
+                    if (yearMatch2.Success)
+                        preExtractedMonthYear = yearMatch2.Value;
+                }
+            }
+        }
+
+        // ── 3c-year. Hard override: named site + specific year → site_yearly_averages ──
+        string? preExtractedYear = null;
+        if (msgHasYearRef && msgHasSiteRef && !msgHasDeviceCode && !isIndoorAmbientHistorical
+            && routeResult.Template?.Id is "site_aqi_single" or "site_daily_averages" or "site_readings_all"
+                or "main_pollutant_at_station" or null)
+        {
+            var yearlyTemplate = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "site_yearly_averages");
+            if (yearlyTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → site_yearly_averages (year ref + site ref detected)",
+                    routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult
+                {
+                    Template = yearlyTemplate,
+                    Score = 1.0,
+                    Candidates = [],
+                    PreviousTemplateId = routeResult.PreviousTemplateId
+                };
+                var yearMatch = System.Text.RegularExpressions.Regex.Match(lowerMsg, @"\b(19|20)\d{2}\b");
+                if (yearMatch.Success && int.TryParse(yearMatch.Value, out var extractedYear))
+                    preExtractedYear = extractedYear.ToString();
+            }
+        }
+
+        // ── 3d. Hard override: indoor/ambient historical query mis-routed → indoor_source_analysis ──
+        if (isIndoorAmbientHistorical
+            && routeResult.Template?.Id is "site_daily_averages" or "site_aqi_single" or "site_readings_all" or null)
+        {
+            var sourceTemplate = _queryRouter.GetPermittedTemplates(user)
+                .FirstOrDefault(t => t.Id == "indoor_source_analysis");
+            if (sourceTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → indoor_source_analysis (indoor-ambient-historical detected)",
+                    routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult
+                {
+                    Template = sourceTemplate,
                     Score = 1.0,
                     Candidates = [],
                     PreviousTemplateId = routeResult.PreviousTemplateId
@@ -1910,6 +2576,108 @@ public sealed class ChatController : ControllerBase
 
         _log.Debug("ChatController: template={Template}, llmParams={Params}",
             template.Id, string.Join(", ", llmParams.Select(kv => $"{kv.Key}={kv.Value}")));
+
+        // Hard-override sectorName for devices_by_filter when LLM missed it from sector keywords
+        if (template.Id is "devices_by_filter" or "count_devices_by_filter"
+            && string.IsNullOrWhiteSpace(llmParams.GetValueOrDefault("sectorName"))
+            && string.IsNullOrWhiteSpace(llmParams.GetValueOrDefault("stationName")))
+        {
+            if (lowerMsg.Contains("school site") || lowerMsg.Contains("school sites")
+                || (lowerMsg.Contains("school") && !lowerMsg.Contains(" at ") && !lowerMsg.Contains(" for ")))
+                llmParams["sectorName"] = "Public & Govt-School";
+            else if (lowerMsg.Contains("commercial"))
+                llmParams["sectorName"] = "Commercial";
+            else if (lowerMsg.Contains("residential"))
+                llmParams["sectorName"] = "Residential";
+        }
+
+        // Inject pre-extracted year from 3c-year override (year was detected before llmParams existed)
+        if (preExtractedYear is not null && template.Id == "site_yearly_averages" && !llmParams.ContainsKey("year"))
+            llmParams["year"] = preExtractedYear;
+
+        // Inject pre-extracted month/year from 3c-month override
+        if (template.Id == "site_monthly_averages")
+        {
+            if (preExtractedMonth is not null && !llmParams.ContainsKey("month"))
+                llmParams["month"] = preExtractedMonth;
+            if (preExtractedMonthYear is not null && !llmParams.ContainsKey("year"))
+                llmParams["year"] = preExtractedMonthYear;
+        }
+
+        // ── 4b-pre0. Fallback stationName extraction for ambient/device queries ──
+        // When LLM fails to extract stationName for ambient_station_readings, try regex fallback.
+        if (template.Id is "ambient_station_readings" or "indoor_source_analysis"
+            && !llmParams.ContainsKey("stationName"))
+        {
+            var atMatch = System.Text.RegularExpressions.Regex.Match(
+                enrichedMessage, @"\bat\s+([A-Za-z][A-Za-z0-9\s]{2,40}?)(?:\s+on|\s+for|\s+in|\s*\?|$)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (atMatch.Success)
+            {
+                llmParams["stationName"] = atMatch.Groups[1].Value.Trim();
+                _log.Debug("ChatController: 4b-pre0 fallback stationName='{Name}' for {Template}",
+                    llmParams["stationName"], template.Id);
+            }
+        }
+
+        // ── 4b-pre0b. indoor_source_analysis date defaulting ──
+        // If no dates provided, try to extract a date directly from the raw message before
+        // falling back to the last-30-days default.
+        // If single date given (either from LLM or message regex), set both to same date.
+        if (template.Id == "indoor_source_analysis")
+        {
+            bool hasStart = llmParams.ContainsKey("startDate") && !string.IsNullOrWhiteSpace(llmParams["startDate"]);
+            bool hasEnd   = llmParams.ContainsKey("endDate")   && !string.IsNullOrWhiteSpace(llmParams["endDate"]);
+
+            // If LLM missed the date, try to pull it directly from the raw message via regex.
+            // Matches patterns like: "on 2026-03-20", "on March 20 2026", "on 20-03-2026", etc.
+            if (!hasStart && !hasEnd)
+            {
+                var datePatterns = new[]
+                {
+                    @"\b(\d{4}-\d{2}-\d{2})\b",                              // 2026-03-20
+                    @"\b(\d{2}-\d{2}-\d{4})\b",                              // 20-03-2026
+                    @"\b(\d{1,2}/\d{1,2}/\d{4})\b",                          // 3/20/2026
+                    @"\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4})\b",  // March 20, 2026
+                    @"\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4})\b",    // 20 March 2026
+                };
+                string? extractedDate = null;
+                foreach (var pat in datePatterns)
+                {
+                    var m = System.Text.RegularExpressions.Regex.Match(
+                        enrichedMessage, pat,
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (m.Success && DateTime.TryParse(m.Groups[1].Value, out var parsedDt))
+                    {
+                        extractedDate = parsedDt.ToString("yyyy-MM-dd");
+                        break;
+                    }
+                }
+
+                if (extractedDate != null)
+                {
+                    llmParams["startDate"] = extractedDate;
+                    llmParams["endDate"]   = extractedDate;
+                    _log.Debug("ChatController: 4b-pre0b regex-extracted date '{Date}' for indoor_source_analysis", extractedDate);
+                }
+                else
+                {
+                    llmParams["startDate"] = DateTime.Today.AddDays(-30).ToString("yyyy-MM-dd");
+                    llmParams["endDate"]   = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd");
+                    _log.Debug("ChatController: 4b-pre0b defaulted startDate/endDate for indoor_source_analysis (no date in question)");
+                }
+            }
+            else if (hasStart && !hasEnd)
+            {
+                llmParams["endDate"] = llmParams["startDate"];
+                _log.Debug("ChatController: 4b-pre0b single date → endDate = startDate for indoor_source_analysis");
+            }
+            else if (!hasStart && hasEnd)
+            {
+                llmParams["startDate"] = llmParams["endDate"];
+                _log.Debug("ChatController: 4b-pre0b single date (endDate only) → startDate = endDate for indoor_source_analysis");
+            }
+        }
 
         // ── 4b-pre. Fix: "available at X site" is a location query, not a status filter.
         // Remove statusFilter=Active when user says "available at/in/under" with a stationName —
@@ -3099,7 +3867,7 @@ public sealed class ChatController : ControllerBase
         // letting the LLM hallucinate an empty markdown table in the summary.
         if (resultRows.Count == 0 && template.ResponseType != "text")
         {
-            var noDataMessage = BuildNoDataMessage(template.Id, scope);
+            var noDataMessage = BuildNoDataMessage(template.Id, scope, llmParams.GetValueOrDefault("aqiCategory"), llmParams.GetValueOrDefault("sectorName"));
 
             var noDataMsgId = Guid.NewGuid();
             await _sessionService.SaveBothMessagesAsync(
@@ -3165,12 +3933,138 @@ public sealed class ChatController : ControllerBase
                     row.Remove("DeviceCount");
                 }
             }
+            else if (template.Id == "site_monthly_averages" && resultRows.Count > 0)
+            {
+                var siteName  = resultRows[0].GetValueOrDefault("StationName")?.ToString() ?? "";
+                var monthVal  = resultRows[0].GetValueOrDefault("Month")?.ToString() ?? "";
+                summary = $"Here are the monthly average readings at {siteName} for {monthVal}. The table below shows all available parameters.";
+                foreach (var row in resultRows)
+                {
+                    row.Remove("StationName");
+                    row.Remove("DeviceCount");
+                }
+            }
+            else if (template.Id == "dust_event_response" && resultRows.Count > 0)
+            {
+                var r = resultRows[0];
+                var indoorSite  = r.GetValueOrDefault("IndoorSite")?.ToString() ?? "";
+                var ambStation  = r.GetValueOrDefault("NearestAmbientStation")?.ToString() ?? "";
+                var distKm      = r.GetValueOrDefault("Distance_km")?.ToString() ?? "";
+                var eventDate   = r.GetValueOrDefault("EventDate")?.ToString() ?? "";
+                if (eventDate.Contains('T')) eventDate = eventDate[..eventDate.IndexOf('T')];
+                var parameter   = r.GetValueOrDefault("Parameter")?.ToString() ?? "PM10";
+                var indoorAvg   = r.GetValueOrDefault("IndoorAvg");
+                var outdoorAvg  = r.GetValueOrDefault("OutdoorDayAvg");
+                var ioRatio     = r.GetValueOrDefault("IORatio");
+                var dayOfWeek   = r.GetValueOrDefault("DayOfWeek")?.ToString() ?? "";
+                var indoorStr   = indoorAvg  != null ? $"{indoorAvg} µg/m³"  : "no indoor data";
+                var outdoorStr  = outdoorAvg != null ? $"{outdoorAvg} µg/m³" : "no outdoor data";
+                var ratioStr    = ioRatio    != null ? $"{ioRatio}"           : "N/A";
+                summary = $"On {dayOfWeek} {eventDate}, the indoor {parameter} at {indoorSite} was {indoorStr} (24-hour average). " +
+                          $"The nearest ambient station, {ambStation} ({distKm} km away), recorded {outdoorStr} outdoors on the same day. " +
+                          $"The indoor/outdoor ratio was {ratioStr}. The full breakdown is in the table below.";
+            }
+            else if (template.Id == "site_yearly_averages" && resultRows.Count > 0)
+            {
+                var r = resultRows[0];
+                var siteName = r.GetValueOrDefault("StationName")?.ToString() ?? "";
+                var year     = r.GetValueOrDefault("Year")?.ToString() ?? r.GetValueOrDefault("[Year]")?.ToString() ?? "";
+                summary = $"Here are the yearly averages for {siteName} in {year}. The table below shows all available parameters.";
+                foreach (var row in resultRows)
+                    row.Remove("StationName");
+            }
+            else if (template.Id == "site_aqi_by_category" && resultRows.Count > 0 && isAqiCategoryGroupByQuestion)
+            {
+                // User asked for a category count breakdown — group raw site rows into a summary table
+                bool wantsByRegion2 = lowerMsg.Contains("by region") || lowerMsg.Contains("per region")
+                    || lowerMsg.Contains("each region") || lowerMsg.Contains("region");
+                resultRows = GroupAqiCategoryRows(resultRows, wantsByRegion2);
+                summary = BuildAqiCategorySummary(resultRows, request.Message, lowerMsg, true);
+            }
             else
             {
                 summary = resultRows.Count == 1
                     ? "1 result found."
                     : $"{resultRows.Count} results found.";
             }
+            tokensUsed = 0;
+        }
+        else if (template.Id == "site_count" && resultRows.Count > 0)
+        {
+            // Detect region-wise breakdown (multiple regions, no single-region filter)
+            var regionParam = llmParams.GetValueOrDefault("regionName") ?? "";
+            var sectorParam = llmParams.GetValueOrDefault("sectorName") ?? "";
+            var groupByParam = llmParams.GetValueOrDefault("groupBy") ?? "region";
+            bool isRegionBreakdown = string.IsNullOrWhiteSpace(regionParam)
+                && string.IsNullOrWhiteSpace(sectorParam)
+                && groupByParam != "sector"
+                && resultRows.Count > 1
+                && resultRows.All(r => r.ContainsKey("RegionName"));
+
+            bool siteCountUsedLlm = false;
+            if (isRegionBreakdown)
+            {
+                // Format: "HAWAQM has 3 regions — Abu Dhabi (133 sites, 87 active), Al Ain (54 sites, 37 active), and Al Dhafra (13 sites, 7 active)."
+                int scTotal = resultRows.Sum(r => int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(), out var n) ? n : 0);
+                var scParts = resultRows.Select(r =>
+                {
+                    var region = r.GetValueOrDefault("RegionName")?.ToString() ?? "";
+                    int sites  = int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(),  out var ts) ? ts : 0;
+                    int active = int.TryParse(r.GetValueOrDefault("ActiveSites")?.ToString(), out var ac) ? ac : 0;
+                    return (region, sites, active);
+                }).ToList();
+
+                var scCount = scParts.Count;
+                var scLabels = scParts.Select(p => $"{p.region} ({p.sites} sites, {p.active} active)").ToList();
+                string regionList = scLabels.Count == 1 ? scLabels[0]
+                    : scLabels.Count == 2 ? $"{scLabels[0]} and {scLabels[1]}"
+                    : $"{string.Join(", ", scLabels.Take(scLabels.Count - 1))}, and {scLabels.Last()}";
+
+                summary = $"HAWAQM has {scCount} regions — {regionList}. There are {scTotal} sites in total.";
+            }
+            else if (!string.IsNullOrWhiteSpace(regionParam) && resultRows.Count == 1)
+            {
+                // Single-region query
+                var r = resultRows[0];
+                var scRegion   = r.GetValueOrDefault("RegionName")?.ToString() ?? regionParam;
+                int scTotal2   = int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(),    out var ts2) ? ts2 : 0;
+                int scActive2  = int.TryParse(r.GetValueOrDefault("ActiveSites")?.ToString(),   out var ac2) ? ac2 : 0;
+                int scInactive = int.TryParse(r.GetValueOrDefault("InactiveSites")?.ToString(), out var ic2) ? ic2 : 0;
+                summary = $"The {scRegion} region has {scTotal2} sites in total — {scActive2} active and {scInactive} inactive.";
+            }
+            else
+            {
+                // Total or sector-grouped — let LLM summarize
+                summary = await _azureAI.SummarizeResultsAsync(enrichedMessage, template, resultRows, scope, ct);
+                siteCountUsedLlm = true;
+            }
+            if (!siteCountUsedLlm) tokensUsed = 0;
+        }
+        else if (template.Id == "indoor_source_analysis" && resultRows.Count > 0)
+        {
+            var r = resultRows[0];
+            var siteName    = r.GetValueOrDefault("ResidenceName")?.ToString() ?? "";
+            var ambStation  = r.GetValueOrDefault("NearestAmbientStation")?.ToString() ?? "";
+            var distKm      = r.GetValueOrDefault("Distance_km")?.ToString() ?? "";
+            var parameter   = r.GetValueOrDefault("Parameter")?.ToString() ?? "PM2.5";
+            var periodStart = r.GetValueOrDefault("PeriodStart")?.ToString() ?? "";
+            var periodEnd   = r.GetValueOrDefault("PeriodEnd")?.ToString() ?? "";
+            if (periodStart.Contains('T')) periodStart = periodStart[..periodStart.IndexOf('T')];
+            if (periodEnd.Contains('T'))   periodEnd   = periodEnd[..periodEnd.IndexOf('T')];
+            var dateLabel   = periodStart == periodEnd || string.IsNullOrEmpty(periodEnd) ? periodStart : $"{periodStart} to {periodEnd}";
+            var indoorVal   = r.GetValueOrDefault("IndoorVal");
+            var outdoorVal  = r.GetValueOrDefault("OutdoorVal");
+            var ioRatio     = r.GetValueOrDefault("IORatio");
+            var indoorStr   = indoorVal  != null ? $"{indoorVal} µg/m³"  : "no indoor data available";
+            var outdoorStr  = outdoorVal != null ? $"{outdoorVal} µg/m³" : "no outdoor data available";
+            var ratioStr    = ioRatio    != null ? $"{ioRatio}"           : "N/A";
+
+            summary = $"On {dateLabel}, the indoor {parameter} at {siteName} was {indoorStr}, based on the 24-hour average for that day. " +
+                      $"The nearest ambient station, {ambStation} ({distKm} km away), recorded {outdoorStr} on the same day, " +
+                      $"giving an indoor/outdoor ratio of {ratioStr}.\n\n" +
+                      $"HAWAQM gives you the measured readings and this ratio to review, so you have the full recorded picture for that day. " +
+                      $"Pinpointing the exact source of the {parameter} goes beyond what the monitoring data covers, and is best looked at together with what was happening at the site.\n\n" +
+                      $"If it's helpful, I can show the other pollutant readings at {siteName} for that day, or compare this reading with nearby sites within your access.";
             tokensUsed = 0;
         }
         else
@@ -3382,10 +4276,100 @@ public sealed class ChatController : ControllerBase
     private UserContext? GetUserContext()
         => HttpContext.Items.TryGetValue("UserContext", out var ctx) ? ctx as UserContext : null;
 
-    private static string BuildNoDataMessage(string templateId, ResolvedScope scope)
+    /// <summary>
+    /// Groups raw site_aqi_by_category rows (one row per site) into a summary table
+    /// showing the count of sites in each AQI category. When wantsByRegion=true the
+    /// table is further broken down by region: columns Region, AQI Category, Count.
+    /// When false: columns AQI Category, Count.
+    /// Rows are ordered by the standard AQI category severity sequence.
+    /// </summary>
+    private static List<Dictionary<string, object?>> GroupAqiCategoryRows(
+        List<Dictionary<string, object?>> rawRows, bool wantsByRegion)
+    {
+        var categoryOrder = new[]
+        {
+            "Good", "Moderate", "Unhealthy for Sensitive Groups",
+            "Unhealthy", "Very Unhealthy", "Hazardous"
+        };
+
+        if (wantsByRegion)
+        {
+            // Group by (Region, AQICategory) → {Region, AQI Category, Count}
+            var grouped = rawRows
+                .GroupBy(r => (
+                    Region:   r.GetValueOrDefault("RegionName")?.ToString() ?? "Unknown",
+                    Category: r.GetValueOrDefault("AQICategory")?.ToString() ?? "Unknown"))
+                .Select(g => new Dictionary<string, object?>
+                {
+                    ["Region"]       = g.Key.Region,
+                    ["AQI Category"] = g.Key.Category,
+                    ["Count"]        = g.Count()
+                })
+                .OrderBy(r => r["Region"]?.ToString())
+                .ThenBy(r =>
+                {
+                    var idx = Array.IndexOf(categoryOrder, r["AQI Category"]?.ToString() ?? "");
+                    return idx < 0 ? 99 : idx;
+                })
+                .ToList();
+            return grouped;
+        }
+        else
+        {
+            // Group by AQICategory only → {AQI Category, Count}
+            var grouped = rawRows
+                .GroupBy(r => r.GetValueOrDefault("AQICategory")?.ToString() ?? "Unknown")
+                .Select(g => new Dictionary<string, object?>
+                {
+                    ["AQI Category"] = g.Key,
+                    ["Count"]        = g.Count()
+                })
+                .OrderBy(r =>
+                {
+                    var idx = Array.IndexOf(categoryOrder, r["AQI Category"]?.ToString() ?? "");
+                    return idx < 0 ? 99 : idx;
+                })
+                .ToList();
+            return grouped;
+        }
+    }
+
+    /// <summary>
+    /// Builds a one-sentence summary for AQI category breakdown responses.
+    /// </summary>
+    private static string BuildAqiCategorySummary(
+        List<Dictionary<string, object?>> groupedRows, string originalMessage,
+        string lowerMsg, bool isGrouped)
+    {
+        if (!isGrouped || groupedRows.Count == 0)
+            return $"{groupedRows.Count} result(s) found.";
+
+        // Infer site label from question
+        string siteLabel = lowerMsg.Contains("school") || lowerMsg.Contains("moe") || lowerMsg.Contains("gov")
+            ? "school site(s)"
+            : lowerMsg.Contains("commercial") ? "commercial site(s)"
+            : lowerMsg.Contains("residential") ? "residential site(s)"
+            : "site(s)";
+
+        // Infer region context
+        string regionSuffix = lowerMsg.Contains("abu dhabi") ? " in Abu Dhabi"
+            : lowerMsg.Contains("al ain") ? " in Al Ain"
+            : lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra") ? " in Al Dhafra"
+            : "";
+
+        bool byRegion = groupedRows.Any(r => r.ContainsKey("Region"));
+        int totalSites = groupedRows.Sum(r => r["Count"] is int c ? c : 0);
+
+        if (byRegion)
+            return $"Here is the AQI category breakdown for {totalSites} {siteLabel}{regionSuffix}, grouped by region. The table below shows the count per category per region.";
+        else
+            return $"Here is the AQI category breakdown for {totalSites} {siteLabel}{regionSuffix}. The table below shows the count per category.";
+    }
+
+    private static string BuildNoDataMessage(string templateId, ResolvedScope scope, string? aqiCategory = null, string? sectorName = null)
     {
         var region = string.IsNullOrWhiteSpace(scope.Region) ? null : scope.Region;
-        var sector = string.IsNullOrWhiteSpace(scope.Sector) ? null : scope.Sector;
+        var sector = sectorName ?? (string.IsNullOrWhiteSpace(scope.Sector) ? null : scope.Sector);
         var date = scope.DateRangeLabel ?? "the selected date";
 
         return templateId switch
@@ -3403,7 +4387,17 @@ public sealed class ChatController : ControllerBase
                             : "No sites were found matching the specified filter.",
 
             "sites_outside_safe_range" or "site_aqi_by_category" =>
-                $"Great news — no sites in {region} are currently outside the safe air quality range.",
+                !string.IsNullOrWhiteSpace(aqiCategory) && !string.Equals(aqiCategory, "critical", StringComparison.OrdinalIgnoreCase)
+                    ? (sector != null && region != null
+                        ? $"No {sector} sites in {region} are currently in the '{aqiCategory}' AQI category."
+                        : sector != null
+                            ? $"No {sector} sites are currently in the '{aqiCategory}' AQI category."
+                            : region != null
+                                ? $"No sites in {region} are currently in the '{aqiCategory}' AQI category."
+                                : $"No sites are currently in the '{aqiCategory}' AQI category.")
+                    : region != null
+                        ? $"Great news — no sites in {region} are currently outside the safe air quality range."
+                        : "Great news — no sites are currently outside the safe air quality range.",
 
             "critical_sites" or "critical_sites_today" =>
                 $"No critical sites were found in {region} for {date}. All monitored sites appear to be within acceptable limits.",

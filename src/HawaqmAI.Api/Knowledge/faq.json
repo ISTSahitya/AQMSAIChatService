@@ -15,7 +15,7 @@
     },
     {
       "question": "When is a site shown as inactive?",
-      "answer": "A site is shown as inactive when one or both of its installed devices are inactive. A site used only for mold testing may have no device."
+      "answer": "A site is shown as inactive only when all devices at that site have stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device is still active, the site remains active."
     },
     {
       "question": "How is the site AQI calculated when a site has more than one device?",
@@ -56,6 +56,18 @@
     {
       "question": "What are the AQI categories or levels?",
       "answer": "There are six AQI categories: An AQI of 0–50 is Good — the air is fine for everyone and no precautions are needed. An AQI of 51–100 is Moderate — acceptable for almost everyone; only unusually sensitive people may notice any effect. An AQI of 101–150 is Unhealthy for Sensitive Groups — people with asthma or heart conditions, young children and older adults may feel effects. An AQI of 151–200 is Unhealthy — everyone may start to feel health effects. An AQI of 201–300 is Very Unhealthy — health effects are likely for everyone in the space; investigate immediately. An AQI above 300 is Hazardous — the most serious level; verify the reading and act immediately."
+    },
+    {
+      "question": "What is AQI?",
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What does an AQI value of 150 mean?",
+      "answer": "An AQI of 150 falls in the Unhealthy for Sensitive Groups category (101–150). People with asthma, heart conditions, young children and older adults may feel health effects at this level. It is worth investigating the cause — check which parameter is driving the AQI up and whether there is a ventilation or source issue."
+    },
+    {
+      "question": "What does an AQI value mean?",
+      "answer": "The AQI value tells you how polluted the air is right now. AQI 0–50 = Good (safe for everyone). AQI 51–100 = Moderate (acceptable; very sensitive people may notice effects). AQI 101–150 = Unhealthy for Sensitive Groups (children, elderly, asthma sufferers). AQI 151–200 = Unhealthy (everyone may feel effects). AQI 201–300 = Very Unhealthy (serious health effects; investigate immediately). AQI above 300 = Hazardous (rare indoors; verify and act immediately)."
     },
     {
       "question": "Can I export HAWAQM data for a selected date range?",
@@ -187,19 +199,19 @@
     },
     {
       "question": "The site is marked inactive but one device is still sending data. Is that an error?",
-      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
     },
     {
       "question": "Why is the site inactive if a device is still sending data?",
-      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
     },
     {
       "question": "Can a site be inactive while its device is sending data?",
-      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
     },
     {
       "question": "Inactive site — device still sending data",
-      "answer": "Not necessarily — that's how the status is designed to work. A site is marked inactive when all of their respective devices are inactive. Check which device stopped and when it last sent data; if both are reporting and the site still shows inactive, then it's worth raising."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
     },
     {
       "question": "The Data Success Rate is below 75%. Can I still use the AQI results?",

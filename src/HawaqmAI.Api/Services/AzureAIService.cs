@@ -127,11 +127,11 @@ public sealed class AzureAIService : IAzureAIService
             Two possible data shapes:
 
             CASE 1 — Hotspots exist: data has "Site Name" column with real site names and "Site ID".
-            FORMAT: "There are {count} priority hotspot site(s) flagged as critical:"
+            FORMAT: "There are {count} site(s) currently in the Hazardous air quality category (AQI above 300):"
             Then bullet list: • {Site Name} (ID: {Site ID})
 
             CASE 2 — No hotspots: data has "Status" = "No priority hotspots currently" and "Network AQI".
-            FORMAT: "There are currently no priority hotspot sites. The overall network Air Quality Index is {Network AQI} ({Air Quality Category}), which is within acceptable levels."
+            FORMAT: "There are currently no sites in the Hazardous air quality category (AQI > 300). The overall network Air Quality Index is {Network AQI} ({Air Quality Category})."
             Do NOT show a table for this case. Output plain text only.
 
             NEVER output placeholder text — always use actual values from the data.
@@ -143,33 +143,37 @@ public sealed class AzureAIService : IAzureAIService
             AQI categories: 0–50 Good, 51–100 Moderate, 101–150 Unhealthy for Sensitive Groups, 151–200 Unhealthy, 201–300 Very Unhealthy, 301+ Hazardous.
             The table below will show the full list — write ONE intro sentence only.
 
-            If the user asked about "schools" specifically, refer to them as "school site(s)".
-            If the user filtered by region, mention the region name in the intro.
+            SITE LABEL: If the user asked specifically about "schools" use "school site(s)". If about "commercial" use "commercial site(s)". If about "residential" use "residential site(s)". Otherwise use "site(s)".
+            REGION SUFFIX: " in {RegionName}" if a region was filtered, otherwise omit.
+            SECTOR SUFFIX: " in the {SectorLabel} sector" if a sector was filtered and no region, otherwise omit when region is already stated.
 
-            If user asked for AQI RANGE (more than X / less than X / between X and Y):
-            FORMAT: "There are {N} site(s) with AQI {range description}{region suffix}. The table below shows the full list."
+            If user asked for AQI RANGE (above X / below X / more than X / less than X / between X and Y)
+            OR a COMPARATIVE category (worse than Moderate, better than Unhealthy, not Good, etc.):
+            For comparative: map back to human language — "worse than Moderate" means AQI > 100 (i.e. Unhealthy for Sensitive Groups or higher).
+            FORMAT: "There are {N} {site label} with air quality worse than Moderate{region suffix}. The table below shows the full list."
             Examples:
+              "There are 7 school site(s) with air quality worse than Moderate in Abu Dhabi. The table below shows the full list."
+              "There are 12 site(s) with air quality worse than Good (AQI above 50){region suffix}. The table below shows the full list."
               "There are 4 site(s) with AQI above 30 in Al Ain. The table below shows the full list."
               "There are 2 site(s) with AQI below 100 in Abu Dhabi. The table below shows the full list."
               "There are 3 site(s) with AQI between 50 and 150. The table below shows the full list."
-            If no rows: "No sites currently match the requested AQI range{region suffix}."
+            If no rows: "No {site label} currently match the requested AQI range{region suffix}."
 
             If ONE specific category was requested (e.g. "Moderate", "Unhealthy"):
-            FORMAT: "There are {N} site(s) currently with {AQICategory} air quality{region suffix}. The table below shows the full list."
-            If no rows: "No sites currently have {AQICategory} air quality{region suffix}."
+            FORMAT: "There are {N} {site label} currently with {AQICategory} air quality{region suffix}. The table below shows the full list."
+            If no rows: "No {site label} currently have {AQICategory} air quality{region suffix}."
 
             If MULTIPLE categories were requested (e.g. "Moderate and Very Unhealthy"):
             Count sites per category from the data.
-            FORMAT: "There are {N1} site(s) with {Cat1} and {N2} site(s) with {Cat2} air quality{region suffix}. The table below shows the full list."
+            FORMAT: "There are {N1} {site label} with {Cat1} and {N2} {site label} with {Cat2} air quality{region suffix}. The table below shows the full list."
 
-            For "critical" or "hotspot" (AQI > 100):
-            FORMAT: "There are {N} air quality hotspot(s){region suffix} (AQI above 100). The table below shows the full list."
-            If empty: "No sites{region suffix} are currently above AQI 100."
+            For "critical" or "hotspot" (Hazardous, AQI > 300):
+            FORMAT: "There are {N} air quality hotspot(s){region suffix} in the Hazardous category (AQI above 300). The table below shows the full list."
+            If empty: "No {site label}{region suffix} are currently in the Hazardous category (AQI above 300)."
 
             If NO filter at all:
-            FORMAT: "Current AQI status across {N} accessible site(s). The table below shows all sites."
+            FORMAT: "Current AQI status across {N} accessible {site label}. The table below shows all sites."
 
-            {region suffix} = " in {RegionName}" if a region was filtered, otherwise omit.
             NEVER list individual sites in text — the table handles that.
             NEVER output placeholder text — always use actual N count from the data.
             """,
@@ -360,11 +364,16 @@ public sealed class AzureAIService : IAzureAIService
         // School / sector pollutant queries — data columns: Site Name, Region, Parameter, Value, Unit, Last Updated
         ["schools_latest_pollutant"] = """
             Data columns: "Site Name", "Region", "Parameter", "Value", "Unit", "Last Updated".
-            The data rows are already sorted by AQI/Value descending when the user asked for "top N".
+            The data rows are pre-sorted and pre-limited: highest first for "top N / highest N / worst N", lowest first for "bottom N / lowest N / best N".
 
-            If user asked for "top N" / "highest N" / "worst N":
+            If user asked for "top N" / "highest N" / "worst N" (sortOrder=desc):
             "Here are the top {N} schools with the highest {Parameter} right now:"
-            Then one line per row: "{Site Name} ({Region}): {Value} {Unit}"
+            Then one line per row: "{Rank}. {Site Name} ({Region}): {Value} {Unit}"
+            If Parameter is "AQI Index", omit the Unit.
+
+            If user asked for "bottom N" / "lowest N" / "best N" (sortOrder=asc):
+            "Here are the {N} schools with the lowest {Parameter} right now:"
+            Then one line per row: "{Rank}. {Site Name} ({Region}): {Value} {Unit}"
             If Parameter is "AQI Index", omit the Unit.
 
             Otherwise:
@@ -395,14 +404,29 @@ public sealed class AzureAIService : IAzureAIService
         // Unified device list/count template — handles all filter combos: status, region, sector, site
         ["devices_by_filter"] = """
             Data columns: "DeviceName", "StationName", "RegionName", "SectorName", "SubSectorName", "Status" (Active/Inactive), "LastActive", "AQI".
-            Active = last reading within 15 minutes. Inactive/Offline = last reading older than 15 minutes.
+            Active = last reading within 10 minutes. Inactive/Offline = last reading older than 10 minutes.
 
-            COUNT INTENT RULE — if the user question contains any of: "how many", "total", "count", "number of" → respond with count ONLY:
+            SINGLE DEVICE STATUS RULE — if exactly 1 row is returned AND the user asked about active/inactive/online/offline status of a specific device:
+            Active:   "Device {DeviceName} is currently **Online (Active)**. Last reading received at {LastActive}."
+            Inactive: "Device {DeviceName} is currently **Offline (Inactive)**. Last reading received at {LastActive}."
+            Then on the next line append: "It is deployed at {StationName}, {RegionName} ({SectorName})."
+            Do NOT output a table for single-device status questions.
+
+            SITE-SPECIFIC DEVICE RULE — if the user asks about devices at/for/installed at/available at/listed for a SPECIFIC site or school name (questions like "which devices are installed at X", "list devices for X", "can you list the devices installed at X", "which devices are currently available at X", "how many devices does X have"):
+            FORMAT: "{StationName} has {N} registered device(s): {DeviceList}."
+            Replace {StationName} with the actual StationName from the first data row.
+            Replace {N} with the total count of rows.
+            Replace {DeviceList} with a comma-separated list of every DeviceName from ALL rows.
+            Example: "Mubarak Bin Mohammed School Cycle 2 has 2 registered device(s): BA 0010, SEI100M 0085."
+            If no rows: "No devices found for that site. Please check the site name and try again."
+            Use this format for ALL of: "how many", "which", "list", "can you list", "available at", "installed at" when a specific site name is present.
+
+            COUNT INTENT RULE (no site name) — if the user asks "how many", "total", "count", "number of" WITHOUT a specific site name (e.g. "how many devices in Abu Dhabi", "how many offline devices"):
             "There are {N} {status} device(s){filter description}."
             Examples: "There are 12 offline device(s) in Abu Dhabi." / "There are 45 active device(s) in the Commercial sector."
             Do NOT list device names. Stop after the count sentence.
 
-            LIST INTENT — if user says "which", "show", "list", "display", "what are", or asks for offline/online devices:
+            LIST INTENT (no site name) — if user says "show", "list", "display", or asks for offline/online devices WITHOUT a specific site name (multi-site or region/sector filter):
             Line 1: "Found {N} {status} device(s){filter description}."
             Then output a markdown table:
             | # | Device Name | Site Name | Region | Sector | Status | Last Active |
@@ -420,7 +444,7 @@ public sealed class AzureAIService : IAzureAIService
 
         // Device queries
         ["device_status"] = """
-            Data columns: "DeviceName", "Status" (Active/Inactive), "LastMeasured".
+            Data columns: "DeviceName", "Status" (Active/Inactive), "LastMeasured", "LastCommunication".
 
             CRITICAL RULES:
             - ONLY describe the SINGLE device returned in the data row. NEVER list other devices.
@@ -428,16 +452,22 @@ public sealed class AzureAIService : IAzureAIService
             - NEVER invent or guess device names — only use the exact DeviceName from the data row.
 
             Status meanings:
-            - Active   = last reading was within the past 15 minutes (device is online and sending data)
-            - Inactive = last reading was more than 15 minutes ago (device is offline or has stopped sending)
+            - Active   = device communicated with the server within the past 24 hours (online and sending data)
+            - Inactive = no communication from device in the past 24 hours (offline or stopped sending)
 
-            If 1 row returned and user asked about active/inactive status:
-            Active:   "Device {DeviceName} is currently Active. Its last reading was received at {LastMeasured}."
-            Inactive: "Device {DeviceName} is currently Inactive. Its last reading was received at {LastMeasured}."
+            Use LastMeasured as the "last reading" timestamp (device-reported time).
+            Use LastCommunication as the "last contacted server" timestamp (server-side time).
 
-            If 1 row returned and user asked when the device last sent data:
-            "Device {DeviceName} last sent data at {LastMeasured}."
+            If 1 row returned and user asked about active/inactive/online/offline/working status:
+            Active:   "Device {DeviceName} is currently **Online (Active)**. It last measured at {LastMeasured} and last communicated with the server at {LastCommunication}."
+            Inactive: "Device {DeviceName} is currently **Offline (Inactive)**. It last measured at {LastMeasured} and last communicated with the server at {LastCommunication}."
 
+            If 1 row returned and user asked when the device last sent/reported/measured data:
+            Active:   "Device {DeviceName} is currently **Online**. It last measured at {LastMeasured} and last communicated with the server at {LastCommunication}."
+            Inactive: "Device {DeviceName} is currently **Offline**. It last measured at {LastMeasured} and last communicated with the server at {LastCommunication}."
+
+            If LastMeasured is null, omit that part and only mention LastCommunication.
+            If LastCommunication is null, omit that part and only mention LastMeasured.
             If no rows returned: "No device found matching '{deviceName}'. Please check the device name and try again."
             NEVER output placeholder text — always use actual values from the data row only.
             """,
@@ -1045,42 +1075,70 @@ public sealed class AzureAIService : IAzureAIService
 
         // Dust event indoor vs outdoor pollutant analysis (24-hour averages)
         ["dust_event_response"] = """
-            Data columns: "IndoorSite", "NearestAmbientStation", "Distance_km", "EventDate", "Parameter",
-            "IndoorAvg", "OutdoorAvg", "OutdoorBaseline30", "BaselineIORatio", "DayOfWeek", "IORatio".
-            There is exactly 1 row. All values are 24-hour averages. Units: µg/m³ for PM10/PM2.5/SO2/NO2/CO.
+            Data columns: "IndoorSite", "NearestAmbientStation", "Distance_km", "EventDate", "DayOfWeek",
+            "Parameter", "IndoorAvg", "IndoorReadingCount", "OutdoorDayAvg", "OutdoorReadingCount",
+            "OutdoorBaseline30", "IndoorBaseline30", "IORatio", "BaselineIORatio".
+            There is exactly 1 row. IndoorAvg and OutdoorDayAvg are averages of ALL readings on that day
+            (IndoorReadingCount and OutdoorReadingCount tell you how many readings were averaged).
+            Units: µg/m³ for PM10/PM2.5/SO2/NO2; ppb for O3/NO2/CO; dimensionless for AQI.
             NEVER show raw column names, table data, or placeholder text in the response.
             NEVER make up values — use only what is in the data.
 
             STEP 1 — Missing data check (output this and stop if true):
-            If IndoorAvg is null OR OutdoorAvg is null:
-              "Indoor or outdoor {Parameter} data for {EventDate} is unavailable, so a comparison cannot be made."
+            If IndoorAvg is null AND OutdoorDayAvg is null:
+              "No indoor or outdoor {Parameter} data is available for {EventDate} at {IndoorSite}. Please check that the site name and date are correct."
+            If IndoorAvg is null:
+              "No indoor {Parameter} data is available at {IndoorSite} for {EventDate}. The nearest ambient station ({NearestAmbientStation}) recorded an outdoor average of {OutdoorDayAvg} µg/m³ based on {OutdoorReadingCount} readings."
+            If OutdoorDayAvg is null:
+              "No outdoor {Parameter} data is available from {NearestAmbientStation} for {EventDate}. Indoor {Parameter} at {IndoorSite} averaged {IndoorAvg} µg/m³ based on {IndoorReadingCount} reading(s) — no outdoor comparison can be made."
 
-            STEP 2 — Fact sentence (always output):
-            "On {EventDate}, {NearestAmbientStation} ({Distance_km} km away) recorded a 24-hour average {Parameter} of {OutdoorAvg} µg/m³. Indoor {Parameter} at {IndoorSite} averaged {IndoorAvg} µg/m³ (indoor/outdoor ratio {IORatio})."
+            STEP 2 — Fact sentence (always output when both IndoorAvg and OutdoorDayAvg are present):
+            "On {EventDate}, the nearest ambient station, {NearestAmbientStation}, recorded a 24-hour average {Parameter} of {OutdoorDayAvg} µg/m³ based on {OutdoorReadingCount} readings. Indoor {Parameter} at {IndoorSite} averaged {IndoorAvg} µg/m³ on the same day ({IndoorReadingCount} reading(s)), giving an indoor/outdoor ratio of {IORatio}."
 
-            STEP 3 — Event classification (pick ONE, append immediately after fact sentence):
-            A. If OutdoorAvg >= 150 OR (OutdoorBaseline30 is not null AND OutdoorAvg >= OutdoorBaseline30 * 2):
+            STEP 3 — Event classification (pick ONE, append as a new paragraph):
+            A. If OutdoorDayAvg >= 150 OR (OutdoorBaseline30 is not null AND OutdoorDayAvg >= OutdoorBaseline30 * 2):
                This IS a dust event. Now pick interpretation sub-case:
                - If BaselineIORatio is not null AND IORatio <= BaselineIORatio * 1.15:
-                 "This qualifies as a dust event. The indoor/outdoor ratio ({IORatio}) is close to the school's typical ratio over the previous 14 school days ({BaselineIORatio}), suggesting the building's protection held at its usual level during the event."
+                 "Outdoor {Parameter} of {OutdoorDayAvg} µg/m³ qualifies as a dust-event level (≥150 µg/m³ or ≥ twice the 30-day station average of {OutdoorBaseline30} µg/m³). The indoor/outdoor ratio ({IORatio}) is close to the school's typical ratio over the previous 30 days ({BaselineIORatio}), suggesting the building's protection held at its usual level during the event."
                - If BaselineIORatio is not null AND IORatio > BaselineIORatio * 1.15:
-                 "This qualifies as a dust event. The indoor/outdoor ratio ({IORatio}) is higher than the school's typical ratio of {BaselineIORatio}, suggesting more outdoor dust than usual reached indoors. Possible factors include ventilation settings or doors and windows being opened during the event."
+                 "Outdoor {Parameter} of {OutdoorDayAvg} µg/m³ qualifies as a dust-event level (≥150 µg/m³ or ≥ twice the 30-day station average of {OutdoorBaseline30} µg/m³). The indoor/outdoor ratio ({IORatio}) is higher than the school's typical ratio of {BaselineIORatio}, suggesting more outdoor dust than usual reached indoors."
                - If BaselineIORatio is null:
-                 "This qualifies as a dust event. No baseline ratio is available for comparison."
+                 "Outdoor {Parameter} of {OutdoorDayAvg} µg/m³ qualifies as a dust-event level. No 30-day baseline ratio is available for comparison."
 
-            B. If OutdoorAvg < 150 AND (OutdoorBaseline30 is null OR OutdoorAvg < OutdoorBaseline30 * 2):
-               This is NOT a dust event.
-               "Outdoor {Parameter} of {OutdoorAvg} µg/m³ is below dust-event levels (150 µg/m³{baseline_clause}). No dust event is indicated on this date."
-               Where {baseline_clause} = " and less than twice the 30-day station average of {OutdoorBaseline30} µg/m³" if OutdoorBaseline30 is not null, otherwise omit.
+            B. If OutdoorDayAvg < 150 AND (OutdoorBaseline30 is null OR OutdoorDayAvg < OutdoorBaseline30 * 2):
+               This is NOT a dust event. Output ONE sentence:
+               "For context, outdoor {Parameter} of {OutdoorDayAvg} µg/m³ sits below the level typically associated with a dust event (around 150 µg/m³){baseline_clause} — so the recorded conditions for this date don't point to an elevated dust episode."
+               Where {baseline_clause} = " and below twice the station's 30-day average of {OutdoorBaseline30} µg/m³" if OutdoorBaseline30 is not null, otherwise omit.
 
-            STEP 4 — School closed note (append as a separate sentence if DayOfWeek is Saturday or Sunday):
+            STEP 4 — School closed note (append as a separate sentence only if DayOfWeek is Saturday or Sunday):
             "Note: {EventDate} was a {DayOfWeek}, so the school was likely unoccupied. Indoor levels reflect the building without normal occupant activity."
 
-            STEP 5 — Distance caveat (append as a separate sentence if Distance_km > 10):
-            "As {NearestAmbientStation} is {Distance_km} km away, local outdoor conditions at {IndoorSite} may differ from station readings."
+            STEP 5 — Distance caveat (append as a separate sentence only if Distance_km > 10):
+            "As {NearestAmbientStation} is about {Distance_km} km away, the outdoor conditions right at {IndoorSite} may differ a little from the station's readings."
 
-            NEVER mention hourly peaks, delays, the dust mix (no PM2.5 comparison available for PM10 queries), or ventilation causes.
-            NEVER output PeakPercent, ProtectionLevel, OutdoorBaseline30, BaselineIORatio, or DayOfWeek as column labels.
+            STEP 6 — Closing offer (always append as a final sentence):
+            "If it's helpful, I can show the other pollutant readings at {IndoorSite} for that day, or compare this reading with nearby sites within your access."
+
+            NEVER output column names, raw numbers without context, or placeholder text.
+            NEVER output OutdoorBaseline30, IndoorBaseline30, BaselineIORatio, DayOfWeek, IndoorReadingCount, or OutdoorReadingCount as labelled values.
+            """,
+
+        // Sites (any sector) that repeatedly exceeded an AQI threshold AND maintained a DSR at or above a minimum
+        ["sites_repeated_aqi_exceedance_with_dsr"] = """
+            Data columns: "StationName", "OrganizationName", "Location", "SectorName", "SubSectorName", "RegionName", "DaysExceeded", "TotalReadingDays", "DeviceActiveDays", "DataSuccessRate_Pct".
+            Rows are ordered by DaysExceeded descending (most exceedances first), then StationName.
+
+            Line 1: "{Count} school(s)/site(s) repeatedly exceeded AQI {aqiThreshold} over the last 30 days while maintaining a Data Success Rate of at least {dsrThreshold}%:"
+            Then a markdown table:
+            | Site | Region | Days Exceeded | Total Reading Days | DSR (%) |
+            |------|--------|---------------|--------------------|---------|
+            Fill every row from the data using StationName, RegionName, DaysExceeded, TotalReadingDays, DataSuccessRate_Pct.
+
+            Final sentence: "These sites had reliable data (DSR ≥ {dsrThreshold}%) despite frequently exceeding AQI {aqiThreshold}, making their readings trustworthy for analysis."
+
+            If no rows: "No sites exceeded AQI {aqiThreshold} more than once in the last 30 days while maintaining a Data Success Rate of at least {dsrThreshold}%."
+            NEVER output placeholder text — always use actual values from the data.
+            Use the aqiThreshold and dsrThreshold from the user's question (defaults: 100 and 75% respectively).
             """,
     };
 
@@ -1231,7 +1289,8 @@ public sealed class AzureAIService : IAzureAIService
         // or *.inference.ai.azure.com and will fail with DefaultAzureCredential otherwise.
         bool isNonAzureEndpoint = !string.IsNullOrWhiteSpace(_options.Endpoint)
             && !_options.Endpoint.Contains(".openai.azure.com", StringComparison.OrdinalIgnoreCase)
-            && !_options.Endpoint.Contains(".inference.ai.azure.com", StringComparison.OrdinalIgnoreCase);
+            && !_options.Endpoint.Contains(".inference.ai.azure.com", StringComparison.OrdinalIgnoreCase)
+            && !_options.Endpoint.Contains(".services.ai.azure.com", StringComparison.OrdinalIgnoreCase);
 
         if (isNonAzureEndpoint && !string.IsNullOrWhiteSpace(_options.ApiKey))
         {
@@ -1351,7 +1410,7 @@ public sealed class AzureAIService : IAzureAIService
             If the question contains a device name THEN choose one of the device templates:
             - If the question asks for METADATA (site, station, region, sector, deployed, created, installed, when, model, details, info, last measured time, last data time, where is) → select "device_info"
             - If the question asks what POLLUTANTS or PARAMETERS a device monitors/measures → select "device_pollutants"
-            - If the question asks for STATUS only (active, inactive, online, offline, is it working, is it sending) WITHOUT asking for readings → select "device_status"
+            - If the question asks for STATUS only (active, inactive, online, offline, is it working, is it sending, when last sent, when last reported, when last measured, last active, last data, most recent transmission) WITHOUT asking for historical/interval readings → select "device_status"
             - If the question mentions ANY of: a time interval (5 min, 1 hour, 1H, 8 hour, 8H, 24 hour, 24H, daily, monthly, yearly, annual), OR the words average/avg/mean/reading/value/history/historical/past/trend, OR a date/time reference (yesterday, today, last hour, last 24 hours, last week, last month, last year, "at 8AM", "on 2026-07-16", any date or clock time, any "last N" phrase) → select "device_reading_history". A device name + any date word (yesterday, today, last week, last month) ALWAYS means device_reading_history — NEVER device_info.
             - Otherwise (no time interval or date, asks for current/latest/live/now readings, or no specific context) → select "device_live_reading"
             NEVER select a site template (site_aqi_single, site_readings_all, site_aqi_all, site_aqi_by_category) when the question contains a device name.
@@ -1394,6 +1453,16 @@ public sealed class AzureAIService : IAzureAIService
             - "is BA 0010 active" → device_status, deviceName="BA 0010"
             - "is device B 0001 active or inactive" → device_status, deviceName="B 0001"
             - "is device B 1 online" → device_status, deviceName="B 1"
+            - "is SEI100M 0009 active or inactive right now" → device_status, deviceName="SEI100M 0009"
+            - "what is the current status of SEI100M 0009" → device_status, deviceName="SEI100M 0009"
+            - "is SEI100M 0009 currently online or offline" → device_status, deviceName="SEI100M 0009"
+            - "can you tell me whether SEI100M 0009 is active at the moment" → device_status, deviceName="SEI100M 0009"
+            - "is device SEI100M 0009 working now" → device_status, deviceName="SEI100M 0009"
+            - "status of SEI100M 0009" → device_status, deviceName="SEI100M 0009"
+            - "when was the last time SEI100M 0009 sent data" → device_status, deviceName="SEI100M 0009"
+            - "what is the most recent data transmission time for SEI100M 0009" → device_status, deviceName="SEI100M 0009"
+            - "when did SEI100M 0009 last report any data" → device_status, deviceName="SEI100M 0009"
+            - "when was SEI100M 0009 last active" → device_status, deviceName="SEI100M 0009"
             - "what is the reading of device B 0001" → device_live_reading, deviceName="B 0001"
 
             PRIORITY RULE — site name beats region/generic rules:
@@ -1419,9 +1488,15 @@ public sealed class AzureAIService : IAzureAIService
             - "Abu Dhabi schools CO2 levels" → schools_latest_pollutant, regionName="Abu Dhabi", parameterName="CO2"
             - "all schools in Al Ain with latest PM2.5" → schools_latest_pollutant, regionName="Al Ain", parameterName="PM2.5"
             - "schools where AQI is high in Abu Dhabi" → schools_latest_pollutant, regionName="Abu Dhabi", parameterName="AQI Index"
-            - "Show me the top 5 schools with the highest AQI right now" → schools_latest_pollutant, parameterName="AQI Index", topN="5"
-            - "top 3 schools with worst AQI" → schools_latest_pollutant, parameterName="AQI Index", topN="3"
-            - "top 10 schools with highest CO2" → schools_latest_pollutant, parameterName="CO2", topN="10"
+            - "Show me the top 5 schools with the highest AQI right now" → schools_latest_pollutant, parameterName="AQI Index", topN="5", sortOrder="desc"
+            - "top 3 schools with worst AQI" → schools_latest_pollutant, parameterName="AQI Index", topN="3", sortOrder="desc"
+            - "top 10 schools with highest CO2" → schools_latest_pollutant, parameterName="CO2", topN="10", sortOrder="desc"
+            - "bottom 5 schools with lowest AQI" → schools_latest_pollutant, parameterName="AQI Index", topN="5", sortOrder="asc"
+            - "5 schools with lowest CO2" → schools_latest_pollutant, parameterName="CO2", topN="5", sortOrder="asc"
+            - "which 3 schools have the best AQI" → schools_latest_pollutant, parameterName="AQI Index", topN="3", sortOrder="asc"
+            - "schools with AQI between 50 and 100" → schools_latest_pollutant, parameterName="AQI Index", minValue="50", maxValue="100"
+            - "schools with AQI equal to 21" → schools_latest_pollutant, parameterName="AQI Index", minValue="20", maxValue="21"
+            For topN queries: ALWAYS set sortOrder="desc" for "top/highest/worst", sortOrder="asc" for "bottom/lowest/best/cleanest".
             NEVER return a list of all sites when the user has named a specific site.
             NEVER select site_aqi_single when the user says "all schools", "Abu Dhabi region schools", or any generic school group — those are not site names.
 
@@ -1441,14 +1516,15 @@ public sealed class AzureAIService : IAzureAIService
                When extracting stationName: use ONLY the site name itself — strip any trailing region qualifier like "in Al Ain", "in Abu Dhabi", "in Al Dhafra". Strip trailing words like "site", "station", "location". Example: "Kaltham Hasan AL Obeidli site" → stationName = "Kaltham Hasan AL Obeidli".
             2. If the user mentions a SPECIFIC site or station name AND asks for ALL readings, ALL parameters, ALL current data, or the last 24 hours of readings → select "site_readings_all". Returns a table.
                Same stationName rule: strip region qualifier and trailing generic words from the extracted name.
-            3. Only select "schools_latest_pollutant" when the user says "schools" generically with a GENERIC plural reference (e.g. "all schools", "schools in Al Ain", "what is the AQI at schools") with NO specific school name mentioned AND is asking for a specific POLLUTANT reading (CO2, PM2.5, AQI value, etc.) WITHOUT an AQI quality level filter. NEVER select schools_latest_pollutant when: (a) a specific school or site name is mentioned, or (b) the user is asking about AQI category/quality level (good, moderate, unhealthy, etc.) — use site_aqi_by_category with sectorName="Public & Govt-School" instead.
+            2b. If the user asks which schools or sites repeatedly exceeded a given AQI threshold AND had a Data Success Rate (DSR) above a minimum (e.g. "schools that repeatedly exceeded AQI 100 but still had Data Success Rate of at least 75%", "sites that crossed AQI 100 more than once with good data", "exceeded AQI threshold with acceptable DSR") → select "sites_repeated_aqi_exceedance_with_dsr". Extract aqiThreshold (default 100) and dsrThreshold (default 75). NEVER select schools_latest_pollutant for this case — schools_latest_pollutant only shows current/live readings, not historical exceedance counts combined with DSR.
+            3. Only select "schools_latest_pollutant" when the user says "schools" generically with a GENERIC plural reference (e.g. "all schools", "schools in Al Ain", "what is the AQI at schools") with NO specific school name mentioned AND is asking for a specific POLLUTANT reading (CO2, PM2.5, AQI value, etc.) WITHOUT an AQI quality level filter AND WITHOUT any historical exceedance or DSR condition. NEVER select schools_latest_pollutant when: (a) a specific school or site name is mentioned, (b) the user is asking about AQI category/quality level (good, moderate, unhealthy, etc.) — use site_aqi_by_category with sectorName="Public & Govt-School" instead, or (c) the user asks about "repeatedly exceeded", "exceedance", "Data Success Rate", or "DSR" combined with AQI — use sites_repeated_aqi_exceedance_with_dsr instead.
             4. If the user asks an AQI question that mentions ONLY a region name (Abu Dhabi, Abudhabi, Al Ain, Alain, Al Dhafra, Aldhafra) with NO specific site name, OR asks for "all regions", "by region", "region wise" → select "region_aqi_geographical". Extract regionName ONLY if exactly ONE specific region is mentioned and the user is asking about that region alone. OMIT regionName (return all regions) when: the user names TWO OR MORE regions (e.g. "Abu Dhabi, Al Ain, and Al Dhafra"), says "each region", "all regions", "every region", "each of the regions", "all three regions", "region wise", or any phrasing that implies the complete set. NEVER extract regionName when the question implies all three. NEVER select region_aqi_geographical when a specific site name is also present — rule 1 takes priority.
             4b. If the user asks a generic AQI question with NO specific site name AND NO region AND NO quality level word → select "site_aqi_all". Examples: "show me the AQI", "what is the AQI", "show the AQI", "current AQI", "display AQI", "AQI at my sites". NEVER select site_aqi_all when: (a) the question names a specific site or person → use site_aqi_single (rule 1), or (b) the question contains a quality word like good, bad, poor, unhealthy, moderate, hazardous, safe, harmful, vulnerable, critical → use site_aqi_by_category (rule 8).
             5. If the user asks to LIST or SHOW which schools/sites exist (no pollutant reading requested) — with or without a region filter — → ALWAYS select "sites_by_filter". Extract BOTH sectorName AND regionName when both are present. NEVER select schools_latest_pollutant, list_stations, or sites_filtered for these. "sites_filtered" must NEVER be used for sector-based questions — it has no sectorName parameter and cannot filter by sector.
                Sector extraction for sites_by_filter:
                - "residential sites in [region]" → sectorName="Residential", regionName=[region]
                - "commercial sites in [region]" → sectorName="Commercial", regionName=[region]
-               - "schools in [region]" / "government schools in [region]" / "public and government schools in [region]" → sectorName="Public & Govt-School", regionName=[region]
+               - "schools in [region]" / "government schools in [region]" / "public and government schools in [region]" / "MOE schools in [region]" / "moe school in [region]" → sectorName="Public & Govt-School", regionName=[region]
                - "residential sites" (no region) → sectorName="Residential", no regionName
                - "commercial sites" (no region) → sectorName="Commercial", no regionName
                Examples: "show me the residential sites in Al Dhafra" → sites_by_filter, sectorName="Residential", regionName="Al Dhafra"
@@ -1647,11 +1723,11 @@ public sealed class AzureAIService : IAzureAIService
             For regionName: extract the region(s) the user mentions (words like "in", "under", "for", "within", "at", "and" between region names all indicate regions). Map to: "Abu Dhabi" (also: abudhabi, abu-dhabi, abudabi), "Al Ain" (also: alain, al-ain), "Al Dhafra" (also: aldhafra, al-dhafra, dhafra). If the user mentions MORE THAN ONE region (e.g. "Abu Dhabi and Al Dhafra", "Al Ain or Abu Dhabi"), output ALL matched regions joined by "|" (pipe). Examples: "Abu Dhabi and Al Dhafra" → "Abu Dhabi|Al Dhafra"; "Al Ain and Al Dhafra" → "Al Ain|Al Dhafra"; "all three regions" → omit. If the user asks about all regions or does not mention a specific region, omit regionName.
             For sectorName: there are exactly 3 sectors in HAWAQM — Commercial, Residential, Public & Govt-School. There is NO Industrial sector. Map ALL user variations to one of these three canonical values only:
               → "Commercial": "commercial", "commercial sector", "commercial sites", "commercial sites in"
-              → "Public & Govt-School": ANY phrase containing "school", "schools", "govt", "gov", "government", "public & govt", "public & gov", "public and gov", "public and govt", "public and government", "govt-school", "gov-school", "government school", "govt school", "gov school", "educational", "private and gov-school", "private and govt school", "public and government schools", "government schools", "which public and government schools", "show me public and government schools", "list government schools"
+              → "Public & Govt-School": ANY phrase containing "school", "schools", "govt", "gov", "government", "public & govt", "public & gov", "public and gov", "public and govt", "public and government", "govt-school", "gov-school", "government school", "govt school", "gov school", "educational", "private and gov-school", "private and govt school", "public and government schools", "government schools", "which public and government schools", "show me public and government schools", "list government schools", "moe", "moe school", "moe schools", "MOE", "MOE school", "MOE schools", "ministry of education school", "ministry of education schools"
               → "Residential": "residential", "residential sector", "residential sites"
             IMPORTANT: "public & Gov School", "Public and Government School", "Public & Government school", "gov school", "govt school" ALL map to "Public & Govt-School".
             IMPORTANT: When the template is "site_aqi_by_category" and the user mentions "schools" or "school sites", ALWAYS extract sectorName="Public & Govt-School".
-            IMPORTANT: When the template is "sites_by_filter" and the user mentions "schools", "school", "different schools", "schools present", "which schools", "list schools", "government schools", "govt schools", "public and government schools", "public & government schools", "public and govt schools" → ALWAYS extract sectorName="Public & Govt-School".
+            IMPORTANT: When the template is "sites_by_filter" and the user mentions "schools", "school", "different schools", "schools present", "which schools", "list schools", "government schools", "govt schools", "public and government schools", "public & government schools", "public and govt schools", "moe", "moe school", "moe schools", "MOE schools", "ministry of education schools" → ALWAYS extract sectorName="Public & Govt-School".
             IMPORTANT: When the template is "sites_by_filter", there are exactly 3 valid sectors. Map the user's words and extract BOTH sectorName AND regionName when a region is mentioned:
               → sectorName="Residential": user says "residential", "residential sites", "residential sector", "residential sites in [region]"
                 Examples: "residential sites in Al Dhafra" → sectorName="Residential", regionName="Al Dhafra"
@@ -1662,10 +1738,12 @@ public sealed class AzureAIService : IAzureAIService
                 Examples: "commercial sites in Al Ain" → sectorName="Commercial", regionName="Al Ain"
                           "commercial sites in Abu Dhabi" → sectorName="Commercial", regionName="Abu Dhabi"
                           "show all commercial sites" → sectorName="Commercial", no regionName
-              → sectorName="Public & Govt-School": user says "schools", "government schools", "public and government schools", "govt schools", "public & govt schools", "school sites in [region]"
+              → sectorName="Public & Govt-School": user says "schools", "government schools", "public and government schools", "govt schools", "public & govt schools", "school sites in [region]", "moe schools", "moe school", "MOE schools", "ministry of education schools"
                 Examples: "public and government schools in Al Ain" → sectorName="Public & Govt-School", regionName="Al Ain"
                           "government schools in Al Dhafra" → sectorName="Public & Govt-School", regionName="Al Dhafra"
                           "schools in Abu Dhabi" → sectorName="Public & Govt-School", regionName="Abu Dhabi"
+                          "MOE schools in Al Ain" → sectorName="Public & Govt-School", regionName="Al Ain"
+                          "moe schools in Abu Dhabi" → sectorName="Public & Govt-School", regionName="Abu Dhabi"
             ALWAYS extract regionName separately when a region (Al Ain, Abu Dhabi, Al Dhafra) is mentioned alongside a sector. Never let the region override the sector or vice versa — extract both.
             IMPORTANT: When the template is "sites_by_filter" and user mentions MULTIPLE sectors (e.g. "residential and commercial sites", "schools and residential") → omit sectorName so all sectors are shown, but mention the filter in the intro sentence.
             IMPORTANT: When the template is "sites_by_filter":
@@ -1688,7 +1766,7 @@ public sealed class AzureAIService : IAzureAIService
             CRITICAL — pollutant group words for device queries: if the user says "physical" (or "physical readings", "physical pollutants", "physical parameters"), omit parameterName — the controller will return PM2.5, PM10, Temperature, Humidity, Noise. If the user says "chemical" (or "chemical readings", "chemical pollutants", "chemical parameters"), omit parameterName — the controller will return CO, CO2, NO2, SO2, O3, CH2O, VOC. Only extract a specific parameterName when the user names a single explicit pollutant.
             If the user asks for "reading", "readings", "all readings", "all parameters", "all data", "physical", or "chemical" — omit parameterName entirely.
             For statusFilter (devices_by_filter only): extract "Active" if user says "active", "online", "working", "sending", "connected"; extract "Inactive" if user says "inactive", "offline", "not sending", "down", "disconnected"; omit (do NOT set statusFilter) if user says "available", "installed", "under", "at", "in" with no explicit status word — those are location queries not status filters.
-            IMPORTANT — for devices_by_filter: when the user mentions "school", "schools", "school sites", "school sector", "government school", "govt school", "public school", "private school", "MOE school" → ALWAYS extract sectorName="Public & Govt-School". The school sector in HAWAQM is always "Public & Govt-School" and covers both private and government schools. Never leave sectorName empty when the user asks about schools in a device query.
+            IMPORTANT — for devices_by_filter: when the user mentions "school", "schools", "school sites", "school sector", "government school", "govt school", "public school", "private school", "MOE school", "MOE schools", "moe school", "moe schools", "moe", "ministry of education school" → ALWAYS extract sectorName="Public & Govt-School". The school sector in HAWAQM is always "Public & Govt-School" and covers both private and government schools. Never leave sectorName empty when the user asks about schools in a device query.
             For liveStatus (sites_by_filter only): extract "Active" ONLY if user explicitly says "active sites", "active stations", "online sites", "currently active"; extract "Inactive" ONLY if user explicitly says "inactive sites", "inactive stations", "offline sites", "not active". If the user mentions MORE THAN ONE status (e.g. "active and inactive sites"), join with "|": "Active|Inactive". CRITICAL: if the user says "all sites", "show sites", "list sites", "give all sites", or any generic site list phrase WITHOUT a status word — omit liveStatus entirely. Never guess or infer liveStatus from context. Example: "active sites in Al Ain" → liveStatus="Active", regionName="Al Ain".
             For aqiCategory (site_aqi_by_category only): map the user's words to one or more of the six categories below.
               If the user asks for MORE THAN ONE category (e.g. "Moderate and Very Unhealthy", "Good or Unhealthy"), output ALL matched categories joined by "|" (pipe).
@@ -1705,6 +1783,18 @@ public sealed class AzureAIService : IAzureAIService
             For topN (schools_latest_pollutant and sector_latest_pollutant): extract a positive integer when user says "top N", "top 5", "top 10", "highest N", "best N", "worst N", "first N", "show me N". Examples: "top 5 schools" → topN: "5", "top 10 sites with highest AQI" → topN: "10". Omit if user does not specify a count limit.
             For minValue (site_aqi_by_category and schools_latest_pollutant): extract a numeric AQI lower bound when user says "more than X", "greater than X", "above X", "over X", "exceeding X", "higher than X", "worse than X". Use the number only (e.g. "AQI more than 30" → minValue: "30", "above 50" → minValue: "50", "higher than 50" → minValue: "50").
             For maxValue (site_aqi_by_category and schools_latest_pollutant): extract a numeric AQI upper bound when user says "less than X", "below X", "under X", "at most X", "lower than X", "better than X". Use the number only (e.g. "AQI less than 100" → maxValue: "100", "lower than 50" → maxValue: "50").
+            IMPORTANT — comparative category phrases map to minValue/maxValue (NOT aqiCategory). AQI category upper bounds: Good=50, Moderate=100, Unhealthy for Sensitive Groups=150, Unhealthy=200, Very Unhealthy=300. Use the upper bound of the named category as the threshold:
+              "worse than Good" / "more than Good" / "beyond Good" / "above Good" → minValue="50" (AQI > 50)
+              "worse than Moderate" / "more than Moderate" / "beyond Moderate" / "above Moderate" → minValue="100" (AQI > 100)
+              "worse than Unhealthy for Sensitive Groups" → minValue="150"
+              "worse than Unhealthy" → minValue="200"
+              "worse than Very Unhealthy" → minValue="300"
+              "better than Moderate" / "less than Moderate" / "below Moderate" → maxValue="100" (AQI ≤ 100)
+              "better than Unhealthy for Sensitive Groups" → maxValue="150"
+              "better than Unhealthy" → maxValue="200"
+              "better than Very Unhealthy" → maxValue="300"
+              "not Good" / "no longer Good" / "outside Good" → minValue="50"
+              Do NOT set aqiCategory when using comparative phrases — use minValue/maxValue instead.
             IMPORTANT — for site_aqi_by_category with AQI range: when user says "AQI more than 30 in Al Ain" → minValue="30", regionName="Al Ain". When "AQI less than 100 in Abu Dhabi" → maxValue="100", regionName="Abu Dhabi". When "AQI between 50 and 100" → minValue="50", maxValue="100". Do NOT extract aqiCategory when the user specifies a numeric range — use minValue/maxValue instead.
             IMPORTANT — for schools_latest_pollutant with numeric threshold: when user says "schools with AQI higher than 50", "Al Ain schools with AQI above 30", "schools where AQI is more than 100" → select schools_latest_pollutant, extract parameterName="AQI Index", minValue="50"/"30"/"100", regionName if mentioned. NEVER select site_aqi_by_category for school-specific threshold questions.
             IMPORTANT — regionName for site_aqi_by_category: extract regionName when user mentions a region ("in Al Ain", "in Abu Dhabi", "in Al Dhafra", "under Abu Dhabi", "within Al Ain") for AQI category or AQI range queries. Map to: "Abu Dhabi", "Al Ain", "Al Dhafra".

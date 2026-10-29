@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using HawaqmAI.Api.Configuration;
 using HawaqmAI.Api.Models;
@@ -340,10 +341,60 @@ public sealed class RbacEngine : IRbacEngine
         return param.Type switch
         {
             "int" => int.TryParse(rawValue, out var i) ? i : null as object,
-            "date" => DateTime.TryParse(rawValue, out var dt) ? dt.ToString("yyyy-MM-dd") : rawValue,
+            "date" => TryParseDate(rawValue, out var dt) ? (object)dt : rawValue,
             "string" => rawValue,
             _ => rawValue
         };
+    }
+
+    // All date formats the LLM or user might supply, tried in order (most specific first).
+    private static readonly string[] _dateFormats =
+    [
+        "yyyy-MM-dd",          // ISO 8601 — LLM default, e.g. 2026-03-20
+        "yyyy-MM-ddTHH:mm:ss", // ISO 8601 with time
+        "yyyy-MM-ddTHH:mm",
+        "yyyy/MM/dd",
+        "dd/MM/yyyy",          // UAE/UK locale, e.g. 20/03/2026
+        "dd-MM-yyyy",          // e.g. 20-03-2026
+        "dd.MM.yyyy",
+        "MM/dd/yyyy",          // US locale
+        "MM-dd-yyyy",
+        "d/M/yyyy",
+        "d-M-yyyy",
+        "yyyy-M-d",
+        "MMMM d, yyyy",        // e.g. March 20, 2026
+        "MMMM dd, yyyy",
+        "d MMMM yyyy",         // e.g. 20 March 2026
+        "dd MMMM yyyy",
+        "MMM d, yyyy",         // e.g. Mar 20, 2026
+        "MMM dd, yyyy",
+        "d MMM yyyy",
+        "dd MMM yyyy",
+    ];
+
+    private static bool TryParseDate(string raw, out DateTime result)
+    {
+        var s = raw?.Trim() ?? string.Empty;
+
+        // Try all explicit formats first (InvariantCulture — no ambiguity)
+        if (DateTime.TryParseExact(s, _dateFormats,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out result))
+        {
+            result = result.Date;
+            return true;
+        }
+
+        // Fallback: let the runtime try with invariant culture
+        if (DateTime.TryParse(s, CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out result))
+        {
+            result = result.Date;
+            return true;
+        }
+
+        result = default;
+        return false;
     }
 
     /// <summary>
