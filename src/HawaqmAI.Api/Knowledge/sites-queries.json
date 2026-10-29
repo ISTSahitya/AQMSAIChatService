@@ -600,7 +600,7 @@
       ],
       "responseType": "table",
       "tableUsed": "DMN_Stations",
-      "skipSiteFilter": false
+      "skipSiteFilter": true
     },
     {
       "id": "list_sectors",

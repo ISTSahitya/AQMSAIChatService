@@ -1246,16 +1246,33 @@ public sealed class AzureAIService : IAzureAIService
         string faqContext,
         CancellationToken ct = default)
     {
+        // Convert raw faq.json into a plain Q&A text so the LLM doesn't have to
+        // parse JSON structure. Raw JSON with escaped quotes confuses the model
+        // and causes it to return empty responses.
+        var readableContext = FormatFaqAsText(faqContext);
+
+        // Compute time range for "last 24 hours" FAQ answers
+        var toTime   = DateTime.Now;
+        var fromTime = toTime.AddHours(-24);
+        var fromTimeStr = fromTime.ToString("dd MMM yyyy HH:mm");
+        var toTimeStr   = toTime.ToString("dd MMM yyyy HH:mm");
+
         var systemPrompt = $$"""
             You are HAWAQM AI, an air quality monitoring assistant for a UAE government platform.
             Answer the user's question using ONLY the information provided below. Do not invent facts.
             When a FAQ entry directly answers the question, return that answer VERBATIM — do not paraphrase or reword it.
             EXCEPTION: if the FAQ answer contains the placeholder {SITE_NAME}, replace it with the actual site or school name the user mentioned in their question. If the user did not mention a specific site, replace {SITE_NAME} with "your site".
+            EXCEPTION: if the FAQ answer contains the placeholder {DEVICE_NAME}, replace it with the device name the user mentioned in their question (e.g. BA 0001, SEI100M 0008). If the user did not mention a specific device, replace {DEVICE_NAME} with "the device".
+            EXCEPTION: if the FAQ answer contains the placeholder {FROM_TIME}, replace it with "{{fromTimeStr}}".
+            EXCEPTION: if the FAQ answer contains the placeholder {TO_TIME}, replace it with "{{toTimeStr}}".
+            EXCEPTION: if the FAQ answer contains the placeholder {PEAK_AQI}, replace it with the peak AQI value visible in the data or conversation context. If no specific value is available, replace {PEAK_AQI} with "the peak value".
+            EXCEPTION: if the FAQ answer contains the placeholder {TIME}, replace it with the time of the peak visible in the data or conversation context. If no specific time is available, replace {TIME} with "the recorded time".
+            EXCEPTION: if the FAQ answer contains the placeholder {POLLUTANT_LIST}, replace it with the pollutants or parameters that were elevated at the same time, based on the data or context. If no specific pollutants are known, replace {POLLUTANT_LIST} with "the elevated parameters".
             CRITICAL — AQI category questions: if the user asks about a specific AQI category (Good, Moderate, Unhealthy, Unhealthy for Sensitive Groups, Very Unhealthy, Hazardous), return ONLY the answer for that exact category. Never return the answer for a different category. Match the category name exactly as stated by the user.
             Be concise — one to three sentences maximum. Output plain text only.
 
             HAWAQM Knowledge Base:
-            {{faqContext}}
+            {{readableContext}}
             """;
 
         var messages = new List<OaiChatMessage>
@@ -1266,6 +1283,36 @@ public sealed class AzureAIService : IAzureAIService
 
         var (content, _, _) = await CallWithRetryAsync(messages, ct, client: _fastChatClient);
         return content;
+    }
+
+    /// <summary>
+    /// Converts faq.json (raw JSON) into a plain-text Q&A list so the LLM
+    /// receives readable content instead of escaped JSON structure.
+    /// Falls back to the raw string if parsing fails.
+    /// </summary>
+    private static string FormatFaqAsText(string faqJson)
+    {
+        if (string.IsNullOrWhiteSpace(faqJson)) return faqJson;
+        try
+        {
+            using var doc = JsonDocument.Parse(faqJson);
+            if (!doc.RootElement.TryGetProperty("faqs", out var faqs)) return faqJson;
+
+            var sb = new StringBuilder();
+            int i = 1;
+            foreach (var entry in faqs.EnumerateArray())
+            {
+                var q = entry.TryGetProperty("question", out var qp) ? qp.GetString() : null;
+                var a = entry.TryGetProperty("answer",   out var ap) ? ap.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(q) && !string.IsNullOrWhiteSpace(a))
+                    sb.AppendLine($"Q{i++}: {q}\nA: {a}\n");
+            }
+            return sb.Length > 0 ? sb.ToString() : faqJson;
+        }
+        catch
+        {
+            return faqJson; // graceful fallback
+        }
     }
 
     // ── Private: client building ────────────────────────────────────────────

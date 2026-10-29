@@ -494,6 +494,22 @@ public sealed class ChatController : ControllerBase
             "i need six months of exceedance",
             "why can the site aqi look acceptable",
             "site average be hiding a problem",
+            "how can one device have a high reading",
+            "one device have a high reading",
+            "one device high reading while",
+            "one device shows high",
+            "device have a high reading while",
+            "device high reading while the overall",
+            "device high reading while the site",
+            "high reading while the overall site",
+            "high reading while the site aqi",
+            "device reading high but site",
+            "device aqi high but overall",
+            "overall site aqi is still acceptable",
+            "site aqi is still acceptable",
+            "overall aqi is still acceptable",
+            "site aqi still acceptable when",
+            "site aqi still good when",
             "can you prepare a one-year raw-data export",
             "can mold test results be combined",
             "can you tell me tomorrow",
@@ -751,8 +767,16 @@ public sealed class ChatController : ControllerBase
                 await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
                 string safetyErrMsg;
                 if (!string.IsNullOrWhiteSpace(safetyApiResult.Error)
-                    && (safetyApiResult.Error.Contains("doesn't match any known site", StringComparison.OrdinalIgnoreCase)
-                        || safetyApiResult.Error.Contains("do not have access", StringComparison.OrdinalIgnoreCase)))
+                    && safetyApiResult.Error.Contains("do not have access", StringComparison.OrdinalIgnoreCase))
+                {
+                    var askedSiteName = safetyParamResult.Parameters.GetValueOrDefault("stationName")
+                                     ?? safetyParamResult.Parameters.GetValueOrDefault("siteName")
+                                     ?? safetyParamResult.Parameters.GetValueOrDefault("station")
+                                     ?? "That site";
+                    safetyErrMsg = BuildAccessDeniedMessage(askedSiteName, user, scope);
+                }
+                else if (!string.IsNullOrWhiteSpace(safetyApiResult.Error)
+                    && safetyApiResult.Error.Contains("doesn't match any known site", StringComparison.OrdinalIgnoreCase))
                 {
                     var askedSiteName = safetyParamResult.Parameters.GetValueOrDefault("stationName")
                                      ?? safetyParamResult.Parameters.GetValueOrDefault("siteName")
@@ -796,11 +820,14 @@ public sealed class ChatController : ControllerBase
         // Detect whether user asked for a bar or pie chart so pre-checks can honour the request
         bool userWantsBar = lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph");
         bool userWantsPie = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph") || lowerMsg.Contains("plot a pie") || lowerMsg.Contains("plot pie");
-        // Schools AQI pie: only force schools_aqi_pie when the question is specifically about
-        // schools/sites broken down BY AQI category — NOT generic pie charts about regions/sectors/counts.
+        // Schools AQI pie: only force schools_aqi_pie when the user EXPLICITLY asked for a chart/pie/bar
+        // AND the question is about schools/sites broken down BY AQI category.
+        // "MOE schools by AQI category region-wise" (no chart word) must NOT trigger this — route to table instead.
         var aqiCategoryWords = new[] { "aqi category", "aqi level", "aqi categories", "aqi levels", "by category", "by aqi" };
         var schoolSiteWords  = new[] { "school", "schools", "sites", "site" };
-        bool isSchoolsAqiPie = isChartDistribution
+        var explicitChartWords = new[] { "pie chart", "pie graph", "bar chart", "bar graph", "plot a pie", "plot pie", "donut chart", "doughnut chart", "chart of schools", "chart of sites" };
+        bool userAskedForChart = explicitChartWords.Any(k => lowerMsg.Contains(k));
+        bool isSchoolsAqiPie = userAskedForChart
             && aqiCategoryWords.Any(k => lowerMsg.Contains(k))
             && schoolSiteWords.Any(k => lowerMsg.Contains(k));
         // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
@@ -1071,9 +1098,13 @@ public sealed class ChatController : ControllerBase
 
         // Exclude indoor vs ambient comparison queries — "compare the current indoor AQI ... with the nearest ambient station"
         // is an indoor_ambient_compare query, not an ambient_station_readings lookup.
-        bool isIndoorAmbientCompareQuery = (lowerMsg.Contains("compare") || lowerMsg.Contains("comparison") || lowerMsg.Contains("vs") || lowerMsg.Contains("versus"))
-            && lowerMsg.Contains("indoor")
-            && (lowerMsg.Contains("ambient") || lowerMsg.Contains("outdoor"));
+        // Also catches "Al Reyada School AQI vs nearest ambient station" (no explicit "indoor" word).
+        bool isIndoorAmbientCompareQuery =
+            (lowerMsg.Contains("compare") || lowerMsg.Contains("comparison") || lowerMsg.Contains("vs") || lowerMsg.Contains("versus"))
+            && (lowerMsg.Contains("ambient") || lowerMsg.Contains("outdoor"))
+            && (lowerMsg.Contains("indoor") || lowerMsg.Contains("nearest ambient") || lowerMsg.Contains("nearest outdoor")
+                || lowerMsg.Contains("ambient station") || lowerMsg.Contains("outdoor station")
+                || (hasAtSiteRef && (lowerMsg.Contains("ambient aqi") || lowerMsg.Contains("outdoor aqi"))));
         bool isAmbientStationQuery = !isAmbientAllStationsQuery
             && !isIndoorAmbientCompareQuery
             && (lowerMsg.Contains("outdoor station") || lowerMsg.Contains("ambient station"))
@@ -2838,6 +2869,32 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── Override: ambient station comparison → force indoor_ambient_compare ──
+        // "Compare the current indoor AQI at Al Reyada School with the nearest ambient station"
+        // often routes to site_aqi_single — detect and correct here.
+        bool hasAmbientCompareSignal =
+            (lowerMsg.Contains("ambient station") || lowerMsg.Contains("outdoor station") ||
+             lowerMsg.Contains("nearest ambient") || lowerMsg.Contains("nearest outdoor") ||
+             lowerMsg.Contains("ambient aqi") || lowerMsg.Contains("outdoor aqi") ||
+             // plain "ambient" with a site ref and compare word is enough
+             (lowerMsg.Contains("ambient") && hasAtSiteRef))
+            && (lowerMsg.Contains("compare") || lowerMsg.Contains("vs") || lowerMsg.Contains("versus") ||
+                lowerMsg.Contains("with the nearest") || lowerMsg.Contains("and the") ||
+                lowerMsg.Contains("indoor") || lowerMsg.Contains("indoor aqi"));
+
+        if (hasAmbientCompareSignal && template.Id != "indoor_ambient_compare")
+        {
+            var ambientTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct))
+                .FirstOrDefault(t => t.Id == "indoor_ambient_compare");
+            if (ambientTemplate is not null)
+            {
+                _log.Debug("ChatController: ambient-compare override — switching from {From} to indoor_ambient_compare", template.Id);
+                template = ambientTemplate;
+                var ambientFill = await _azureAI.FillParametersAsync(enrichedMessage, ambientTemplate, history, scope, ct);
+                llmParams = ambientFill.Parameters;
+            }
+        }
+
         _log.Debug("ChatController: template={Template}, llmParams={Params}",
             template.Id, string.Join(", ", llmParams.Select(kv => $"{kv.Key}={kv.Value}")));
 
@@ -3041,10 +3098,19 @@ public sealed class ChatController : ControllerBase
                 // these are permanent user errors, not transient API failures.
                 string friendlyMsg;
                 if (!string.IsNullOrWhiteSpace(apiResult.Error)
-                    && (apiResult.Error.Contains("doesn't match any known site", StringComparison.OrdinalIgnoreCase)
-                        || apiResult.Error.Contains("do not have access", StringComparison.OrdinalIgnoreCase)))
+                    && apiResult.Error.Contains("do not have access", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Extract the site name the user asked for from llmParams for a cleaner message
+                    // Site exists but is outside the user's permitted scope — show access-denied message
+                    var askedSite = llmParams.GetValueOrDefault("stationName")
+                                ?? llmParams.GetValueOrDefault("siteName")
+                                ?? llmParams.GetValueOrDefault("station")
+                                ?? "That site";
+                    friendlyMsg = BuildAccessDeniedMessage(askedSite, user, scope);
+                }
+                else if (!string.IsNullOrWhiteSpace(apiResult.Error)
+                    && apiResult.Error.Contains("doesn't match any known site", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Site genuinely not found in the system
                     var askedSite = llmParams.GetValueOrDefault("stationName")
                                 ?? llmParams.GetValueOrDefault("siteName")
                                 ?? llmParams.GetValueOrDefault("station");
@@ -4722,5 +4788,45 @@ public sealed class ChatController : ControllerBase
             _ =>
                 "No data was found for your query. The devices may be syncing or no readings match the selected filters. Please try adjusting your filters or check back shortly."
         };
+    }
+
+    /// <summary>
+    /// Builds the user-facing access-denied message for a site outside the user's permitted scope.
+    /// Fills {{SITE_NAME}} with the asked site name and {{ACCESSIBLE_SCOPE}} with a human-readable
+    /// description of what the user can access (region, sector, site list, or "all sites").
+    /// </summary>
+    private static string BuildAccessDeniedMessage(string askedSiteName, UserContext? user, ResolvedScope scope)
+    {
+        string accessibleScope;
+        if (user is null || user.HasAllSitesAccess)
+        {
+            accessibleScope = "all sites in the system";
+        }
+        else
+        {
+            // Build a human-readable description from region/sector scope bar filters first,
+            // then fall back to the permitted site count from the JWT.
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(scope.Region))
+                parts.Add(scope.Region);
+            if (!string.IsNullOrWhiteSpace(scope.Sector))
+                parts.Add($"the {scope.Sector} sector");
+
+            if (parts.Count > 0)
+            {
+                accessibleScope = string.Join(", ", parts);
+            }
+            else
+            {
+                var count = user.PermittedSiteIds.Count;
+                accessibleScope = count == 1
+                    ? "1 permitted site"
+                    : $"{count} permitted site(s)";
+            }
+        }
+
+        return $"I'm sorry — {askedSiteName} is not within your account's access, so I can't show its readings. " +
+               $"Your access covers {accessibleScope}, and I can answer the same question for any of those sites. " +
+               $"To add this site to your access, please contact your HAWAQM administrator.";
     }
 }

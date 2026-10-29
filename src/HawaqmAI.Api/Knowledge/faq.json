@@ -7,7 +7,7 @@
     },
     {
       "question": "How often do HAWAQM devices record data?",
-      "answer": "HAWAQM devices record and transmit measured data at 5-minute intervals."
+      "answer": "Every HAWAQM device records a reading every 5 minutes, all day. This is what keeps the dashboard close to real time, and the daily and monthly averages are built from these readings."
     },
     {
       "question": "When is a device considered offline or inactive?",
@@ -27,7 +27,7 @@
     },
     {
       "question": "Does HAWAQM monitor temperature, humidity and noise as well as pollutants?",
-      "answer": "Yes. In addition to gas and particulate measurements, HAWAQM records temperature, humidity and ambient noise."
+      "answer": "Yes. Every device also records temperature, humidity and ambient noise. High humidity is especially worth watching, because sustained high levels can lead to mold."
     },
     {
       "question": "What AQI range is considered Good?",
@@ -75,15 +75,15 @@
     },
     {
       "question": "Can I view both indoor and ambient air-quality locations on the map?",
-      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations as two layers you can switch on or off. Each location shows its current AQI, so you can compare indoor and outdoor conditions easily."
+      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations, and you can enable or disable each layer using the radio buttons. Each location displays its current AQI, so you can easily compare indoor and outdoor conditions at a glance. You can view it here: https://iaq.doh.gov.ae/AQMSIndoor/GeographicalAnalysis"
     },
     {
       "question": "Does the map show both indoor and ambient air-quality sites?",
-      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations as two layers you can switch on or off. Each location shows its current AQI, so you can compare indoor and outdoor conditions easily."
+      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations, and you can enable or disable each layer using the radio buttons. Each location displays its current AQI, so you can easily compare indoor and outdoor conditions at a glance. You can view it here: https://iaq.doh.gov.ae/AQMSIndoor/GeographicalAnalysis"
     },
     {
       "question": "Can I see indoor and ambient air-quality locations on the map?",
-      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations as two layers you can switch on or off. Each location shows its current AQI, so you can compare indoor and outdoor conditions easily."
+      "answer": "Yes. The map shows indoor HAWAQM sites and outdoor (ambient) stations, and you can enable or disable each layer using the radio buttons. Each location displays its current AQI, so you can easily compare indoor and outdoor conditions at a glance. You can view it here: https://iaq.doh.gov.ae/AQMSIndoor/GeographicalAnalysis"
     },
     {
       "question": "What happens if a site has no geographic coordinates?",
@@ -183,7 +183,27 @@
     },
     {
       "question": "Can you tell me tomorrow's weather forecast?",
-      "answer": "HAWAQM monitors indoor and ambient air quality only. Weather forecasting is outside its scope. Please use a meteorological service for weather forecasts."
+      "answer": "I'm sorry — weather forecasts are outside my scope. I work with HAWAQM indoor air-quality data: readings, sites, devices, alerts and reports. I can tell you the current AQI at any of your sites, or which sites had the highest AQI this week — would either of those help?"
+    },
+    {
+      "question": "What will the weather be like tomorrow?",
+      "answer": "I'm sorry — weather forecasts are outside my scope. I work with HAWAQM indoor air-quality data: readings, sites, devices, alerts and reports. I can tell you the current AQI at any of your sites, or which sites had the highest AQI this week — would either of those help?"
+    },
+    {
+      "question": "Can you tell me tomorrow's forecast for Abu Dhabi?",
+      "answer": "I'm sorry — weather forecasts are outside my scope. I work with HAWAQM indoor air-quality data: readings, sites, devices, alerts and reports. I can tell you the current AQI at any of your sites, or which sites had the highest AQI this week — would either of those help?"
+    },
+    {
+      "question": "What will the weather be like in Abu Dhabi tomorrow?",
+      "answer": "I'm sorry — weather forecasts are outside my scope. I work with HAWAQM indoor air-quality data: readings, sites, devices, alerts and reports. I can tell you the current AQI at any of your sites, or which sites had the highest AQI this week — would either of those help?"
+    },
+    {
+      "question": "Abu Dhabi weather tomorrow",
+      "answer": "I'm sorry — weather forecasts are outside my scope. I work with HAWAQM indoor air-quality data: readings, sites, devices, alerts and reports. I can tell you the current AQI at any of your sites, or which sites had the highest AQI this week — would either of those help?"
+    },
+    {
+      "question": "Tomorrow's weather forecast",
+      "answer": "I'm sorry — weather forecasts are outside my scope. I work with HAWAQM indoor air-quality data: readings, sites, devices, alerts and reports. I can tell you the current AQI at any of your sites, or which sites had the highest AQI this week — would either of those help?"
     },
     {
       "question": "What is the pollen count at a site?",
@@ -194,24 +214,28 @@
       "answer": "HAWAQM doesn't measure radon. It does measure CO2, PM10, PM2.5, formaldehyde, CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If there is a concern at {SITE_NAME}, I can show you what the monitored parameters were doing over the same period."
     },
     {
+      "question": "What are the radon levels at our sites?",
+      "answer": "HAWAQM doesn't measure radon. It does measure CO2, PM10, PM2.5, formaldehyde, CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If there is a concern at {SITE_NAME}, I can show you what the monitored parameters were doing over the same period."
+    },
+    {
       "question": "What is the pollen count at a school or site?",
       "answer": "HAWAQM does not measure pollen. It does measure CO2, PM10, PM2.5, formaldehyde (CH2O), CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If you share a site name, I can show you the current readings for all monitored parameters at that site."
     },
     {
       "question": "The site is marked inactive but one device is still sending data. Is that an error?",
-      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive. If one device is still sending data while the other is not, the site correctly remains active. To help you look into it further, you can see which device is currently inactive and since when, so that device can be checked."
     },
     {
       "question": "Why is the site inactive if a device is still sending data?",
-      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive. If one device is still sending data while the other is not, the site correctly remains active. To help you look into it further, you can see which device is currently inactive and since when, so that device can be checked."
     },
     {
       "question": "Can a site be inactive while its device is sending data?",
-      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive. If one device is still sending data while the other is not, the site correctly remains active. To help you look into it further, you can see which device is currently inactive and since when, so that device can be checked."
     },
     {
       "question": "Inactive site — device still sending data",
-      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive — meaning neither device has sent data within the last 24 hours. So if one device is still communicating, the site stays active. The inactive flag on a device you can see here reflects that specific device's communication status, not the site's. If you'd like, I can check the current status of the devices at that site."
+      "answer": "That's a good observation, and it's working exactly as intended. A site is marked inactive only when both of its devices are inactive. If one device is still sending data while the other is not, the site correctly remains active. To help you look into it further, you can see which device is currently inactive and since when, so that device can be checked."
     },
     {
       "question": "The Data Success Rate is below 75%. Can I still use the AQI results?",
@@ -239,11 +263,11 @@
     },
     {
       "question": "Can I get the last 24 hours of readings for a device?",
-      "answer": "Yes. I can show the last 24 hours for a device as 5-minute records, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint. Just share the device name (e.g. BA 0001 or SEI100M 0008) and I will retrieve the data for you."
+      "answer": "Yes. I can show the last 24 hours for {DEVICE_NAME} as 5-minute records, from {FROM_TIME} to {TO_TIME}, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint."
     },
     {
       "question": "Can I see the readings from the last 24 hours for a device?",
-      "answer": "Yes. I can show the last 24 hours for a device as 5-minute records, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint. Just share the device name (e.g. BA 0001 or SEI100M 0008) and I will retrieve the data for you."
+      "answer": "Yes. I can show the last 24 hours for {DEVICE_NAME} as 5-minute records, from {FROM_TIME} to {TO_TIME}, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint."
     },
     {
       "question": "Can I use a 1-hour threshold for PM10 because I want a faster alert?",
@@ -263,23 +287,27 @@
     },
     {
       "question": "Can you prove the ventilation system caused yesterday's spike?",
-      "answer": "Not with certainty. I can show the temperature, humidity and parameter readings recorded at that site around the same time, which may suggest a correlation — but the sensor data alone cannot prove causation. For a definitive finding, a physical inspection or engineering assessment would be needed."
+      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
     },
     {
       "question": "What caused the AQI spike at the school yesterday?",
-      "answer": "HAWAQM records air quality readings but cannot determine the root cause of a spike. The data can show which parameters were elevated and when, which may point to a likely source — but proving a direct cause requires a physical inspection or engineering assessment. I can show you the recorded readings for that site on that date if that would help."
+      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
     },
     {
       "question": "Why did the AQI spike at a site?",
-      "answer": "HAWAQM can show you when a parameter was elevated and by how much, but it cannot determine the root cause with certainty. Spikes may be linked to nearby outdoor events, indoor activities, equipment issues, or ventilation conditions. A physical inspection is needed to confirm the cause."
+      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
     },
     {
       "question": "Why was the AQI high at a site yesterday?",
-      "answer": "HAWAQM records the measured values but cannot explain why a reading was high. I can display the recorded readings at that site for yesterday, which may help identify which parameter drove the elevated AQI — but the underlying cause would need to be investigated on-site."
+      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
     },
     {
       "question": "Can you tell me which weather condition caused a pollutant spike?",
-      "answer": "Not with certainty. I can show the temperature, humidity and nearby outdoor readings recorded at the same time, which often suggests a likely cause — but the data cannot prove it."
+      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
+    },
+    {
+      "question": "Yesterday's AQI spike and ventilation at a school",
+      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
     },
     {
       "question": "If the nearest ambient station and indoor site have different update times, can I compare them directly?",
@@ -307,7 +335,7 @@
     },
     {
       "question": "Why can the site AQI look acceptable while one device shows a much higher reading?",
-      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
+      "answer": "Yes, it can. The site value is an average, so one device running high can be offset by the other running low. If something feels off, ask me to compare the two devices side by side."
     },
     {
       "question": "Could the site average be hiding a problem on one device?",
@@ -326,8 +354,48 @@
       "answer": "No. Missing values are never estimated or filled in. You get the real measurements, a clear note of which period is missing, and the Data Success Rate for context."
     },
     {
+      "question": "Can you help me draft a leave request for my team?",
+      "answer": "I'm sorry — that's outside my scope. I can only help with HAWAQM air-quality data. If it's useful, you could ask me: 'Which devices are offline right now?' or 'What is the current AQI at my school?'"
+    },
+    {
+      "question": "Can you help me write a leave request for my team?",
+      "answer": "I'm sorry — that's outside my scope. I can only help with HAWAQM air-quality data. If it's useful, you could ask me: 'Which devices are offline right now?' or 'What is the current AQI at my school?'"
+    },
+    {
+      "question": "I need to send a leave request to my team. Can you draft one?",
+      "answer": "I'm sorry — that's outside my scope. I can only help with HAWAQM air-quality data. If it's useful, you could ask me: 'Which devices are offline right now?' or 'What is the current AQI at my school?'"
+    },
+    {
+      "question": "Draft a leave request for my team",
+      "answer": "I'm sorry — that's outside my scope. I can only help with HAWAQM air-quality data. If it's useful, you could ask me: 'Which devices are offline right now?' or 'What is the current AQI at my school?'"
+    },
+    {
       "question": "Compare two sites",
       "answer": "Sure — which two sites, and over what period? For example: 'compare {{SCHOOL_A}} and {{SCHOOL_B}} for last month'."
+    },
+    {
+      "question": "Why can't I see all the sites?",
+      "answer": "Your view of HAWAQM depends on the access given to your account. Access can be set at a single site, a sector, a region, or the full system for administrators, so the data you see is always within your permitted scope. This also means two people can ask the same question and get different totals, depending on their access. If you need to see more sites or regions, please contact your HAWAQM administrator."
+    },
+    {
+      "question": "Why am I not seeing all sites?",
+      "answer": "Your view of HAWAQM depends on the access given to your account. Access can be set at a single site, a sector, a region, or the full system for administrators, so the data you see is always within your permitted scope. This also means two people can ask the same question and get different totals, depending on their access. If you need to see more sites or regions, please contact your HAWAQM administrator."
+    },
+    {
+      "question": "Why don't I see all the sites?",
+      "answer": "Your view of HAWAQM depends on the access given to your account. Access can be set at a single site, a sector, a region, or the full system for administrators, so the data you see is always within your permitted scope. This also means two people can ask the same question and get different totals, depending on their access. If you need to see more sites or regions, please contact your HAWAQM administrator."
+    },
+    {
+      "question": "I can't see all sites",
+      "answer": "Your view of HAWAQM depends on the access given to your account. Access can be set at a single site, a sector, a region, or the full system for administrators, so the data you see is always within your permitted scope. This also means two people can ask the same question and get different totals, depending on their access. If you need to see more sites or regions, please contact your HAWAQM administrator."
+    },
+    {
+      "question": "Some sites are missing from my view",
+      "answer": "Your view of HAWAQM depends on the access given to your account. Access can be set at a single site, a sector, a region, or the full system for administrators, so the data you see is always within your permitted scope. This also means two people can ask the same question and get different totals, depending on their access. If you need to see more sites or regions, please contact your HAWAQM administrator."
+    },
+    {
+      "question": "Why are some sites not visible to me?",
+      "answer": "Your view of HAWAQM depends on the access given to your account. Access can be set at a single site, a sector, a region, or the full system for administrators, so the data you see is always within your permitted scope. This also means two people can ask the same question and get different totals, depending on their access. If you need to see more sites or regions, please contact your HAWAQM administrator."
     }
   ]
 }

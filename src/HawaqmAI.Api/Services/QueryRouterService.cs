@@ -180,7 +180,10 @@ public sealed class QueryRouterService : IQueryRouterService
          "ventilation caused", "ventilation system caused",
          "ventilation system cause", "did the ventilation",
          "cause the aqi spike", "cause yesterday's aqi",
-         "cause the spike", "caused the aqi spike", "caused yesterday's aqi"];
+         "cause the spike", "caused the aqi spike", "caused yesterday's aqi",
+         "aqi spike", "yesterday's aqi spike", "school ventilation",
+         "spike — ", "spike -", "spike at school", "spike at site",
+         "ventilation spike", "aqi spike —", "aqi spike -"];
 
     private static bool IsCausationQuestion(string lowerQuestion)
         => CausationPhrases.Any(p => lowerQuestion.Contains(p));
@@ -706,11 +709,31 @@ public sealed class QueryRouterService : IQueryRouterService
         {
             maxScore *= 0.05; // let device_reading_history win decisively
         }
+        // "Last 24 hours" with a device name but NO explicit interval (5min/1hour/8hour) and NO specific
+        // time is a capability/FAQ question — route to faq_answer, not device_reading_history.
+        var explicitIntervalWords = new[] {
+            "5 min", "5min", "5-min", "5-minute",
+            "1 hour", "1h", "1hour", "1-hour",
+            "8 hour", "8h", "8hour", "8-hour"
+        };
+        bool isLast24HoursFaq = QuestionHasDeviceName(lowerQuestion)
+            && (lowerQuestion.Contains("last 24") || lowerQuestion.Contains("24 hours"))
+            && !explicitIntervalWords.Any(w => lowerQuestion.Contains(w))
+            && !hasSpecificTime;
+
         if (template.Id == "device_reading_history"
             && QuestionHasDeviceName(lowerQuestion)
-            && isHistorySignal)
+            && isHistorySignal
+            && !isLast24HoursFaq)
         {
             maxScore = Math.Max(maxScore, 0.97); // beats all non-device templates (0.95) and device_live_reading
+        }
+
+        // Boost faq_answer when user asks about last 24 hours for a device without specifying interval —
+        // this is a capability question, not a data request.
+        if (template.Id == "faq_answer" && isLast24HoursFaq)
+        {
+            maxScore = Math.Max(maxScore, 0.97);
         }
 
         // Penalise ALL non-device templates when a device name is present —
