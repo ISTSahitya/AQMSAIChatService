@@ -87,6 +87,25 @@ public sealed class ResponseFormatterService : IResponseFormatterService
             }).ToList();
         }
 
+        // For site_daily_averages: MainPollutant, StationName, DeviceCount, Date go in the LLM summary only
+        if (template.Id == "site_daily_averages" && rows.Count > 0)
+        {
+            rows = rows.Select(r =>
+            {
+                var d = new Dictionary<string, object?>(r);
+                d.Remove("MainPollutant");
+                d.Remove("StationName");
+                d.Remove("DeviceCount");
+                d.Remove("Date");
+                if (d.TryGetValue("DailyAverage", out var avg))
+                {
+                    d.Remove("DailyAverage");
+                    d["ParameterValue"] = avg;
+                }
+                return d;
+            }).ToList();
+        }
+
         // For site_readings_all: full parameter table — rename "Value_category" → "AQI Category"
         // on the AQI Index row so the table column is labelled meaningfully.
         if (template.Id == "site_readings_all" && rows.Count > 0)

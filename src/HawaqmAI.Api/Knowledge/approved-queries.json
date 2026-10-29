@@ -1,4 +1,4 @@
-{
+﻿{
   "queries": [
     {
       "id": "faq_answer",
@@ -1227,7 +1227,19 @@
         "what is the outdoor aqi near",
         "compare with outdoor station",
         "indoor vs ambient",
-        "ambient station comparison"
+        "ambient station comparison",
+        "compare the current indoor aqi at",
+        "compare indoor aqi at",
+        "with the nearest ambient station",
+        "nearest ambient station",
+        "compare aqi with ambient",
+        "compare aqi with outdoor",
+        "compare aqi at school with ambient",
+        "indoor aqi and ambient",
+        "indoor and ambient aqi",
+        "school aqi vs ambient",
+        "school aqi and outdoor station",
+        "compare school aqi with ambient"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
@@ -2302,7 +2314,7 @@
     },
     {
       "id": "site_count",
-      "description": "Count sites with optional grouping and filtering. Use for ALL site count questions: total count, count by region, count by sector, active/inactive count, count in a specific region or sector. Set groupBy='region' for per-region breakdown, groupBy='sector' for per-sector breakdown, leave groupBy empty for a single total. Optional: regionName to filter to one region, sectorName to filter to one sector, liveStatus='Active' or 'Inactive' to count only active/inactive sites.",
+      "description": "Count sites with optional grouping and filtering. Use for ALL site count/number/total questions: total count, count by region, count by sector, active/inactive count, count in a specific region or sector. Set groupBy='region' for per-region breakdown, groupBy='sector' for per-sector breakdown, leave groupBy empty for a single total. Optional: regionName to filter to one region, sectorName to filter to one sector, liveStatus='Active' or 'Inactive' to count only active/inactive sites. Rule: if user wants a NUMBER (how many, total, count) → site_count. If user wants to SEE or LIST the actual site names → use sites_by_filter instead. NEVER use when the word 'list' or 'show' appears without a count/number intent.",
       "patterns": [
         "how many sites are registered",
         "how many sites are currently registered",
@@ -2368,6 +2380,25 @@
         "show active site count",
         "what is the total number of active sites",
         "what is the total number of inactive sites",
+        "how many schools are active",
+        "how many schools are inactive",
+        "how many active schools",
+        "how many inactive schools",
+        "how many schools are active under al ain",
+        "how many schools are active in abu dhabi",
+        "how many schools are active in al dhafra",
+        "how many schools are inactive in al ain",
+        "how many schools are inactive in abu dhabi",
+        "total active schools",
+        "total inactive schools",
+        "count of active schools",
+        "count of inactive schools",
+        "how many commercial sites are active",
+        "how many residential sites are active",
+        "how many commercial sites are inactive",
+        "how many residential sites are inactive",
+        "active school count",
+        "inactive school count",
         "total sites in al ain",
         "total sites in al ain region",
         "total sites under al ain",
@@ -2468,7 +2499,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT r.RegionName, CASE WHEN @groupBy = 'sector' THEN sec.SectorName ELSE NULL END AS SectorName, COUNT(*) AS TotalSites, SUM(CASE WHEN live.DeviceCount = 0 OR live.DeviceCount IS NULL THEN 0 WHEN live.LastReading >= DATEADD(MINUTE, -1440, GETDATE()) OR live.LastComm >= DATEADD(MINUTE, -10, GETDATE()) THEN 1 ELSE 0 END) AS ActiveSites, SUM(CASE WHEN live.DeviceCount = 0 OR live.DeviceCount IS NULL THEN 0 WHEN (live.LastReading < DATEADD(MINUTE, -1440, GETDATE()) OR live.LastReading IS NULL) AND (live.LastComm < DATEADD(MINUTE, -10, GETDATE()) OR live.LastComm IS NULL) THEN 1 ELSE 0 END) AS InactiveSites, SUM(CASE WHEN live.DeviceCount = 0 OR live.DeviceCount IS NULL THEN 1 ELSE 0 END) AS NoDeviceSites FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN (SELECT d.StationID, COUNT(DISTINCT d.DeviceId) AS DeviceCount, MAX(pm.ParameterReadingUpdateTime) AS LastReading, MAX(pm.LastCommunicationTime) AS LastComm FROM DMN_Devices d LEFT JOIN DMN_Parameters pm ON pm.DeviceID = d.DeviceId AND pm.ParameterName = 'PM2.5' WHERE ISNULL(d.IsDeleted, 0) = 0 GROUP BY d.StationID) live ON live.StationID = s.ID WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName), ' ', '') = REPLACE(LOWER(@regionName), ' ', '')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@liveStatus IS NULL OR (@liveStatus = 'Active' AND live.DeviceCount > 0 AND (live.LastReading >= DATEADD(MINUTE, -1440, GETDATE()) OR live.LastComm >= DATEADD(MINUTE, -10, GETDATE()))) OR (@liveStatus = 'Inactive' AND live.DeviceCount > 0 AND (live.LastReading < DATEADD(MINUTE, -1440, GETDATE()) OR live.LastReading IS NULL) AND (live.LastComm < DATEADD(MINUTE, -10, GETDATE()) OR live.LastComm IS NULL)) OR (@liveStatus = 'NoDevice' AND (live.DeviceCount = 0 OR live.DeviceCount IS NULL))) GROUP BY r.RegionName, CASE WHEN @groupBy = 'sector' THEN sec.SectorName ELSE NULL END ORDER BY r.RegionName, SectorName",
+      "sql": "SELECT r.RegionName, CASE WHEN @groupBy = 'sector' THEN sec.SectorName ELSE NULL END AS SectorName, COUNT(*) AS TotalSites, SUM(CASE WHEN live.DeviceCount = 0 OR live.DeviceCount IS NULL THEN 0 WHEN live.LastReading >= DATEADD(MINUTE, -1440, @now) OR live.LastComm >= DATEADD(MINUTE, -10, @now) THEN 1 ELSE 0 END) AS ActiveSites, SUM(CASE WHEN live.DeviceCount = 0 OR live.DeviceCount IS NULL THEN 0 WHEN (live.LastReading < DATEADD(MINUTE, -1440, @now) OR live.LastReading IS NULL) AND (live.LastComm < DATEADD(MINUTE, -10, @now) OR live.LastComm IS NULL) THEN 1 ELSE 0 END) AS InactiveSites, SUM(CASE WHEN live.DeviceCount = 0 OR live.DeviceCount IS NULL THEN 1 ELSE 0 END) AS NoDeviceSites FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN (SELECT d.StationID, COUNT(DISTINCT d.DeviceId) AS DeviceCount, MAX(pm.ParameterReadingUpdateTime) AS LastReading, MAX(pm.LastCommunicationTime) AS LastComm FROM DMN_Devices d LEFT JOIN DMN_Parameters pm ON pm.DeviceID = d.DeviceId AND pm.ParameterName = 'PM2.5' WHERE ISNULL(d.IsDeleted, 0) = 0 GROUP BY d.StationID) live ON live.StationID = s.ID WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName), ' ', '') = REPLACE(LOWER(@regionName), ' ', '')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@liveStatus IS NULL OR (@liveStatus = 'Active' AND live.DeviceCount > 0 AND (live.LastReading >= DATEADD(MINUTE, -1440, @now) OR live.LastComm >= DATEADD(MINUTE, -10, @now))) OR (@liveStatus = 'Inactive' AND live.DeviceCount > 0 AND (live.LastReading < DATEADD(MINUTE, -1440, @now) OR live.LastReading IS NULL) AND (live.LastComm < DATEADD(MINUTE, -10, @now) OR live.LastComm IS NULL)) OR (@liveStatus = 'NoDevice' AND (live.DeviceCount = 0 OR live.DeviceCount IS NULL))) GROUP BY r.RegionName, CASE WHEN @groupBy = 'sector' THEN sec.SectorName ELSE NULL END ORDER BY r.RegionName, SectorName",
       "params": [
         {
           "name": "regionName",
@@ -2546,7 +2577,7 @@
     },
     {
       "id": "sites_by_filter",
-      "description": "THE SINGLE template for LISTING sites/stations (showing site names and details) filtered by any combination of: REGION (Abu Dhabi, Al Ain, Al Dhafra), SECTOR (Commercial, Residential, Public & Govt-School), SUB-SECTOR, SITE NAME (partial match), or LIVE STATUS (Active/Inactive). Use for: 'sites in Abu Dhabi', 'schools in Al Ain', 'commercial sites', 'active sites in Al Dhafra', 'list all sites', 'sites region-wise', 'sites under residential sector', 'is Al Naeem School active'. All params are optional — omit all for full site list. NEVER use for count/number questions like 'how many sites per region/sector' or 'site count by sector' — use site_count instead.",
+      "description": "THE SINGLE template for LISTING sites/stations (showing site names and details) filtered by any combination of: REGION (Abu Dhabi, Al Ain, Al Dhafra), SECTOR (Commercial, Residential, Public & Govt-School), SUB-SECTOR, SITE NAME (partial match), or LIVE STATUS (Active/Inactive/NoDevice). Use for: 'list inactive sites', 'list of inactive sites', 'show inactive sites', 'sites with no device', 'sites without devices', 'sites with zero devices', 'sites in Abu Dhabi', 'schools in Al Ain', 'commercial sites', 'active sites in Al Dhafra', 'list all sites', 'sites region-wise', 'sites under residential sector', 'is Al Naeem School active'. All params are optional — omit all for full site list. liveStatus='NoDevice' for sites with no devices attached. NEVER use for count/number/total questions like 'how many sites', 'total inactive sites', 'count of inactive sites', 'how many sites per region/sector', 'site count by sector' — use site_count instead. Rule: if the user wants to SEE the site names → sites_by_filter. If the user wants a NUMBER → site_count.",
       "patterns": [
         "sites in al ain",
         "stations in al ain",
@@ -2644,6 +2675,34 @@
         "sites inactive now",
         "show me active sites",
         "show me inactive sites",
+        "list of inactive sites",
+        "list inactive sites",
+        "give me inactive sites",
+        "give me the list of inactive sites",
+        "show list of inactive sites",
+        "list of active sites",
+        "list active sites",
+        "give me active sites",
+        "give me the list of active sites",
+        "show list of active sites",
+        "sites with no device",
+        "sites without devices",
+        "sites without any device",
+        "sites with zero devices",
+        "sites that have no device",
+        "sites that don't have a device",
+        "sites that have no devices",
+        "no device sites",
+        "sites with no device attached",
+        "which sites have no device",
+        "which sites have no devices",
+        "show sites with no device",
+        "list sites with no device",
+        "list sites without devices",
+        "show sites without devices",
+        "sites missing devices",
+        "sites with no sensor",
+        "sites without a sensor",
         "list stations",
         "show stations",
         "show me my sites",
@@ -2668,7 +2727,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS LiveStatus FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%') AND (@subSectorName IS NULL OR LOWER(ss.SectorName) LIKE '%' + LOWER(@subSectorName) + '%') AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING (@liveStatus IS NULL OR CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END = @liveStatus) ORDER BY r.RegionName, sec.SectorName, s.StationName",
+      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN COUNT(d.DeviceId) = 0 THEN 'No Device' WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, @now) OR MAX(p.LastCommunicationTime) >= DATEADD(MINUTE, -10, @now) THEN 'Active' ELSE 'Inactive' END AS LiveStatus FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId AND p.DriverID = 4 WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%') AND (@subSectorName IS NULL OR LOWER(ss.SectorName) LIKE '%' + LOWER(@subSectorName) + '%') AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING (@liveStatus IS NULL OR (@liveStatus = 'NoDevice' AND COUNT(d.DeviceId) = 0) OR (@liveStatus = 'Active' AND COUNT(d.DeviceId) > 0 AND (MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -1440, @now) OR MAX(p.LastCommunicationTime) >= DATEADD(MINUTE, -10, @now))) OR (@liveStatus = 'Inactive' AND COUNT(d.DeviceId) > 0 AND (MAX(p.ParameterReadingUpdateTime) < DATEADD(MINUTE, -1440, @now) OR MAX(p.ParameterReadingUpdateTime) IS NULL) AND (MAX(p.LastCommunicationTime) < DATEADD(MINUTE, -10, @now) OR MAX(p.LastCommunicationTime) IS NULL))) ORDER BY r.RegionName, sec.SectorName, s.StationName",
       "params": [
         {
           "name": "regionName",
@@ -2701,7 +2760,8 @@
           "type": "string",
           "source": "question",
           "optional": true,
-          "allowed": ["Active", "Inactive"]
+          "allowed": ["Active", "Inactive", "NoDevice"],
+          "note": "Use 'NoDevice' when user asks for sites with no devices, zero devices, or without any device attached."
         }
       ],
       "responseType": "table",
@@ -2934,7 +2994,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MinAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
+      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MinAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, @now) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -2976,7 +3036,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MaxAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) DESC",
+      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MaxAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, @now) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) DESC",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -3020,7 +3080,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MinAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
+      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MinAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, @now) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -3154,7 +3214,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS AQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
+      "sql": "SELECT s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS AQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, @now) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -3195,11 +3255,19 @@
         "how many sensors are online",
         "devices sending data",
         "how many devices are sending",
-        "currently online devices"
+        "currently online devices",
+        "total number of inactive devices",
+        "total inactive devices",
+        "how many devices are inactive",
+        "how many devices are offline",
+        "number of inactive devices",
+        "inactive device count",
+        "count of inactive devices",
+        "how many devices are not active"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT ISNULL(SUM(IsActive), 0) AS ActiveDeviceCount, COUNT(*) AS TotalDeviceCount FROM ( SELECT d.DeviceId, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, GETDATE())) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 GROUP BY d.DeviceId ) AS t",
+      "sql": "SELECT ISNULL(SUM(IsActive), 0) AS ActiveDeviceCount, COUNT(*) AS TotalDeviceCount FROM ( SELECT d.DeviceId, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, @now) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, @now)) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 GROUP BY d.DeviceId ) AS t",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -3207,7 +3275,7 @@
     },
     {
       "id": "count_devices_by_filter",
-      "description": "COUNT the number of devices — optionally filtered by REGION (Abu Dhabi, Al Ain, Al Dhafra) and/or SECTOR and/or active/inactive status. Use for HOW MANY / TOTAL / COUNT questions about devices with any region, sector, or status filter. Examples: 'how many devices in Abu Dhabi', 'total devices in commercial sector', 'how many active devices in Al Ain', 'total number of devices under Abudhabi region'. NEVER use when user wants to SEE or LIST device names — use devices_by_filter instead.",
+      "description": "COUNT the number of devices — optionally filtered by REGION (Abu Dhabi, Al Ain, Al Dhafra) and/or SECTOR and/or active/inactive STATUS. Use for HOW MANY / TOTAL / COUNT questions about devices with any combination of region, sector, and status filters. Examples: 'how many devices in Abu Dhabi', 'total devices in commercial sector', 'how many active devices in Al Ain', 'how many inactive devices under Abu Dhabi', 'total inactive devices in Al Ain residential sector'. When statusFilter='Active' return only ActiveDevices count; when statusFilter='Inactive' return only InactiveDevices count. NEVER use when user wants to SEE or LIST device names — use devices_by_filter instead.",
       "patterns": [
         "how many devices in abu dhabi",
         "how many devices in al ain",
@@ -3255,11 +3323,55 @@
         "number of devices in region",
         "number of devices in sector",
         "number of active devices in",
-        "number of inactive devices in"
+        "number of inactive devices in",
+        "how many active devices in abu dhabi",
+        "how many active devices in al ain",
+        "how many active devices in al dhafra",
+        "how many inactive devices in abu dhabi",
+        "how many inactive devices in al ain",
+        "how many inactive devices in al dhafra",
+        "how many inactive devices under abu dhabi",
+        "how many inactive devices under al ain",
+        "how many inactive devices under al dhafra",
+        "how many active devices under abu dhabi",
+        "how many active devices under al ain",
+        "how many active devices under al dhafra",
+        "inactive device count in abu dhabi",
+        "inactive device count in al ain",
+        "inactive device count in al dhafra",
+        "active device count in abu dhabi",
+        "active device count in al ain",
+        "active device count in al dhafra",
+        "total inactive devices in abu dhabi",
+        "total inactive devices in al ain",
+        "total inactive devices in al dhafra",
+        "total active devices in abu dhabi",
+        "total active devices in al ain",
+        "total active devices in al dhafra",
+        "how many active devices in commercial",
+        "how many inactive devices in commercial",
+        "how many active devices in residential",
+        "how many inactive devices in residential",
+        "how many active devices in school",
+        "how many inactive devices in school",
+        "inactive devices count in commercial",
+        "active devices count in commercial",
+        "inactive devices count in residential",
+        "active devices count in residential",
+        "how many active devices in al ain commercial",
+        "how many inactive devices in al ain commercial",
+        "how many active devices in abu dhabi residential",
+        "how many inactive devices in abu dhabi residential",
+        "how many active devices in al ain school",
+        "how many inactive devices in al ain school",
+        "device count by region",
+        "device count by sector",
+        "device breakdown by region",
+        "device breakdown by sector"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT RegionName, SectorName, COUNT(*) AS TotalDevices, SUM(IsActive) AS ActiveDevices, SUM(1 - IsActive) AS InactiveDevices FROM ( SELECT d.DeviceId, r.RegionName, sec.SectorName, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, GETDATE())) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) GROUP BY d.DeviceId, r.RegionName, sec.SectorName ) t GROUP BY RegionName, SectorName ORDER BY RegionName, SectorName",
+      "sql": "SELECT RegionName, SectorName, COUNT(*) AS TotalDevices, SUM(IsActive) AS ActiveDevices, SUM(1 - IsActive) AS InactiveDevices FROM ( SELECT d.DeviceId, r.RegionName, sec.SectorName, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, @now) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, @now)) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) GROUP BY d.DeviceId, r.RegionName, sec.SectorName ) t GROUP BY RegionName, SectorName ORDER BY RegionName, SectorName",
       "params": [
         {
           "name": "regionName",
@@ -3274,6 +3386,14 @@
           "source": "question",
           "optional": true,
           "allowed": ["Commercial", "Public & Govt-School", "Residential"]
+        },
+        {
+          "name": "statusFilter",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": ["Active", "Inactive"],
+          "note": "Set 'Active' for active/online questions, 'Inactive' for inactive/offline questions. When set, LLM reports only the matching count column."
         }
       ],
       "responseType": "text",
@@ -3374,6 +3494,21 @@
         "offline devices in abu dhabi",
         "offline devices in al ain",
         "offline devices in al dhafra",
+        "offline devices under abu dhabi",
+        "offline devices under al ain",
+        "offline devices under al dhafra",
+        "offline devices under abudhabi region",
+        "offline devices under abu dhabi region",
+        "offline devices under al ain region",
+        "offline devices under al dhafra region",
+        "inactive devices under abu dhabi region",
+        "inactive devices under al ain region",
+        "inactive devices under al dhafra region",
+        "active devices under abu dhabi region",
+        "active devices under al ain region",
+        "active devices under al dhafra region",
+        "what are the offline devices under",
+        "offline devices under region",
         "active devices in region",
         "inactive devices in region",
         "offline devices in region",
@@ -3425,6 +3560,20 @@
         "show school sites offline",
         "show me school sites offline",
         "show all school sites offline",
+        "online devices in all schools",
+        "online devices in schools",
+        "online devices in school sector",
+        "active devices in all schools",
+        "active devices in schools",
+        "offline devices in all schools",
+        "inactive devices in all schools",
+        "online school devices",
+        "active school devices",
+        "online devices under schools",
+        "online devices in commercial sector",
+        "online devices in residential sector",
+        "active devices in all sectors",
+        "online devices in all sectors",
         "private and government school devices",
         "govt school devices",
         "government school devices offline",
@@ -3432,7 +3581,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, GETDATE())) THEN 'Active' ELSE 'Inactive' END AS Status, MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) AS LastActive, MAX(CASE WHEN p.ParameterName = 'AQI Index' THEN p.ParameterValue END) AS AQI FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING @statusFilter IS NULL OR CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, GETDATE()) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, GETDATE())) THEN 'Active' ELSE 'Inactive' END = @statusFilter ORDER BY r.RegionName, sec.SectorName, s.StationName, d.DeviceName",
+      "sql": "SELECT d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, @now) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, @now)) THEN 'Active' ELSE 'Inactive' END AS Status, MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) AS LastActive, MAX(CASE WHEN p.ParameterName = 'AQI Index' THEN p.ParameterValue END) AS AQI FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING @statusFilter IS NULL OR CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, @now) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -10, @now)) THEN 'Active' ELSE 'Inactive' END = @statusFilter ORDER BY r.RegionName, sec.SectorName, s.StationName, d.DeviceName",
       "params": [
         {
           "name": "regionName",
@@ -3632,7 +3781,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 d.DeviceName, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
+      "sql": "SELECT TOP 1 d.DeviceName, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, @now) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
       "params": [
         {
           "name": "deviceName",
@@ -3711,7 +3860,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, d.DeviceModel, d.CreatedOn AS DeployedOn, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName, d.DeviceModel, d.CreatedOn ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
+      "sql": "SELECT TOP 1 d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, d.DeviceModel, d.CreatedOn AS DeployedOn, MAX(p.ParameterReadingUpdateTime) AS LastMeasured, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, @now) THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Devices d JOIN DMN_Stations s ON d.StationID = s.ID LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 AND (d.DeviceName = @deviceName OR REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') OR REPLACE(UPPER(d.DeviceName),' ','') = @paddedCanonical) GROUP BY d.DeviceName, s.StationName, r.RegionName, sec.SectorName, ss.SectorName, d.DeviceModel, d.CreatedOn ORDER BY CASE WHEN d.DeviceName = @deviceName THEN 0 WHEN REPLACE(UPPER(d.DeviceName),' ','') = REPLACE(UPPER(@deviceName),' ','') THEN 1 ELSE 2 END, d.DeviceName",
       "params": [
         {
           "name": "deviceName",
@@ -4031,7 +4180,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, COUNT(DISTINCT d.DeviceId) AS TotalDevices, SUM(CASE WHEN p_live.LastReading >= DATEADD(MINUTE, -10, GETDATE()) THEN 1 ELSE 0 END) AS ActiveDevices, SUM(CASE WHEN p_live.LastReading < DATEADD(MINUTE, -10, GETDATE()) OR p_live.LastReading IS NULL THEN 1 ELSE 0 END) AS InactiveDevices, MAX(p_live.LastReading) AS LastReadingTime, MIN(TRY_CAST(aqi_p.ParameterValue AS FLOAT)) AS BestAQI FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN (SELECT DeviceID, MAX(ParameterReadingUpdateTime) AS LastReading FROM DMN_Parameters GROUP BY DeviceID) p_live ON p_live.DeviceID = d.DeviceId LEFT JOIN DMN_Parameters aqi_p ON aqi_p.DeviceID = d.DeviceId AND aqi_p.ParameterName = 'AQI Index' WHERE ISNULL(s.IsDeleted, 0) = 0 GROUP BY s.ID, s.StationName, r.RegionName, sec.SectorName HAVING COUNT(DISTINCT d.DeviceId) >= @minDeviceCount AND COUNT(DISTINCT d.DeviceId) <= @maxDeviceCount ORDER BY s.StationName",
+      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, COUNT(DISTINCT d.DeviceId) AS TotalDevices, SUM(CASE WHEN p_live.LastReading >= DATEADD(MINUTE, -10, @now) THEN 1 ELSE 0 END) AS ActiveDevices, SUM(CASE WHEN p_live.LastReading < DATEADD(MINUTE, -10, @now) OR p_live.LastReading IS NULL THEN 1 ELSE 0 END) AS InactiveDevices, MAX(p_live.LastReading) AS LastReadingTime, MIN(TRY_CAST(aqi_p.ParameterValue AS FLOAT)) AS BestAQI FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN (SELECT DeviceID, MAX(ParameterReadingUpdateTime) AS LastReading FROM DMN_Parameters GROUP BY DeviceID) p_live ON p_live.DeviceID = d.DeviceId LEFT JOIN DMN_Parameters aqi_p ON aqi_p.DeviceID = d.DeviceId AND aqi_p.ParameterName = 'AQI Index' WHERE ISNULL(s.IsDeleted, 0) = 0 GROUP BY s.ID, s.StationName, r.RegionName, sec.SectorName HAVING COUNT(DISTINCT d.DeviceId) >= @minDeviceCount AND COUNT(DISTINCT d.DeviceId) <= @maxDeviceCount ORDER BY s.StationName",
       "params": [
         {
           "name": "minDeviceCount",
@@ -4316,7 +4465,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(spa.Parametervalue, 2) AS DailyAverage, spa.MainPollutant, spa.DeviceCount, CAST(spa.Interval AS DATE) AS [Date] FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 14440 AND s.StationName LIKE '%' + @stationName + '%' AND CAST(spa.Interval AS DATE) = @date AND spa.Parametervalue IS NOT NULL ORDER BY spa.ParameterName",
+      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(spa.Parametervalue, 2) AS DailyAverage, (SELECT STRING_AGG(d.DeviceName + ' - ' + best.ParameterName, ', ') WITHIN GROUP (ORDER BY d.DeviceName) FROM (SELECT pa.DeviceID, p2.ParameterName, ROW_NUMBER() OVER (PARTITION BY pa.DeviceID ORDER BY pa.SubIndex DESC, pa.Parametervalue DESC) AS rn FROM ParameterAverages pa INNER JOIN DMN_Parameters p2 ON pa.ParameterID = p2.ID INNER JOIN DMN_Devices dv ON pa.DeviceID = dv.DeviceId AND ISNULL(dv.IsDeleted,0) = 0 WHERE pa.StationID = spa.StationID AND pa.TypeID = 1440 AND CAST(pa.Interval AS DATE) = CAST(spa.Interval AS DATE) AND pa.Parametervalue IS NOT NULL AND p2.ParameterName != 'AQI Index') best INNER JOIN DMN_Devices d ON best.DeviceID = d.DeviceId WHERE best.rn = 1) AS MainPollutant, spa.DeviceCount, CAST(spa.Interval AS DATE) AS [Date] FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 14440 AND s.StationName LIKE '%' + @stationName + '%' AND CAST(spa.Interval AS DATE) = @date AND spa.Parametervalue IS NOT NULL ORDER BY spa.ParameterName",
       "params": [
         {
           "name": "stationName",
@@ -4529,7 +4678,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(spa.Parametervalue, 2) AS YearlyAverage, spa.DeviceCount, YEAR(spa.Interval) AS [Year] FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 365 AND s.StationName LIKE '%' + @stationName + '%' AND YEAR(spa.Interval) = @year AND spa.Parametervalue IS NOT NULL ORDER BY spa.ParameterName",
+      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 2) AS YearlyAverage FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 14440 AND s.StationName LIKE '%' + @stationName + '%' AND YEAR(spa.Interval) = @year AND spa.Parametervalue IS NOT NULL GROUP BY s.StationName, spa.ParameterName ORDER BY spa.ParameterName",
       "params": [
         {
           "name": "stationName",
@@ -4636,7 +4785,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH IndoorSite AS ( SELECT TOP 1 s.ID AS SiteID, s.StationName, TRY_CAST(s.CoordinateX AS FLOAT) AS Longitude, TRY_CAST(s.CoordinateY AS FLOAT) AS Latitude FROM DMN_Stations s WHERE s.StationName LIKE '%' + @stationName + '%' AND s.CoordinateX IS NOT NULL AND s.CoordinateY IS NOT NULL AND s.CoordinateX <> '' AND s.CoordinateY <> '' AND TRY_CAST(s.CoordinateX AS FLOAT) IS NOT NULL AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL ), IndoorAvg AS ( SELECT spa.StationID, ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 1) AS IndoorAvg, COUNT(*) AS IndoorReadingCount FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID WHERE spa.TypeID = 14440 AND spa.ParameterName LIKE @parameterName AND CAST(spa.Interval AS DATE) = CAST(@date AS DATE) GROUP BY spa.StationID ), NearestAmbient AS ( SELECT TOP 1 amb.Id AS AmbientStationID, amb.StationName AS AmbientStationName, ROUND(SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ), 2) AS Distance_km FROM AmbientStations amb CROSS JOIN IndoorSite i WHERE (amb.Status IS NULL OR LOWER(LTRIM(RTRIM(amb.Status))) = 'active') AND amb.Latitude IS NOT NULL AND amb.Longitude IS NOT NULL ORDER BY SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ) ), OutdoorEventDay AS ( SELECT ROUND(AVG(CAST(ad.ParameterValue AS FLOAT)), 1) AS OutdoorDayAvg, COUNT(*) AS OutdoorReadingCount FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName LIKE @parameterName AND CAST(ad.ObservedAt AS DATE) = CAST(@date AS DATE) AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL ), OutdoorBaseline AS ( SELECT ROUND(AVG(DailyAvg), 1) AS OutdoorBaseline30 FROM ( SELECT CAST(ad.ObservedAt AS DATE) AS ReadingDate, AVG(CAST(ad.ParameterValue AS FLOAT)) AS DailyAvg FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName LIKE @parameterName AND CAST(ad.ObservedAt AS DATE) BETWEEN CAST(DATEADD(DAY, -30, @date) AS DATE) AND CAST(DATEADD(DAY, -1, @date) AS DATE) AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL GROUP BY CAST(ad.ObservedAt AS DATE) ) DailyAverages ), IndoorBaseline AS ( SELECT ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 1) AS IndoorBaseline30 FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID WHERE spa.TypeID = 14440 AND spa.ParameterName LIKE @parameterName AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, @date) AS DATE) AND CAST(DATEADD(DAY, -1, @date) AS DATE) ) SELECT i.StationName AS IndoorSite, na.AmbientStationName AS NearestAmbientStation, na.Distance_km, CAST(@date AS DATE) AS EventDate, DATENAME(WEEKDAY, CAST(@date AS DATE)) AS DayOfWeek, @parameterName AS Parameter, ia.IndoorAvg, ia.IndoorReadingCount, oed.OutdoorDayAvg, oed.OutdoorReadingCount, ob.OutdoorBaseline30, ib.IndoorBaseline30, CASE WHEN oed.OutdoorDayAvg > 0 THEN ROUND(ia.IndoorAvg / oed.OutdoorDayAvg, 2) ELSE NULL END AS IORatio, CASE WHEN ob.OutdoorBaseline30 > 0 AND ib.IndoorBaseline30 IS NOT NULL THEN ROUND(ib.IndoorBaseline30 / ob.OutdoorBaseline30, 2) ELSE NULL END AS BaselineIORatio FROM IndoorSite i CROSS JOIN NearestAmbient na LEFT JOIN IndoorAvg ia ON ia.StationID = i.SiteID LEFT JOIN OutdoorEventDay oed ON 1=1 LEFT JOIN OutdoorBaseline ob ON 1=1 LEFT JOIN IndoorBaseline ib ON 1=1",
+      "sql": "WITH IndoorSite AS ( SELECT TOP 1 s.ID AS SiteID, s.StationName, TRY_CAST(s.CoordinateX AS FLOAT) AS Longitude, TRY_CAST(s.CoordinateY AS FLOAT) AS Latitude FROM DMN_Stations s WHERE s.StationName LIKE '%' + @stationName + '%' AND s.CoordinateX IS NOT NULL AND s.CoordinateY IS NOT NULL AND s.CoordinateX <> '' AND s.CoordinateY <> '' AND TRY_CAST(s.CoordinateX AS FLOAT) IS NOT NULL AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL ), IndoorAvg AS ( SELECT spa.StationID, ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 1) AS IndoorAvg FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID WHERE spa.TypeID = 14440 AND spa.ParameterName LIKE @parameterName AND CAST(spa.Interval AS DATE) = CAST(@date AS DATE) GROUP BY spa.StationID ), NearestAmbient AS ( SELECT TOP 1 amb.Id AS AmbientStationID, amb.StationName AS AmbientStationName, ROUND(SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ), 2) AS Distance_km FROM AmbientStations amb CROSS JOIN IndoorSite i WHERE (amb.Status IS NULL OR LOWER(LTRIM(RTRIM(amb.Status))) = 'active') AND amb.Latitude IS NOT NULL AND amb.Longitude IS NOT NULL ORDER BY SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ) ), OutdoorEventDay AS ( SELECT ROUND(AVG(CAST(ad.ParameterValue AS FLOAT)), 1) AS OutdoorDayAvg FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName LIKE @parameterName AND CAST(ad.ObservedAt AS DATE) = CAST(@date AS DATE) AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL ), OutdoorBaseline AS ( SELECT ROUND(AVG(DailyAvg), 1) AS OutdoorBaseline30 FROM ( SELECT CAST(ad.ObservedAt AS DATE) AS ReadingDate, AVG(CAST(ad.ParameterValue AS FLOAT)) AS DailyAvg FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName LIKE @parameterName AND CAST(ad.ObservedAt AS DATE) BETWEEN CAST(DATEADD(DAY, -30, @date) AS DATE) AND CAST(DATEADD(DAY, -1, @date) AS DATE) AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL GROUP BY CAST(ad.ObservedAt AS DATE) ) DailyAverages ) SELECT i.StationName AS IndoorSite, na.AmbientStationName AS NearestAmbientStation, na.Distance_km, CAST(@date AS DATE) AS EventDate, DATENAME(WEEKDAY, CAST(@date AS DATE)) AS DayOfWeek, @parameterName AS Parameter, ia.IndoorAvg, oed.OutdoorDayAvg, ob.OutdoorBaseline30, CASE WHEN oed.OutdoorDayAvg > 0 THEN ROUND(ia.IndoorAvg / oed.OutdoorDayAvg, 2) ELSE NULL END AS IORatio FROM IndoorSite i CROSS JOIN NearestAmbient na LEFT JOIN IndoorAvg ia ON ia.StationID = i.SiteID LEFT JOIN OutdoorEventDay oed ON 1=1 LEFT JOIN OutdoorBaseline ob ON 1=1",
       "params": [
         {
           "name": "stationName",
@@ -4736,7 +4885,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH IndoorSite AS ( SELECT TOP 1 s.ID AS SiteID, s.StationName, TRY_CAST(s.CoordinateX AS FLOAT) AS Longitude, TRY_CAST(s.CoordinateY AS FLOAT) AS Latitude FROM DMN_Stations s WHERE s.StationName LIKE '%' + @stationName + '%' AND s.CoordinateX IS NOT NULL AND s.CoordinateY IS NOT NULL AND s.CoordinateX <> '' AND s.CoordinateY <> '' AND TRY_CAST(s.CoordinateX AS FLOAT) IS NOT NULL AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL ), IndoorAvg AS ( SELECT ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 2) AS IndoorVal, COUNT(DISTINCT CAST(spa.Interval AS DATE)) AS DayCount FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID WHERE spa.TypeID = 14440 AND spa.ParameterName LIKE @parameterName AND CAST(spa.Interval AS DATE) BETWEEN TRY_CONVERT(DATE, @startDate, 23) AND TRY_CONVERT(DATE, @endDate, 23) ), NearestAmbient AS ( SELECT TOP 1 amb.Id AS AmbientStationID, amb.StationName AS AmbientStationName, ROUND(SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ), 2) AS Distance_km FROM AmbientStations amb CROSS JOIN IndoorSite i WHERE (amb.Status IS NULL OR LOWER(LTRIM(RTRIM(amb.Status))) = 'active') AND amb.Latitude IS NOT NULL AND amb.Longitude IS NOT NULL ORDER BY SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ) ), OutdoorDailyMeans AS ( SELECT CAST(ad.ObservedAt AS DATE) AS ReadingDate, ROUND(AVG(CAST(ad.ParameterValue AS FLOAT)), 2) AS DailyMean FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID WHERE ap.ParameterName LIKE @parameterName AND CAST(ad.ObservedAt AS DATE) BETWEEN TRY_CONVERT(DATE, @startDate, 23) AND TRY_CONVERT(DATE, @endDate, 23) GROUP BY CAST(ad.ObservedAt AS DATE) ), OutdoorAvg AS ( SELECT ROUND(AVG(DailyMean), 2) AS OutdoorVal FROM OutdoorDailyMeans ) SELECT i.StationName AS ResidenceName, na.AmbientStationName AS NearestAmbientStation, na.Distance_km, @parameterName AS Parameter, TRY_CONVERT(DATE, @startDate, 23) AS PeriodStart, TRY_CONVERT(DATE, @endDate, 23) AS PeriodEnd, ia.DayCount, ia.IndoorVal, oa.OutdoorVal, CASE WHEN oa.OutdoorVal > 0 THEN ROUND(ia.IndoorVal / oa.OutdoorVal, 2) ELSE NULL END AS IORatio FROM IndoorSite i LEFT JOIN IndoorAvg ia ON 1=1 CROSS JOIN NearestAmbient na LEFT JOIN OutdoorAvg oa ON 1=1",
+      "sql": "WITH AmbientParamName AS ( SELECT CASE WHEN @parameterName = 'PM2.5' THEN 'PM25' ELSE @parameterName END AS AmbName ), IndoorSite AS ( SELECT TOP 1 s.ID AS SiteID, s.StationName, TRY_CAST(s.CoordinateX AS FLOAT) AS Longitude, TRY_CAST(s.CoordinateY AS FLOAT) AS Latitude FROM DMN_Stations s WHERE s.StationName LIKE '%' + @stationName + '%' AND s.CoordinateX IS NOT NULL AND s.CoordinateY IS NOT NULL AND s.CoordinateX <> '' AND s.CoordinateY <> '' AND TRY_CAST(s.CoordinateX AS FLOAT) IS NOT NULL AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL ), IndoorAvg AS ( SELECT ROUND(AVG(CAST(spa.Parametervalue AS FLOAT)), 2) AS IndoorVal, COUNT(DISTINCT CAST(spa.Interval AS DATE)) AS DayCount FROM SiteParameterAverages spa JOIN IndoorSite i ON spa.StationID = i.SiteID WHERE spa.TypeID = 14440 AND spa.ParameterName = @parameterName AND CAST(spa.Interval AS DATE) BETWEEN CAST(@startDate AS DATE) AND CAST(@endDate AS DATE) ), NearestAmbient AS ( SELECT TOP 1 amb.Id AS AmbientStationID, amb.StationName AS AmbientStationName, ROUND(SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ), 2) AS Distance_km FROM AmbientStations amb CROSS JOIN IndoorSite i WHERE (amb.Status IS NULL OR LOWER(LTRIM(RTRIM(amb.Status))) = 'active') AND amb.Latitude IS NOT NULL AND amb.Longitude IS NOT NULL ORDER BY SQRT( ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) * ((amb.Longitude - i.Longitude) * COS(RADIANS((amb.Latitude + i.Latitude) / 2.0)) * 111.32) + ((amb.Latitude - i.Latitude) * 111.32) * ((amb.Latitude - i.Latitude) * 111.32) ) ), OutdoorDailyMeans AS ( SELECT CAST(ad.ObservedAt AS DATE) AS ReadingDate, ROUND(AVG(CAST(ad.ParameterValue AS FLOAT)), 2) AS DailyMean FROM AmbientData ad JOIN AmbientParameters ap ON ad.ParameterId = ap.Id JOIN NearestAmbient na ON ad.StationId = na.AmbientStationID CROSS JOIN AmbientParamName apn WHERE ap.ParameterName = apn.AmbName AND CAST(ad.ObservedAt AS DATE) BETWEEN CAST(@startDate AS DATE) AND CAST(@endDate AS DATE) AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL GROUP BY CAST(ad.ObservedAt AS DATE) ), OutdoorAvg AS ( SELECT ROUND(AVG(DailyMean), 2) AS OutdoorVal FROM OutdoorDailyMeans ) SELECT i.StationName AS ResidenceName, na.AmbientStationName AS NearestAmbientStation, na.Distance_km, @parameterName AS Parameter, CAST(@startDate AS DATE) AS PeriodStart, CAST(@endDate AS DATE) AS PeriodEnd, ia.DayCount, ia.IndoorVal, oa.OutdoorVal, CASE WHEN oa.OutdoorVal > 0 THEN ROUND(ia.IndoorVal / oa.OutdoorVal, 2) ELSE NULL END AS IORatio FROM IndoorSite i LEFT JOIN IndoorAvg ia ON 1=1 CROSS JOIN NearestAmbient na LEFT JOIN OutdoorAvg oa ON 1=1",
       "params": [
         {
           "name": "stationName",
@@ -4929,25 +5078,25 @@
     },
     {
       "id": "sites_repeated_aqi_exceedance_with_dsr",
-      "description": "List sites (schools or any sector) that repeatedly exceeded a given AQI threshold over the last 30 days AND still maintained a Data Success Rate (device active days / 30) of at least a given percentage (default 75%). Default AQI threshold is 100 and default DSR threshold is 75%. Uses SiteParameterAverages (TypeID=14440) for daily AQI and DeviceCompliance for device active-day counting. Use when user asks: which schools exceeded AQI 100 but had good data success rate, sites that repeatedly exceeded AQI [value] with at least [X]% data success rate, schools with high AQI but still active, sites exceeding AQI threshold with acceptable DSR, or any variation asking for AQI exceedance combined with data success/availability rate.",
+      "description": "List sites (filtered by sector — schools, residential, commercial, or all) that repeatedly had AQI readings matching a user-given condition (e.g. >100, <200, >=200, <=300) over the last 30 days AND maintained a Data Success Rate of at least a given percentage (default 75%). DSR = distinct days with a non-null SiteParameterAverages (TypeID=14440) row / 30 * 100. Returns site name, sector, days matching the AQI condition, average AQI, max AQI, and DSR%. Use when user asks: which schools/residential/commercial sites exceeded AQI 100 but had good data success rate, sites with AQI above/below X with at least Y% DSR, sites with repeated high/low AQI and strong data coverage.",
       "patterns": [
         "schools that repeatedly exceeded aqi",
-        "sites that repeatedly exceeded aqi",
-        "exceeded aqi 100 but had data success rate",
-        "exceeded aqi but still had data success rate",
+        "schools with repeated aqi exceedance",
+        "schools exceeded aqi 100 but had data success rate",
+        "schools exceeded aqi but still had data success rate",
         "repeatedly exceeded aqi",
-        "sites exceeding aqi with good data success rate",
-        "sites exceeding aqi with dsr",
+        "schools exceeding aqi with good data success rate",
+        "schools exceeding aqi with dsr",
         "exceeded aqi threshold with acceptable dsr",
         "schools with high aqi but active",
-        "sites with high aqi and good dsr",
+        "schools with high aqi and good dsr",
         "aqi exceedance with data success rate",
         "exceeded aqi and data success rate",
         "aqi threshold exceeded with at least",
         "exceeded aqi with at least 75%",
-        "sites exceeding aqi 100 with 75% dsr",
+        "schools exceeding aqi 100 with 75% dsr",
         "which schools had aqi above",
-        "sites with aqi above and active",
+        "schools with aqi above and active",
         "exceeded aqi but devices were active",
         "aqi exceeded but good data",
         "repeatedly exceeded aqi 100",
@@ -4955,16 +5104,32 @@
         "exceeded aqi threshold schools",
         "exceeded aqi with sufficient data",
         "exceeded aqi with high data success",
-        "sites that went above aqi",
+        "schools that went above aqi",
         "went above aqi 100",
         "aqi above 100 schools",
         "aqi exceeding schools with dsr",
-        "sites crossing aqi threshold",
-        "crossed aqi 100 with data success"
+        "schools crossing aqi threshold",
+        "crossed aqi 100 with data success",
+        "schools with aqi less than with dsr",
+        "schools with aqi below with data success rate",
+        "schools with aqi greater than with data success rate",
+        "show me schools that repeatedly exceeded aqi",
+        "residential sites that repeatedly exceeded aqi",
+        "residential sites exceeding aqi with dsr",
+        "residential sites with high aqi and good dsr",
+        "residential sites with aqi above and data success rate",
+        "commercial sites that repeatedly exceeded aqi",
+        "commercial sites exceeding aqi with dsr",
+        "commercial sites with high aqi and good dsr",
+        "commercial sites with aqi above and data success rate",
+        "sites that repeatedly exceeded aqi with dsr",
+        "sites with repeated aqi exceedance and data success rate",
+        "all sites that exceeded aqi with good data success rate",
+        "sites with aqi above and data success rate"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH DailyAQI AS ( SELECT spa.StationID, CAST(spa.Interval AS DATE) AS ReadingDate, ROUND(MAX(CAST(spa.Parametervalue AS FLOAT)), 1) AS DailyAQI FROM SiteParameterAverages spa WHERE spa.TypeID = 14440 AND spa.ParameterName = 'AQI Index' AND spa.Parametervalue IS NOT NULL AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY spa.StationID, CAST(spa.Interval AS DATE) ), ExceedanceSummary AS ( SELECT StationID, COUNT(*) AS TotalReadingDays, SUM(CASE WHEN DailyAQI > @aqiThreshold THEN 1 ELSE 0 END) AS DaysExceeded FROM DailyAQI GROUP BY StationID HAVING SUM(CASE WHEN DailyAQI > @aqiThreshold THEN 1 ELSE 0 END) >= 2 ), DeviceActivedays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ) SELECT s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, es.DaysExceeded, es.TotalReadingDays, ISNULL(dad.ActiveDays, 0) AS DeviceActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DataSuccessRate_Pct FROM ExceedanceSummary es JOIN DMN_Stations s ON es.StationID = s.ID LEFT JOIN DeviceActivedays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) >= @dsrThreshold ORDER BY es.DaysExceeded DESC, s.StationName",
+      "sql": "WITH DailyAQI AS ( SELECT spa.StationID, CAST(spa.Interval AS DATE) AS ReadingDate, ROUND(MAX(CAST(spa.Parametervalue AS FLOAT)), 1) AS DailyAQI FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id WHERE spa.TypeID = 14440 AND spa.ParameterName = 'AQI Index' AND spa.Parametervalue IS NOT NULL AND ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY spa.StationID, CAST(spa.Interval AS DATE) ), ExceedanceSummary AS ( SELECT StationID, COUNT(*) AS TotalReadingDays, SUM(CASE WHEN (@aqiOperator = '>' AND DailyAQI > @aqiThreshold) OR (@aqiOperator = '>=' AND DailyAQI >= @aqiThreshold) OR (@aqiOperator = '<' AND DailyAQI < @aqiThreshold) OR (@aqiOperator = '<=' AND DailyAQI <= @aqiThreshold) THEN 1 ELSE 0 END) AS DaysMatched, ROUND(AVG(DailyAQI), 1) AS AvgAQI, MAX(DailyAQI) AS MaxAQI FROM DailyAQI GROUP BY StationID HAVING SUM(CASE WHEN (@aqiOperator = '>' AND DailyAQI > @aqiThreshold) OR (@aqiOperator = '>=' AND DailyAQI >= @aqiThreshold) OR (@aqiOperator = '<' AND DailyAQI < @aqiThreshold) OR (@aqiOperator = '<=' AND DailyAQI <= @aqiThreshold) THEN 1 ELSE 0 END) >= 2 ), SiteActiveDays AS ( SELECT spa.StationID, COUNT(DISTINCT CAST(spa.Interval AS DATE)) AS ActiveDays FROM SiteParameterAverages spa WHERE spa.TypeID = 14440 AND spa.Parametervalue IS NOT NULL AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY spa.StationID ) SELECT s.StationName, sec.SectorName, es.DaysMatched AS DaysAboveThreshold, es.AvgAQI AS AverageAQI, es.MaxAQI AS MaximumAQI, ROUND(100.0 * ISNULL(sad.ActiveDays, 0) / 30.0, 1) AS DataSuccessRate_Pct FROM ExceedanceSummary es JOIN DMN_Stations s ON es.StationID = s.ID LEFT JOIN SiteActiveDays sad ON sad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND ROUND(100.0 * ISNULL(sad.ActiveDays, 0) / 30.0, 1) >= @dsrThreshold ORDER BY es.DaysMatched DESC, s.StationName",
       "params": [
         {
           "name": "aqiThreshold",
@@ -4972,7 +5137,16 @@
           "source": "question",
           "optional": true,
           "default": 100,
-          "note": "The AQI value the user wants to check exceedance against. Defaults to 100 if not mentioned."
+          "note": "The AQI value to compare against. Extract the numeric value from the question (e.g. 'above 100' → 100, 'less than 200' → 200, '>300' → 300). Defaults to 100."
+        },
+        {
+          "name": "aqiOperator",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "default": ">",
+          "allowed": [">", ">=", "<", "<="],
+          "note": "The comparison operator for the AQI condition. Extract from question: 'above', 'exceeded', 'greater than', 'more than', '>' → '>'; 'at least', '>=' → '>='; 'below', 'less than', 'under', '<' → '<'; 'at most', 'no more than', '<=' → '<='. Defaults to '>'."
         },
         {
           "name": "dsrThreshold",
@@ -4980,16 +5154,25 @@
           "source": "question",
           "optional": true,
           "default": 75,
-          "note": "Minimum Data Success Rate percentage (active days / 30 * 100). Defaults to 75 if not mentioned."
+          "note": "Minimum Data Success Rate % a site must meet to be included. Defaults to 75 if not mentioned."
+        },
+        {
+          "name": "sectorName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "default": null,
+          "note": "Filter by sector. The 3 valid sectors are: 'Public & Govt-School' (map from: school, schools, education), 'Residential' (map from: residential, homes, housing), 'Commercial' (map from: commercial, business, office). Leave null when user does not mention a sector — all sectors will be included."
         }
       ],
       "responseType": "table",
-      "tableUsed": "SiteParameterAverages + DeviceCompliance + DMN_Stations",
+      "responseFormat": "These sites had repeated AQI values {aqiOperator} {aqiThreshold} while meeting or exceeding the {dsrThreshold}% Data Success Rate target, so the comparison has stronger data coverage:\n\n| Site | Sector | Days AQI {aqiOperator} {aqiThreshold} | Average AQI | Maximum AQI | Data Success Rate |\n|---|---|---:|---:|---:|---:|\n{{#each rows}}\n| {{StationName}} | {{SectorName}} | {{DaysAboveThreshold}} | {{AverageAQI}} | {{MaximumAQI}} | {{DataSuccessRate_Pct}}% |\n{{/each}}",
+      "tableUsed": "SiteParameterAverages + DMN_Stations + Sectors",
       "skipSiteFilter": false
     },
     {
       "id": "sites_dsr_below_threshold",
-      "description": "List sites (filtered by sector, subsector, region, or all) whose Data Success Rate over the last 30 days is BELOW a given threshold (default 75%). DSR = distinct active days in DeviceCompliance (IsActive=1) over the last 30 days / 30 * 100. Returns site name, sector, region, active days, total days (30), and DSR%. Use when user asks: school sites with DSR below 75%, sites with data success rate below X%, which sites have low/poor data success rate, sites failing DSR threshold, sites with DSR less than / under X%.",
+      "description": "List sites (filtered by sector, subsector, region, or all) whose Data Success Rate over the last 30 days is BELOW a given threshold (default 75%). DSR = distinct days with a non-null daily average row in SiteParameterAverages (TypeID=14440) over the last 30 days / 30 * 100. Returns site name, sector, region, active days, total days (30), and DSR%. Use when user asks: school sites with DSR below 75%, sites with data success rate below X%, which sites have low/poor data success rate, sites failing DSR threshold, sites with DSR less than / under X%.",
       "patterns": [
         "school sites with a data success rate below",
         "schools with data success rate below",
@@ -5027,11 +5210,34 @@
         "show me sites with dsr below",
         "show sites with low data success rate",
         "show schools with low dsr",
-        "show all school sites with a data success rate below"
+        "show all school sites with a data success rate below",
+        "which school sites currently have a data success rate below",
+        "which school sites have a data success rate below",
+        "which schools currently have dsr below",
+        "list the schools where data success rate is under",
+        "list schools where dsr is under",
+        "list schools where data success rate is below",
+        "can you list the schools where data success rate is under",
+        "school sites dsr below 75",
+        "school sites data success rate below 75",
+        "residential sites with dsr below",
+        "residential sites with data success rate below",
+        "residential sites dsr below",
+        "which residential sites have low dsr",
+        "residential sites below dsr threshold",
+        "commercial sites with dsr below",
+        "commercial sites with data success rate below",
+        "commercial sites dsr below",
+        "which commercial sites have low dsr",
+        "commercial sites below dsr threshold",
+        "sites with low data success rate",
+        "all sites with dsr below",
+        "sites failing dsr threshold",
+        "sites below data success rate threshold"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH DeviceActiveDays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(dad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN DeviceActiveDays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, OrganizationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct < @dsrThreshold ORDER BY DSR_Pct ASC, StationName",
+      "sql": "WITH SiteActiveDays AS ( SELECT spa.StationID, COUNT(DISTINCT CAST(spa.Interval AS DATE)) AS ActiveDays FROM SiteParameterAverages spa WHERE spa.TypeID = 14440 AND spa.Parametervalue IS NOT NULL AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY spa.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(sad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(sad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN SiteActiveDays sad ON sad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, OrganizationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct < @dsrThreshold ORDER BY DSR_Pct ASC, StationName",
       "params": [
         {
           "name": "dsrThreshold",
@@ -5047,7 +5253,7 @@
           "source": "question",
           "optional": true,
           "default": null,
-          "note": "Filter by sector. Extract from question: 'school' or 'education' maps to 'Education', 'health' or 'healthcare' maps to 'Healthcare', 'residential' maps to 'Residential', etc. Leave null for all sectors."
+          "note": "Filter by sector. The 3 valid sectors are: 'Public & Govt-School' (map from: school, schools, education), 'Residential' (map from: residential, homes, housing), 'Commercial' (map from: commercial, business, office). Leave null when user asks about all sites or does not specify a sector."
         },
         {
           "name": "regionName",
@@ -5059,12 +5265,13 @@
         }
       ],
       "responseType": "table",
-      "tableUsed": "DeviceCompliance + DMN_Stations + Sectors + SubSectors + Regions",
+      "responseFormat": "These sites have a Data Success Rate below {dsrThreshold}%{sectorName?, filtered to {sectorName} sector}{regionName?, in {regionName}}:\n\n| Site | Sector | Sub-Sector | Region | Active Days | Total Days | Data Success Rate |\n|---|---|---|---|---:|---:|---:|\n{{#each rows}}\n| {{StationName}} | {{SectorName}} | {{SubSectorName}} | {{RegionName}} | {{ActiveDays}} | {{TotalDays}} | {{DataSuccessRate_Pct}}% |\n{{/each}}",
+      "tableUsed": "SiteParameterAverages + DMN_Stations + Sectors + SubSectors + Regions",
       "skipSiteFilter": false
     },
     {
       "id": "sites_dsr_above_threshold",
-      "description": "List sites (filtered by sector, subsector, region, or all) whose Data Success Rate over the last 30 days is AT OR ABOVE a given threshold (default 75%). DSR = distinct active days in DeviceCompliance (IsActive=1) over the last 30 days / 30 * 100. Returns site name, sector, region, active days, total days (30), and DSR%. Use when user asks: school sites with DSR above 75%, sites with good data success rate, sites with DSR at least X%, sites that meet the data success threshold, sites with DSR greater than / over X%, well-performing sites by DSR.",
+      "description": "List sites (filtered by sector, subsector, region, or all) whose Data Success Rate over the last 30 days is AT OR ABOVE a given threshold (default 75%). DSR = distinct days with a non-null daily average row in SiteParameterAverages (TypeID=14440) over the last 30 days / 30 * 100. Returns site name, sector, region, active days, total days (30), and DSR%. Use when user asks: school sites with DSR above 75%, sites with good data success rate, sites with DSR at least X%, sites that meet the data success threshold, sites with DSR greater than / over X%, well-performing sites by DSR.",
       "patterns": [
         "school sites with a data success rate above",
         "schools with data success rate above",
@@ -5106,11 +5313,24 @@
         "sites with dsr at least",
         "sites with data success rate at least",
         "schools with dsr at least",
-        "schools with data success rate at least"
+        "schools with data success rate at least",
+        "residential sites with dsr above",
+        "residential sites with data success rate above",
+        "residential sites with good dsr",
+        "which residential sites have high dsr",
+        "residential sites above dsr threshold",
+        "commercial sites with dsr above",
+        "commercial sites with data success rate above",
+        "commercial sites with good dsr",
+        "which commercial sites have high dsr",
+        "commercial sites above dsr threshold",
+        "all sites with dsr above",
+        "sites meeting dsr threshold",
+        "sites with good data success rate"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH DeviceActiveDays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(dad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN DeviceActiveDays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, OrganizationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct >= @dsrThreshold ORDER BY DSR_Pct DESC, StationName",
+      "sql": "WITH SiteActiveDays AS ( SELECT spa.StationID, COUNT(DISTINCT CAST(spa.Interval AS DATE)) AS ActiveDays FROM SiteParameterAverages spa WHERE spa.TypeID = 14440 AND spa.Parametervalue IS NOT NULL AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY spa.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(sad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(sad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN SiteActiveDays sad ON sad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, OrganizationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct >= @dsrThreshold ORDER BY DSR_Pct DESC, StationName",
       "params": [
         {
           "name": "dsrThreshold",
@@ -5126,7 +5346,7 @@
           "source": "question",
           "optional": true,
           "default": null,
-          "note": "Filter by sector. Extract from question: 'school' or 'education' maps to 'Education', 'health' or 'healthcare' maps to 'Healthcare', 'residential' maps to 'Residential', etc. Leave null for all sectors."
+          "note": "Filter by sector. The 3 valid sectors are: 'Public & Govt-School' (map from: school, schools, education), 'Residential' (map from: residential, homes, housing), 'Commercial' (map from: commercial, business, office). Leave null when user asks about all sites or does not specify a sector."
         },
         {
           "name": "regionName",
@@ -5138,7 +5358,8 @@
         }
       ],
       "responseType": "table",
-      "tableUsed": "DeviceCompliance + DMN_Stations + Sectors + SubSectors + Regions",
+      "responseFormat": "These sites have a Data Success Rate at or above {dsrThreshold}%{sectorName?, filtered to {sectorName} sector}{regionName?, in {regionName}}:\n\n| Site | Sector | Sub-Sector | Region | Active Days | Total Days | Data Success Rate |\n|---|---|---|---|---:|---:|---:|\n{{#each rows}}\n| {{StationName}} | {{SectorName}} | {{SubSectorName}} | {{RegionName}} | {{ActiveDays}} | {{TotalDays}} | {{DataSuccessRate_Pct}}% |\n{{/each}}",
+      "tableUsed": "SiteParameterAverages + DMN_Stations + Sectors + SubSectors + Regions",
       "skipSiteFilter": false
     }
   ]

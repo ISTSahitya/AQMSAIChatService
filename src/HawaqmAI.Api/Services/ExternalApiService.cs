@@ -152,6 +152,18 @@ public sealed class ExternalApiService : IExternalApiService
                         if (normalisedStation.Equals(query, StringComparison.OrdinalIgnoreCase))
                             return new { s.Key, s.Name, s.Devices, Score = 1000.0 };
 
+                        // Substring containment — query is a substring of station name or vice versa.
+                        // Catches partial matches like "Al Bateen School" matching "Al Bateen Secondary School"
+                        // or "Latifa Mohammed" matching "Latifa Mohammed Ahmed Al Dhaheri School".
+                        // Score = 800 so it ranks below exact (1000) but above Jaccard.
+                        if (normalisedStation.Contains(query, StringComparison.OrdinalIgnoreCase)
+                            || query.Contains(normalisedStation, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Prefer the closest-length match when multiple stations satisfy containment
+                            var containmentScore = 800.0 - Math.Abs(normalisedStation.Length - query.Length);
+                            return new { s.Key, s.Name, s.Devices, Score = containmentScore };
+                        }
+
                         // Jaccard: intersection / union
                         var intersection = queryWords.Intersect(stationWords).Count();
                         var union = queryWords.Union(stationWords).Count();
@@ -160,7 +172,7 @@ public sealed class ExternalApiService : IExternalApiService
                     })
                     // Minimum score threshold: generic words like "school", "site", "station"
                     // shared between unrelated names must not count as a match.
-                    // Require at least 40% Jaccard overlap (or exact match = 1000).
+                    // Require at least 40% Jaccard overlap (or exact match = 1000) or substring containment (800+).
                     .Where(s => s.Score >= 40.0)
                     .OrderByDescending(s => s.Score)
                     .FirstOrDefault();

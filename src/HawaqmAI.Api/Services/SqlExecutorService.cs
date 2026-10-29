@@ -33,6 +33,12 @@ public sealed class SqlExecutorService : ISqlExecutorService
     {
         var sw = Stopwatch.StartNew();
 
+        // Always inject @now from the app server clock so that time-window comparisons
+        // (active/inactive cutoffs) use the same clock reference as the Web API (DateTime.Now),
+        // not the DB server clock (GETDATE()) which may drift on Dev/test environments.
+        if (!parameters.ContainsKey("now"))
+            parameters["now"] = DateTime.Now;
+
         try
         {
             await using var conn = new SqlConnection(_dbOptions.AirQualityConnection);

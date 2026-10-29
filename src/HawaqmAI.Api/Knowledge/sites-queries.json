@@ -1,4 +1,4 @@
-{
+﻿{
   "queries": [
     {
       "id": "stations_by_sector",
@@ -340,7 +340,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT r.RegionName, sec.SectorName, COUNT(*) AS TotalSites, SUM(CASE WHEN live.LastReading >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1 ELSE 0 END) AS ActiveSites, SUM(CASE WHEN live.LastReading < DATEADD(MINUTE, -1440, GETDATE()) OR live.LastReading IS NULL THEN 1 ELSE 0 END) AS InactiveSites FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN (SELECT d.StationID, MAX(p.ParameterReadingUpdateTime) AS LastReading FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 GROUP BY d.StationID) live ON live.StationID = s.ID WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName), ' ', '') = REPLACE(LOWER(@regionName), ' ', '')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@liveStatus IS NULL OR (@liveStatus = 'Active' AND live.LastReading >= DATEADD(MINUTE, -1440, GETDATE())) OR (@liveStatus = 'Inactive' AND (live.LastReading < DATEADD(MINUTE, -1440, GETDATE()) OR live.LastReading IS NULL))) GROUP BY r.RegionName, sec.SectorName ORDER BY r.RegionName, sec.SectorName",
+      "sql": "SELECT r.RegionName, sec.SectorName, COUNT(*) AS TotalSites, SUM(CASE WHEN live.LastReading >= DATEADD(MINUTE, -1440, @now) THEN 1 ELSE 0 END) AS ActiveSites, SUM(CASE WHEN live.LastReading < DATEADD(MINUTE, -1440, @now) OR live.LastReading IS NULL THEN 1 ELSE 0 END) AS InactiveSites FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN (SELECT d.StationID, MAX(p.ParameterReadingUpdateTime) AS LastReading FROM DMN_Devices d JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(d.IsDeleted, 0) = 0 GROUP BY d.StationID) live ON live.StationID = s.ID WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName), ' ', '') = REPLACE(LOWER(@regionName), ' ', '')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) = LOWER(@sectorName)) AND (@liveStatus IS NULL OR (@liveStatus = 'Active' AND live.LastReading >= DATEADD(MINUTE, -1440, @now)) OR (@liveStatus = 'Inactive' AND (live.LastReading < DATEADD(MINUTE, -1440, @now) OR live.LastReading IS NULL))) GROUP BY r.RegionName, sec.SectorName ORDER BY r.RegionName, sec.SectorName",
       "params": [
         {
           "name": "regionName",
@@ -551,7 +551,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END AS LiveStatus FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%') AND (@subSectorName IS NULL OR LOWER(ss.SectorName) LIKE '%' + LOWER(@subSectorName) + '%') AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING (@liveStatus IS NULL OR CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, GETDATE()) THEN 'Active' ELSE 'Inactive' END = @liveStatus) ORDER BY r.RegionName, sec.SectorName, s.StationName",
+      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, ss.SectorName AS SubSectorName, CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, @now) THEN 'Active' ELSE 'Inactive' END AS LiveStatus FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors ss ON s.SubSectorID = ss.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) AND (@sectorName IS NULL OR LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%') AND (@subSectorName IS NULL OR LOWER(ss.SectorName) LIKE '%' + LOWER(@subSectorName) + '%') AND (@stationName IS NULL OR LOWER(s.StationName) LIKE '%' + LOWER(@stationName) + '%') GROUP BY s.StationName, r.RegionName, sec.SectorName, ss.SectorName HAVING (@liveStatus IS NULL OR CASE WHEN MAX(p.ParameterReadingUpdateTime) >= DATEADD(MINUTE, -10, @now) THEN 'Active' ELSE 'Inactive' END = @liveStatus) ORDER BY r.RegionName, sec.SectorName, s.StationName",
       "params": [
         {
           "name": "regionName",
@@ -746,7 +746,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, COUNT(DISTINCT d.DeviceId) AS TotalDevices, SUM(CASE WHEN p_live.LastReading >= DATEADD(MINUTE, -10, GETDATE()) THEN 1 ELSE 0 END) AS ActiveDevices, SUM(CASE WHEN p_live.LastReading < DATEADD(MINUTE, -10, GETDATE()) OR p_live.LastReading IS NULL THEN 1 ELSE 0 END) AS InactiveDevices, MAX(p_live.LastReading) AS LastReadingTime, MIN(TRY_CAST(aqi_p.ParameterValue AS FLOAT)) AS BestAQI FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN (SELECT DeviceID, MAX(ParameterReadingUpdateTime) AS LastReading FROM DMN_Parameters GROUP BY DeviceID) p_live ON p_live.DeviceID = d.DeviceId LEFT JOIN DMN_Parameters aqi_p ON aqi_p.DeviceID = d.DeviceId AND aqi_p.ParameterName = 'AQI Index' WHERE ISNULL(s.IsDeleted, 0) = 0 GROUP BY s.ID, s.StationName, r.RegionName, sec.SectorName HAVING COUNT(DISTINCT d.DeviceId) >= @minDeviceCount AND COUNT(DISTINCT d.DeviceId) <= @maxDeviceCount ORDER BY s.StationName",
+      "sql": "SELECT s.StationName, r.RegionName, sec.SectorName, COUNT(DISTINCT d.DeviceId) AS TotalDevices, SUM(CASE WHEN p_live.LastReading >= DATEADD(MINUTE, -10, @now) THEN 1 ELSE 0 END) AS ActiveDevices, SUM(CASE WHEN p_live.LastReading < DATEADD(MINUTE, -10, @now) OR p_live.LastReading IS NULL THEN 1 ELSE 0 END) AS InactiveDevices, MAX(p_live.LastReading) AS LastReadingTime, MIN(TRY_CAST(aqi_p.ParameterValue AS FLOAT)) AS BestAQI FROM DMN_Stations s LEFT JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN DMN_Devices d ON d.StationID = s.ID AND ISNULL(d.IsDeleted, 0) = 0 LEFT JOIN (SELECT DeviceID, MAX(ParameterReadingUpdateTime) AS LastReading FROM DMN_Parameters GROUP BY DeviceID) p_live ON p_live.DeviceID = d.DeviceId LEFT JOIN DMN_Parameters aqi_p ON aqi_p.DeviceID = d.DeviceId AND aqi_p.ParameterName = 'AQI Index' WHERE ISNULL(s.IsDeleted, 0) = 0 GROUP BY s.ID, s.StationName, r.RegionName, sec.SectorName HAVING COUNT(DISTINCT d.DeviceId) >= @minDeviceCount AND COUNT(DISTINCT d.DeviceId) <= @maxDeviceCount ORDER BY s.StationName",
       "params": [
         {
           "name": "minDeviceCount",
@@ -1261,7 +1261,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MinAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
+      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MinAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, @now) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -1292,7 +1292,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MaxAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) DESC",
+      "sql": "SELECT TOP 1 s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS MaxAQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, @now) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) DESC",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -1426,7 +1426,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS AQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, GETDATE()) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
+      "sql": "SELECT s.StationName, r.RegionName, ROUND(AVG(CAST(p.ParameterValue AS FLOAT)), 0) AS AQI, MAX(p.ParameterReadingUpdateTime) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id WHERE p.ParameterName = 'AQI Index' AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -30, @now) AND p.ParameterValue IS NOT NULL AND ISNUMERIC(p.ParameterValue) = 1 AND CAST(p.ParameterValue AS FLOAT) > 0 GROUP BY s.StationName, r.RegionName HAVING AVG(CAST(p.ParameterValue AS FLOAT)) > 0 ORDER BY AVG(CAST(p.ParameterValue AS FLOAT)) ASC",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
@@ -1870,7 +1870,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(spa.Parametervalue, 2) AS DailyAverage, spa.DeviceCount, CAST(spa.Interval AS DATE) AS [Date] FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 14440 AND s.StationName LIKE '%' + @stationName + '%' AND CAST(spa.Interval AS DATE) = @date AND spa.Parametervalue IS NOT NULL ORDER BY spa.ParameterName",
+      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(spa.Parametervalue, 2) AS DailyAverage, (SELECT STRING_AGG(d.DeviceName + ' - ' + best.ParameterName, ', ') WITHIN GROUP (ORDER BY d.DeviceName) FROM (SELECT pa.DeviceID, p2.ParameterName, ROW_NUMBER() OVER (PARTITION BY pa.DeviceID ORDER BY pa.SubIndex DESC, pa.Parametervalue DESC) AS rn FROM ParameterAverages pa INNER JOIN DMN_Parameters p2 ON pa.ParameterID = p2.ID INNER JOIN DMN_Devices dv ON pa.DeviceID = dv.DeviceId AND ISNULL(dv.IsDeleted,0) = 0 WHERE pa.StationID = spa.StationID AND pa.TypeID = 1440 AND CAST(pa.Interval AS DATE) = CAST(spa.Interval AS DATE) AND pa.Parametervalue IS NOT NULL AND p2.ParameterName != 'AQI Index') best INNER JOIN DMN_Devices d ON best.DeviceID = d.DeviceId WHERE best.rn = 1) AS MainPollutant, spa.DeviceCount, CAST(spa.Interval AS DATE) AS [Date] FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 14440 AND s.StationName LIKE '%' + @stationName + '%' AND CAST(spa.Interval AS DATE) = @date AND spa.Parametervalue IS NOT NULL ORDER BY spa.ParameterName",
       "params": [
         {
           "name": "stationName",
@@ -2083,7 +2083,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(spa.Parametervalue, 2) AS YearlyAverage, spa.DeviceCount, YEAR(spa.Interval) AS [Year] FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 365 AND s.StationName LIKE '%' + @stationName + '%' AND YEAR(spa.Interval) = @year AND spa.Parametervalue IS NOT NULL ORDER BY spa.ParameterName",
+      "sql": "SELECT s.StationName, spa.ParameterName, ROUND(spa.Parametervalue, 2) AS YearlyAverage FROM SiteParameterAverages spa JOIN DMN_Stations s ON spa.StationID = s.ID WHERE spa.TypeID = 365 AND s.StationName LIKE '%' + @stationName + '%' AND YEAR(spa.Interval) = @year AND spa.Parametervalue IS NOT NULL ORDER BY spa.ParameterName",
       "params": [
         {
           "name": "stationName",

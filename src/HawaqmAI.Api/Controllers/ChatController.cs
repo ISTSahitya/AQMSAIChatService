@@ -853,6 +853,35 @@ public sealed class ChatController : ControllerBase
         bool isGenericSchoolMsg = genericSchoolPhrases.Any(p => lowerMsg.Contains(p))
             || (lowerMsg.Contains("schools") && (lowerMsg.Contains("all") || lowerMsg.Contains("table") || lowerMsg.Contains("list") || lowerMsg.Contains("show")));
 
+        // ── 2d-pre-dsr. DSR signals — detect before routing so LLM can't mis-select a live template ──
+
+        bool hasDsrKeywordQ =
+            lowerMsg.Contains("data success rate") || lowerMsg.Contains(" dsr ") ||
+            lowerMsg.EndsWith(" dsr") || lowerMsg.StartsWith("dsr ") || lowerMsg == "dsr";
+
+        // "schools that repeatedly exceeded AQI 100 but still had Data Success Rate of at least 75%"
+        bool hasDsrExceedanceSignal =
+            hasDsrKeywordQ
+            && (lowerMsg.Contains("exceeded") || lowerMsg.Contains("exceedance") || lowerMsg.Contains("exceed aqi")
+                || lowerMsg.Contains("above aqi") || lowerMsg.Contains("aqi above") || lowerMsg.Contains("crossed aqi")
+                || lowerMsg.Contains("went above") || lowerMsg.Contains("aqi exceedance") || lowerMsg.Contains("aqi exceeded"));
+
+        // "show me all school sites with a Data Success Rate below 75%"
+        // "which sites have DSR below 80%?" / "schools with DSR above 90%"
+        bool hasDsrSiteListSignal =
+            hasDsrKeywordQ
+            && !hasDsrExceedanceSignal
+            && (lowerMsg.Contains("show") || lowerMsg.Contains("list") || lowerMsg.Contains("which") ||
+                lowerMsg.Contains("sites with") || lowerMsg.Contains("schools with") || lowerMsg.Contains("sites that") ||
+                lowerMsg.Contains("schools that") || lowerMsg.Contains("all sites") || lowerMsg.Contains("all schools") ||
+                lowerMsg.Contains("school sites") || lowerMsg.Contains("give me") || lowerMsg.Contains("find"))
+            && (lowerMsg.Contains("below") || lowerMsg.Contains("above") || lowerMsg.Contains("less than") ||
+                lowerMsg.Contains("more than") || lowerMsg.Contains("greater than") || lowerMsg.Contains("higher than") ||
+                lowerMsg.Contains("lower than") || lowerMsg.Contains("under") || lowerMsg.Contains("over") ||
+                lowerMsg.Contains("at least") || lowerMsg.Contains("at most") || lowerMsg.Contains("poor") ||
+                lowerMsg.Contains("low") || lowerMsg.Contains("high") || lowerMsg.Contains("good") ||
+                lowerMsg.Contains("bad") || lowerMsg.Contains("failing") || lowerMsg.Contains("failed"));
+
         // ── 2d-pre0. Hard pre-check: numeric AQI threshold query → force site_aqi_by_category ──
         // Fires for questions like:
         //   "how many schools have AQI above 100 in Abu Dhabi?"
@@ -1040,7 +1069,13 @@ public sealed class ChatController : ControllerBase
             || lowerMsg.Contains("what are the outdoor stations") || lowerMsg.Contains("what are the ambient stations")
             || lowerMsg.Contains("which outdoor stations"));
 
+        // Exclude indoor vs ambient comparison queries — "compare the current indoor AQI ... with the nearest ambient station"
+        // is an indoor_ambient_compare query, not an ambient_station_readings lookup.
+        bool isIndoorAmbientCompareQuery = (lowerMsg.Contains("compare") || lowerMsg.Contains("comparison") || lowerMsg.Contains("vs") || lowerMsg.Contains("versus"))
+            && lowerMsg.Contains("indoor")
+            && (lowerMsg.Contains("ambient") || lowerMsg.Contains("outdoor"));
         bool isAmbientStationQuery = !isAmbientAllStationsQuery
+            && !isIndoorAmbientCompareQuery
             && (lowerMsg.Contains("outdoor station") || lowerMsg.Contains("ambient station"))
             && hasAtSiteRef;
 
@@ -1560,6 +1595,70 @@ public sealed class ChatController : ControllerBase
 
         if (isOfflineDeviceQuestion)
         {
+            // ── Sector-filtered offline: "schools with offline devices", "offline devices at schools" etc.
+            // When user specifies a sector (school/commercial/residential), use devices_by_filter with
+            // statusFilter="Inactive" and the matched sectorName — NOT the unfiltered offline_devices list.
+            string? offlineSectorFilter = null;
+            if (lowerMsg.Contains("school") || lowerMsg.Contains("govt") || lowerMsg.Contains("government") || lowerMsg.Contains("moe"))
+                offlineSectorFilter = "Public & Govt-School";
+            else if (lowerMsg.Contains("commercial"))
+                offlineSectorFilter = "Commercial";
+            else if (lowerMsg.Contains("residential"))
+                offlineSectorFilter = "Residential";
+
+            if (offlineSectorFilter is not null)
+            {
+                _log.Debug("ChatController: offline-device pre-check with sector filter → forcing devices_by_filter (sector={Sector})", offlineSectorFilter);
+                var devFilterTemplateOff = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "devices_by_filter");
+                if (devFilterTemplateOff is not null)
+                {
+                    var offSectorParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["sectorName"]    = offlineSectorFilter,
+                        ["statusFilter"]  = "Inactive"
+                    };
+                    // Also inject regionName if user mentioned one
+                    if (lowerMsg.Contains("abu dhabi") || lowerMsg.Contains("abudhabi"))
+                        offSectorParams["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al ain") || lowerMsg.Contains("alain"))
+                        offSectorParams["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                        offSectorParams["regionName"] = "Al Dhafra";
+
+                    var (offSectorSql, offSectorSqlParams) = _rbac.BuildSafeQuery(devFilterTemplateOff, offSectorParams, user, scope);
+                    var (offSectorValid, _) = SqlValidator.Validate(offSectorSql);
+                    if (offSectorValid)
+                    {
+                        var offSectorResult = await _sqlExecutor.ExecuteAsync(offSectorSql, offSectorSqlParams, ct);
+                        if (offSectorResult.Success)
+                        {
+                            var offSectorSummary = await _azureAI.SummarizeResultsAsync(request.Message, devFilterTemplateOff, offSectorResult.Rows, scope, ct);
+                            var offSectorMsgId = Guid.NewGuid();
+                            await _sessionService.SaveBothMessagesAsync(
+                                sessionId: session.SessionId,
+                                userContent: request.Message,
+                                assistantMessageId: offSectorMsgId,
+                                assistantContent: offSectorSummary,
+                                sql: offSectorSql,
+                                responseType: devFilterTemplateOff.ResponseType,
+                                chartType: null, chartDataJson: null,
+                                dataSource: devFilterTemplateOff.TableUsed, dateRange: null,
+                                modelUsed: null, executionTimeMs: (int)offSectorResult.ExecutionTimeMs,
+                                tokenCount: 0, ct: ct);
+                            if (session.MessageCount <= 1)
+                                _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                            return Ok(_formatter.Format(
+                                sessionId: session.SessionId, messageId: offSectorMsgId,
+                                template: devFilterTemplateOff, llmSummary: offSectorSummary,
+                                rows: offSectorResult.Rows, rowCount: offSectorResult.Rows.Count,
+                                executionTimeMs: (int)offSectorResult.ExecutionTimeMs,
+                                scope: scope, modelUsed: null, tokenCount: 0));
+                        }
+                    }
+                    _log.Warning("ChatController: sector-filtered offline pre-check failed, falling through to unfiltered offline_devices");
+                }
+            }
+
             _log.Debug("ChatController: offline-device pre-check fired → forcing offline_devices");
             var offlineTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "offline_devices");
             if (offlineTemplate is not null && !string.IsNullOrWhiteSpace(offlineTemplate.Sql))
@@ -1631,6 +1730,67 @@ public sealed class ChatController : ControllerBase
 
         if (isOnlineDeviceQuestion)
         {
+            // Sector-filtered online: same logic as offline — redirect to devices_by_filter when user names a sector.
+            string? onlineSectorFilter = null;
+            if (lowerMsg.Contains("school") || lowerMsg.Contains("govt") || lowerMsg.Contains("government") || lowerMsg.Contains("moe"))
+                onlineSectorFilter = "Public & Govt-School";
+            else if (lowerMsg.Contains("commercial"))
+                onlineSectorFilter = "Commercial";
+            else if (lowerMsg.Contains("residential"))
+                onlineSectorFilter = "Residential";
+
+            if (onlineSectorFilter is not null)
+            {
+                _log.Debug("ChatController: online-device pre-check with sector filter → forcing devices_by_filter (sector={Sector})", onlineSectorFilter);
+                var devFilterTemplateOn = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "devices_by_filter");
+                if (devFilterTemplateOn is not null)
+                {
+                    var onSectorParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["sectorName"]   = onlineSectorFilter,
+                        ["statusFilter"] = "Active"
+                    };
+                    if (lowerMsg.Contains("abu dhabi") || lowerMsg.Contains("abudhabi"))
+                        onSectorParams["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al ain") || lowerMsg.Contains("alain"))
+                        onSectorParams["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                        onSectorParams["regionName"] = "Al Dhafra";
+
+                    var (onSectorSql, onSectorSqlParams) = _rbac.BuildSafeQuery(devFilterTemplateOn, onSectorParams, user, scope);
+                    var (onSectorValid, _) = SqlValidator.Validate(onSectorSql);
+                    if (onSectorValid)
+                    {
+                        var onSectorResult = await _sqlExecutor.ExecuteAsync(onSectorSql, onSectorSqlParams, ct);
+                        if (onSectorResult.Success)
+                        {
+                            var onSectorSummary = await _azureAI.SummarizeResultsAsync(request.Message, devFilterTemplateOn, onSectorResult.Rows, scope, ct);
+                            var onSectorMsgId = Guid.NewGuid();
+                            await _sessionService.SaveBothMessagesAsync(
+                                sessionId: session.SessionId,
+                                userContent: request.Message,
+                                assistantMessageId: onSectorMsgId,
+                                assistantContent: onSectorSummary,
+                                sql: onSectorSql,
+                                responseType: devFilterTemplateOn.ResponseType,
+                                chartType: null, chartDataJson: null,
+                                dataSource: devFilterTemplateOn.TableUsed, dateRange: null,
+                                modelUsed: null, executionTimeMs: (int)onSectorResult.ExecutionTimeMs,
+                                tokenCount: 0, ct: ct);
+                            if (session.MessageCount <= 1)
+                                _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                            return Ok(_formatter.Format(
+                                sessionId: session.SessionId, messageId: onSectorMsgId,
+                                template: devFilterTemplateOn, llmSummary: onSectorSummary,
+                                rows: onSectorResult.Rows, rowCount: onSectorResult.Rows.Count,
+                                executionTimeMs: (int)onSectorResult.ExecutionTimeMs,
+                                scope: scope, modelUsed: null, tokenCount: 0));
+                        }
+                    }
+                    _log.Warning("ChatController: sector-filtered online pre-check failed, falling through to unfiltered online_devices");
+                }
+            }
+
             _log.Debug("ChatController: online-device pre-check fired → forcing online_devices");
             var onlineTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "online_devices");
             if (onlineTemplate is not null && !string.IsNullOrWhiteSpace(onlineTemplate.Sql))
@@ -2317,6 +2477,56 @@ public sealed class ChatController : ControllerBase
             skipAmbientStationPreCheck: ;
         }
 
+        // ── 2o. Hard pre-check: indoor vs ambient comparison → force indoor_ambient_compare ──
+        // "Compare the current indoor AQI at X with the nearest ambient station" was being mis-routed
+        // to ambient_station_readings (because "ambient station" matched isAmbientStationQuery).
+        // Now caught here and routed correctly before the main router runs.
+        if (isIndoorAmbientCompareQuery && hasAtSiteRef)
+        {
+            _log.Debug("ChatController: indoor-ambient-compare pre-check fired → forcing indoor_ambient_compare");
+            var iacTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "indoor_ambient_compare");
+            if (iacTemplate?.ApiCall is not null)
+            {
+                var iacBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var iacFill = await _azureAI.FillParametersAsync(request.Message, iacTemplate, history, scope, ct);
+                var iacApiResult = await _externalApi.CallAsync(iacTemplate.ApiCall, iacFill.Parameters, scope, iacBearer, user, iacTemplate.Id, ct);
+                if (iacApiResult.Success)
+                {
+                    var iacSummary = await _azureAI.SummarizeResultsAsync(request.Message, iacTemplate, iacApiResult.Rows, scope, ct);
+                    var iacMsgId = Guid.NewGuid();
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: iacMsgId,
+                        assistantContent: iacSummary,
+                        sql: null,
+                        responseType: iacTemplate.ResponseType,
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: iacTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: iacFill.ModelUsed,
+                        executionTimeMs: (int)iacApiResult.ExecutionTimeMs,
+                        tokenCount: iacFill.TokensUsed,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: iacMsgId,
+                        template: iacTemplate,
+                        llmSummary: iacSummary,
+                        rows: iacApiResult.Rows,
+                        rowCount: iacApiResult.Rows.Count,
+                        executionTimeMs: (int)iacApiResult.ExecutionTimeMs,
+                        scope: scope,
+                        modelUsed: iacFill.ModelUsed,
+                        tokenCount: iacFill.TokensUsed));
+                }
+                _log.Warning("ChatController: indoor_ambient_compare pre-check API failed, falling through to routing");
+            }
+        }
+
         // ── 3. Route the question to an approved template ───────────────────
         var routeResult = await _queryRouter.RouteAsync(enrichedMessage, user, history, ct);
 
@@ -2417,7 +2627,7 @@ public sealed class ChatController : ControllerBase
 
         if (msgHasPastDate && msgHasSiteRef && !msgHasDeviceCode && !isIndoorAmbientHistorical && !isAmbientStationQuery
             && routeResult.Template?.Id is "site_aqi_single" or "site_readings_all" or "main_pollutant_at_station"
-                or null)
+                or "device_info" or null)
         {
             var dailyTemplate = _queryRouter.GetPermittedTemplates(user)
                 .FirstOrDefault(t => t.Id == "site_daily_averages");
@@ -2442,7 +2652,7 @@ public sealed class ChatController : ControllerBase
         string? preExtractedMonthYear = null;
         if (msgHasMonthRef && msgHasSiteRef && !msgHasDeviceCode && !isIndoorAmbientHistorical && !isAmbientStationQuery
             && routeResult.Template?.Id is "site_aqi_single" or "site_daily_averages" or "site_readings_all"
-                or "main_pollutant_at_station" or "site_yearly_averages" or null)
+                or "main_pollutant_at_station" or "site_yearly_averages" or "device_info" or null)
         {
             var monthlyTemplate = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "site_monthly_averages");
             if (monthlyTemplate is not null)
@@ -2496,7 +2706,7 @@ public sealed class ChatController : ControllerBase
         string? preExtractedYear = null;
         if (msgHasYearRef && msgHasSiteRef && !msgHasDeviceCode && !isIndoorAmbientHistorical
             && routeResult.Template?.Id is "site_aqi_single" or "site_daily_averages" or "site_readings_all"
-                or "main_pollutant_at_station" or null)
+                or "main_pollutant_at_station" or "device_info" or null)
         {
             var yearlyTemplate = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "site_yearly_averages");
             if (yearlyTemplate is not null)
@@ -2572,6 +2782,60 @@ public sealed class ChatController : ControllerBase
             tokensUsed = paramResult.TokensUsed;
             modelUsed = paramResult.ModelUsed;
             llmParams = paramResult.Parameters;
+        }
+
+        // ── Override: DSR + AQI exceedance → force sites_repeated_aqi_exceedance_with_dsr ──
+        // The LLM sometimes routes "schools that repeatedly exceeded AQI 100 with DSR ≥ 75%"
+        // to sites_by_filter or schools_latest_pollutant. Correct it here after template selection.
+        if (hasDsrExceedanceSignal && template.Id != "sites_repeated_aqi_exceedance_with_dsr")
+        {
+            var dsrExcTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct))
+                .FirstOrDefault(t => t.Id == "sites_repeated_aqi_exceedance_with_dsr");
+            if (dsrExcTemplate is not null)
+            {
+                _log.Debug("ChatController: DSR-exceedance override applied — switching from {From} to sites_repeated_aqi_exceedance_with_dsr", template.Id);
+                template = dsrExcTemplate;
+                var dsrReFill = await _azureAI.FillParametersAsync(enrichedMessage, dsrExcTemplate, history, scope, ct);
+                llmParams = dsrReFill.Parameters;
+                // Ensure defaults when LLM doesn't extract them
+                if (!llmParams.ContainsKey("aqiThreshold")) llmParams["aqiThreshold"] = "100";
+                if (!llmParams.ContainsKey("aqiOperator"))  llmParams["aqiOperator"]  = ">";
+                if (!llmParams.ContainsKey("dsrThreshold")) llmParams["dsrThreshold"] = "75";
+                // Sector: if question mentions "school" or "schools", scope to school sector
+                if (!llmParams.ContainsKey("sectorName")
+                    && (lowerMsg.Contains("school") || lowerMsg.Contains("schools")))
+                    llmParams["sectorName"] = "Public & Govt-School";
+            }
+        }
+
+        // ── Override: DSR site-list question → force sites_dsr_below_threshold or sites_dsr_above_threshold ──
+        // "show me all school sites with a Data Success Rate below 75%" must NOT route to site_count.
+        var dsrSiteListTemplates = new[] { "sites_dsr_below_threshold", "sites_dsr_above_threshold", "sites_repeated_aqi_exceedance_with_dsr" };
+        if (hasDsrSiteListSignal && !dsrSiteListTemplates.Contains(template.Id))
+        {
+            // Pick below vs above based on question phrasing
+            bool isAboveDsr = lowerMsg.Contains("above") || lowerMsg.Contains("at least") || lowerMsg.Contains("more than")
+                || lowerMsg.Contains("greater than") || lowerMsg.Contains("higher than") || lowerMsg.Contains("over")
+                || lowerMsg.Contains("good dsr") || lowerMsg.Contains("high dsr");
+            var dsrSiteTemplateId = isAboveDsr ? "sites_dsr_above_threshold" : "sites_dsr_below_threshold";
+            var dsrSiteTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct))
+                .FirstOrDefault(t => t.Id == dsrSiteTemplateId)
+                // fall back to below-threshold if above doesn't exist
+                ?? (await _queryRouter.GetPermittedTemplatesAsync(user, ct))
+                    .FirstOrDefault(t => t.Id == "sites_dsr_below_threshold");
+            if (dsrSiteTemplate is not null)
+            {
+                _log.Debug("ChatController: DSR site-list override — switching from {From} to {To}", template.Id, dsrSiteTemplate.Id);
+                template = dsrSiteTemplate;
+                var dsrSiteFill = await _azureAI.FillParametersAsync(enrichedMessage, dsrSiteTemplate, history, scope, ct);
+                llmParams = dsrSiteFill.Parameters;
+                // Default dsrThreshold to 75 when LLM didn't extract it
+                if (!llmParams.ContainsKey("dsrThreshold")) llmParams["dsrThreshold"] = "75";
+                // Sector: scope to school sector when question mentions school
+                if (!llmParams.ContainsKey("sectorName")
+                    && (lowerMsg.Contains("school") || lowerMsg.Contains("schools")))
+                    llmParams["sectorName"] = "Public & Govt-School";
+            }
         }
 
         _log.Debug("ChatController: template={Template}, llmParams={Params}",
@@ -3865,7 +4129,12 @@ public sealed class ChatController : ControllerBase
         // ── 8. Generate natural language summary ────────────────────────────
         // When no data is returned, short-circuit with a polite message instead of
         // letting the LLM hallucinate an empty markdown table in the summary.
-        if (resultRows.Count == 0 && template.ResponseType != "text")
+        // Also catches text-type templates like dust_event_response when the station
+        // has no coordinates and the SQL CTE returns 0 rows entirely.
+        bool isTextTemplateWithNoData = resultRows.Count == 0
+            && template.ResponseType == "text"
+            && template.Id is "dust_event_response" or "indoor_source_analysis";
+        if ((resultRows.Count == 0 && template.ResponseType != "text") || isTextTemplateWithNoData)
         {
             var noDataMessage = BuildNoDataMessage(template.Id, scope, llmParams.GetValueOrDefault("aqiCategory"), llmParams.GetValueOrDefault("sectorName"));
 
@@ -3946,23 +4215,45 @@ public sealed class ChatController : ControllerBase
             }
             else if (template.Id == "dust_event_response" && resultRows.Count > 0)
             {
-                var r = resultRows[0];
-                var indoorSite  = r.GetValueOrDefault("IndoorSite")?.ToString() ?? "";
-                var ambStation  = r.GetValueOrDefault("NearestAmbientStation")?.ToString() ?? "";
-                var distKm      = r.GetValueOrDefault("Distance_km")?.ToString() ?? "";
-                var eventDate   = r.GetValueOrDefault("EventDate")?.ToString() ?? "";
+                var r          = resultRows[0];
+                var indoorSite = r.GetValueOrDefault("IndoorSite")?.ToString() ?? "";
+                var ambStation = r.GetValueOrDefault("NearestAmbientStation")?.ToString() ?? "";
+                var distKm     = r.GetValueOrDefault("Distance_km")?.ToString() ?? "";
+                var eventDate  = r.GetValueOrDefault("EventDate")?.ToString() ?? "";
                 if (eventDate.Contains('T')) eventDate = eventDate[..eventDate.IndexOf('T')];
-                var parameter   = r.GetValueOrDefault("Parameter")?.ToString() ?? "PM10";
-                var indoorAvg   = r.GetValueOrDefault("IndoorAvg");
-                var outdoorAvg  = r.GetValueOrDefault("OutdoorDayAvg");
-                var ioRatio     = r.GetValueOrDefault("IORatio");
-                var dayOfWeek   = r.GetValueOrDefault("DayOfWeek")?.ToString() ?? "";
-                var indoorStr   = indoorAvg  != null ? $"{indoorAvg} µg/m³"  : "no indoor data";
-                var outdoorStr  = outdoorAvg != null ? $"{outdoorAvg} µg/m³" : "no outdoor data";
-                var ratioStr    = ioRatio    != null ? $"{ioRatio}"           : "N/A";
-                summary = $"On {dayOfWeek} {eventDate}, the indoor {parameter} at {indoorSite} was {indoorStr} (24-hour average). " +
-                          $"The nearest ambient station, {ambStation} ({distKm} km away), recorded {outdoorStr} outdoors on the same day. " +
-                          $"The indoor/outdoor ratio was {ratioStr}. The full breakdown is in the table below.";
+                var parameter  = r.GetValueOrDefault("Parameter")?.ToString() ?? "PM10";
+                var indoorAvg  = r.GetValueOrDefault("IndoorAvg");
+                var outdoorAvg = r.GetValueOrDefault("OutdoorDayAvg");
+                var baseline30 = r.GetValueOrDefault("OutdoorBaseline30");
+                var ioRatio    = r.GetValueOrDefault("IORatio");
+                var indoorVal  = indoorAvg  != null ? $"{indoorAvg} µg/m³"  : "no data";
+                var outdoorVal = outdoorAvg != null ? $"{outdoorAvg} µg/m³" : "no data";
+                var ratioStr   = ioRatio    != null ? $"{ioRatio}"           : "N/A";
+
+                // Build contextual dust-event assessment
+                bool isDustEvent = false;
+                string contextLine = "";
+                if (outdoorAvg != null && double.TryParse(outdoorAvg.ToString(), out var outVal))
+                {
+                    isDustEvent = outVal >= 150;
+                    if (baseline30 != null && double.TryParse(baseline30.ToString(), out var baseVal) && baseVal > 0)
+                    {
+                        var twiceBaseline = Math.Round(baseVal * 2, 1);
+                        if (isDustEvent)
+                            contextLine = $"\nOutdoor {parameter} of {outdoorVal} is above the dust event threshold (~150 µg/m³) and {(outVal >= twiceBaseline ? "above" : "below")} twice the station's 30-day average of {baseline30} µg/m³ — conditions consistent with an elevated dust episode.";
+                        else
+                            contextLine = $"\nFor context, outdoor {parameter} of {outdoorVal} sits below the level typically associated with a dust event (around 150 µg/m³) and {(outVal >= twiceBaseline ? "above" : "below")} twice the station's 30-day average of {baseline30} µg/m³ — so the recorded conditions for this date don't point to an elevated dust episode.";
+                    }
+                }
+
+                summary = $"On {eventDate}, the nearest ambient station, {ambStation}, recorded a 24-hour average {parameter} of {outdoorVal}. " +
+                          $"Indoor {parameter} at {indoorSite} averaged {indoorVal} on the same day" +
+                          (ioRatio != null ? $", giving an indoor/outdoor ratio of {ratioStr}." : ".") +
+                          contextLine +
+                          $"\nHAWAQM gives you the measured indoor and outdoor readings and this comparison, so you have the full recorded picture for the day. " +
+                          $"As the {ambStation} station is about {distKm} km away, the outdoor conditions right at {indoorSite} may differ a little from the station's readings." +
+                          $"\nIf it's helpful, I can show the other pollutant readings at {indoorSite} for that day, or compare this reading with nearby sites within your access.";
+                tokensUsed = 0;
             }
             else if (template.Id == "site_yearly_averages" && resultRows.Count > 0)
             {
@@ -4059,9 +4350,11 @@ public sealed class ChatController : ControllerBase
             var outdoorStr  = outdoorVal != null ? $"{outdoorVal} µg/m³" : "no outdoor data available";
             var ratioStr    = ioRatio    != null ? $"{ioRatio}"           : "N/A";
 
+            var ratioLine = ioRatio != null
+                ? $", giving an indoor/outdoor ratio of {ratioStr}."
+                : ".";
             summary = $"On {dateLabel}, the indoor {parameter} at {siteName} was {indoorStr}, based on the 24-hour average for that day. " +
-                      $"The nearest ambient station, {ambStation} ({distKm} km away), recorded {outdoorStr} on the same day, " +
-                      $"giving an indoor/outdoor ratio of {ratioStr}.\n\n" +
+                      $"The nearest ambient station, {ambStation}, recorded {outdoorStr} on the same day{ratioLine}\n\n" +
                       $"HAWAQM gives you the measured readings and this ratio to review, so you have the full recorded picture for that day. " +
                       $"Pinpointing the exact source of the {parameter} goes beyond what the monitoring data covers, and is best looked at together with what was happening at the site.\n\n" +
                       $"If it's helpful, I can show the other pollutant readings at {siteName} for that day, or compare this reading with nearby sites within your access.";
@@ -4413,6 +4706,18 @@ public sealed class ChatController : ControllerBase
 
             "device_live_reading" =>
                 "No current readings are available for that device. It may be offline or still syncing. Please try again shortly.",
+
+            "site_daily_averages" or "site_single_parameter_reading" =>
+                "No 24-hour average data was found for that site on the requested date. Daily averages are computed at midnight — data for today may not be available yet. Try a past date (e.g. yesterday or earlier).",
+
+            "site_monthly_averages" =>
+                "No monthly average data was found for that site and month. Monthly averages may not yet be computed for recent months. Try an earlier month.",
+
+            "site_yearly_averages" =>
+                "No yearly average data was found for that site and year. Try a different year or check the site name.",
+
+            "dust_event_response" or "indoor_source_analysis" =>
+                "No data was found for that site and date. Please verify the site name is correct and that a specific past date is included. Example: \"How did indoor air quality at Al Saad Indian School respond during the dust event on 2026-03-15?\"",
 
             _ =>
                 "No data was found for your query. The devices may be syncing or no readings match the selected filters. Please try adjusting your filters or check back shortly."

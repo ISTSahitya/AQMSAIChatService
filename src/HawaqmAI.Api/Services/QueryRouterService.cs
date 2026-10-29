@@ -798,11 +798,23 @@ public sealed class QueryRouterService : IQueryRouterService
             "sensitive groups", "vulnerable", "harmful", "dangerous"
         };
         bool hasAqiQualitySignal = aqiQualitySignals.Any(k => lowerQuestion.Contains(k));
-        if (template.Id == "schools_latest_pollutant" && isGenericSchoolQuestion && !isDsrOrExceedanceQuestion && !hasAqiQualitySignal)
+
+        // Detect device status questions — user wants device list, not site/pollutant data.
+        // "online devices in all schools", "offline devices in school sector", "active devices in schools" etc.
+        var deviceStatusWords = new[] { "online devices", "offline devices", "active devices", "inactive devices" };
+        bool isDeviceStatusQuestion = deviceStatusWords.Any(w => lowerQuestion.Contains(w));
+
+        if (template.Id == "schools_latest_pollutant" && isGenericSchoolQuestion && !isDsrOrExceedanceQuestion && !hasAqiQualitySignal && !isDeviceStatusQuestion)
             maxScore = Math.Max(maxScore, 0.96);
         // Penalise schools_latest_pollutant for DSR/exceedance questions
         if (template.Id == "schools_latest_pollutant" && isDsrOrExceedanceQuestion)
             maxScore *= 0.05;
+        // Penalise schools_latest_pollutant for device status questions — must route to devices_by_filter
+        if (template.Id == "schools_latest_pollutant" && isDeviceStatusQuestion)
+            maxScore *= 0.02;
+        // Boost devices_by_filter for device status questions mentioning schools/sector
+        if (template.Id == "devices_by_filter" && isDeviceStatusQuestion && isGenericSchoolQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
 
         // Boost DSR/exceedance templates when the question contains DSR or exceedance signals
         if ((template.Id == "sites_repeated_aqi_exceedance_with_dsr"
