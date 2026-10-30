@@ -2314,7 +2314,7 @@
       ],
       "responseType": "table",
       "tableUsed": "DeviceCompliance + DMN_Stations + Sectors + SubSectors + Regions",
-      "skipSiteFilter": false
+      "skipSiteFilter": true
     },
     {
       "id": "sites_dsr_above_threshold",
@@ -2393,7 +2393,7 @@
       ],
       "responseType": "table",
       "tableUsed": "DeviceCompliance + DMN_Stations + Sectors + SubSectors + Regions",
-      "skipSiteFilter": false
+      "skipSiteFilter": true
     }
   ]
 }

@@ -1,6 +1,83 @@
 ﻿{
   "queries": [
     {
+      "id": "schools_main_pollutant",
+      "description": "Find all school sites (Public & Govt-School sector) where a specific parameter (e.g. CO2, PM2.5) is currently the main pollutant — i.e. the parameter with the highest exceedance ratio in the last 1-hour average. Use when the user asks which schools have a given parameter as their main or primary pollutant, optionally filtered by region. NEVER use for plain pollutant readings — use schools_latest_pollutant for that.",
+      "patterns": [
+        "schools where co2 is the main pollutant",
+        "schools where pm2.5 is the main pollutant",
+        "schools where co is the main pollutant",
+        "schools where no2 is the main pollutant",
+        "schools where pm10 is the main pollutant",
+        "schools co2 main pollutant",
+        "schools pm2.5 main pollutant",
+        "co2 main pollutant schools",
+        "pm2.5 main pollutant schools",
+        "main pollutant is co2 at schools",
+        "schools with co2 as main pollutant",
+        "schools with pm2.5 as main pollutant",
+        "schools where co2 is identified as the main",
+        "schools where pm2.5 is identified as the main",
+        "abu dhabi schools where co2 is the main pollutant",
+        "al ain schools where co2 is the main pollutant",
+        "abu dhabi region schools where co2 is the main",
+        "al ain region schools where co2 is the main",
+        "al dhafra region schools where co2 is the main",
+        "schools main pollutant co2",
+        "schools main pollutant pm2.5",
+        "main indoor pollutant co2 schools",
+        "co2 primary pollutant schools",
+        "pm2.5 primary pollutant schools",
+        "schools where the main pollutant is",
+        "table view for all abu dhabi region schools where co2 is the main pollutant",
+        "table view for schools where co2 is the main pollutant"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": [
+            "CO2",
+            "PM2.5",
+            "PM10",
+            "CO",
+            "NO2",
+            "O3",
+            "TVOC",
+            "CH2O",
+            "Temperature",
+            "Humidity"
+          ]
+        },
+        {
+          "name": "regionName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": [
+            "Abudhabi",
+            "Abu Dhabi",
+            "AL Ain",
+            "Al Ain",
+            "AlDhafra",
+            "Al Dhafra"
+          ]
+        }
+      ],
+      "responseType": "table",
+      "tableUsed": "ParameterAverages + DMN_Stations + Sectors + Parameters_Excedence_Values",
+      "skipSiteFilter": false,
+      "apiCall": {
+        "method": "GET",
+        "path": "/api/AirQuality/GetAllSiteData",
+        "responseShape": "schools_main_pollutant"
+      }
+    },
+    {
       "id": "schools_aqi_pie",
       "description": "Pie chart showing how many school sites fall into each AQI category (Good, Moderate, Unhealthy for Sensitive Groups, Unhealthy, Very Unhealthy, Hazardous). Use ONLY when the user asks for a pie chart, donut chart, or distribution chart of schools (or all sites) broken down by AQI category/level. Optional regionName to filter to one region.",
       "patterns": [

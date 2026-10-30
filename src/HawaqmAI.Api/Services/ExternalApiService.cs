@@ -860,6 +860,23 @@ public sealed class ExternalApiService : IExternalApiService
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
+            // schools_main_pollutant: find schools where a given parameter (e.g. CO2) is the main
+            // pollutant, determined by the highest (1H-value / exceedance-threshold) ratio across
+            // all school sites in the requested region. Uses the same SQL logic as site_main_pollutant
+            // but runs across all school-sector sites at once.
+            if (apiCall.ResponseShape == "schools_main_pollutant")
+            {
+                var parameterName = llmParams.GetValueOrDefault("parameterName") ?? "CO2";
+                // sectorName in llmParams scopes to that sector; default is schools only
+                var sectorFilter2 = llmParams.TryGetValue("sectorName", out var sn) && !string.IsNullOrWhiteSpace(sn)
+                    ? sn
+                    : "Public & Govt-School";
+                var rows2 = await BuildSchoolsMainPollutantRows(parameterName, regionFilter, user, ct, sectorFilter2);
+                _log.Information("ExternalApiService: schools_main_pollutant → {Count} rows for param={Param} region={Region} sector={Sector}",
+                    rows2.Count, parameterName, regionFilter ?? "all", sectorFilter2);
+                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
             // sector_pollutant: filter API results to a named sector, extract requested parameter
             if (apiCall.ResponseShape == "sector_pollutant")
             {
@@ -2417,7 +2434,7 @@ public sealed class ExternalApiService : IExternalApiService
                     dev.Location,
                     p.ParameterName,
                     pa.Parametervalue          AS [Value],
-                    p.Unit,
+                    u.UnitName                 AS Unit,
                     ev.ExcedenceValue          AS Threshold,
                     CASE
                         WHEN ev.ExcedenceValue IS NOT NULL AND ev.ExcedenceValue > 0
@@ -2431,6 +2448,7 @@ public sealed class ExternalApiService : IExternalApiService
                     )                          AS rn
                 FROM ParameterAverages pa
                 JOIN DMN_Parameters   p   ON pa.ParameterID = p.ID
+                LEFT JOIN ReportedUnits u  ON p.UnitID      = u.ID
                 JOIN DMN_Devices      dev ON p.DeviceID     = dev.DeviceId
                 JOIN DMN_Stations     s   ON dev.StationID  = s.ID
                 LEFT JOIN Parameters_Excedence_Values ev
@@ -2490,6 +2508,128 @@ public sealed class ExternalApiService : IExternalApiService
         {
             _log.Warning(ex, "site_main_pollutant: SQL failed for stationId={Id}", matched.StationId);
             return [new Dictionary<string, object?> { ["Error"] = "Could not retrieve pollutant data for that site." }];
+        }
+    }
+
+    /// <summary>
+    /// Finds all sites (optionally scoped to a sector) where <paramref name="parameterName"/> is the
+    /// main pollutant (highest exceedance ratio in the last 1 hour), optionally filtered by region.
+    /// Returns rows: StationName, RegionName, MainPollutant, Value, Unit, Threshold, ExceedanceRatio, LastUpdated.
+    /// Only sites where that parameter ranks first (deviceRank=1) are included.
+    /// Pass <paramref name="sectorFilter"/> = "Public &amp; Govt-School" to restrict to schools only.
+    /// </summary>
+    private async Task<List<Dictionary<string, object?>>> BuildSchoolsMainPollutantRows(
+        string parameterName,
+        string? regionFilter,
+        UserContext? user,
+        CancellationToken ct,
+        string? sectorFilter = "Public & Govt-School")
+    {
+        // Build the permitted-site filter clause
+        var permittedClause = (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
+            ? $"AND s.ID IN ({string.Join(",", user.PermittedSiteIds)})"
+            : "";
+
+        var regionClause = regionFilter is not null
+            ? "AND REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')"
+            : "";
+
+        var sectorClause = sectorFilter is not null
+            ? "JOIN Sectors sec ON s.SectorID = sec.Id"
+            : "LEFT JOIN Sectors sec ON s.SectorID = sec.Id";
+        var sectorWhereClause = sectorFilter is not null
+            ? "AND sec.SectorName = @sectorName"
+            : "";
+
+        // For each site (optionally scoped to sector): find the single parameter with the highest
+        // (value/threshold) ratio in the last 1H window (mirrors BuildSiteMainPollutantRows logic).
+        // Then keep only sites where that best parameter matches the requested parameterName.
+        var sql = $"""
+            WITH Ranked AS (
+                SELECT
+                    s.ID                            AS StationId,
+                    s.StationName,
+                    r.RegionName,
+                    p.ParameterName,
+                    pa.Parametervalue               AS [Value],
+                    u.UnitName                      AS Unit,
+                    ev.ExcedenceValue               AS Threshold,
+                    CASE
+                        WHEN ev.ExcedenceValue IS NOT NULL AND ev.ExcedenceValue > 0
+                        THEN CAST(pa.Parametervalue AS FLOAT) / ev.ExcedenceValue
+                        ELSE NULL
+                    END                             AS ExceedanceRatio,
+                    pa.Interval                     AS LastUpdated,
+                    RANK() OVER (
+                        PARTITION BY dev.DeviceId, p.ID
+                        ORDER BY pa.Interval DESC
+                    )                               AS rn
+                FROM ParameterAverages pa
+                JOIN DMN_Parameters    p   ON pa.ParameterID  = p.ID
+                LEFT JOIN ReportedUnits u  ON p.UnitID        = u.ID
+                JOIN DMN_Devices       dev ON p.DeviceID      = dev.DeviceId
+                JOIN DMN_Stations      s   ON dev.StationID   = s.ID
+                {sectorClause}
+                LEFT JOIN Regions      r   ON s.RegionID      = r.Id
+                LEFT JOIN Parameters_Excedence_Values ev
+                    ON ev.Parameter = p.ParameterName
+                    AND ev.Interval = 1
+                WHERE s.Status        = 1
+                  AND pa.Status       = 1
+                  AND p.ParameterName <> 'AQI Index'
+                  AND pa.Interval    >= DATEADD(HOUR, -2, GETDATE())
+                  {sectorWhereClause}
+                  {regionClause}
+                  {permittedClause}
+            ),
+            Latest AS (
+                SELECT * FROM Ranked WHERE rn = 1
+            ),
+            BestPerDevice AS (
+                SELECT *,
+                    RANK() OVER (
+                        PARTITION BY StationId, StationName
+                        ORDER BY
+                            COALESCE(ExceedanceRatio, 0) DESC,
+                            CAST([Value] AS FLOAT) DESC
+                    ) AS deviceRank
+                FROM Latest
+            )
+            SELECT
+                StationName,
+                RegionName,
+                ParameterName   AS MainPollutant,
+                ROUND(CAST([Value] AS FLOAT), 2) AS [Value],
+                Unit,
+                Threshold,
+                ROUND(ExceedanceRatio, 3) AS ExceedanceRatio,
+                LastUpdated
+            FROM BestPerDevice
+            WHERE deviceRank = 1
+              AND ParameterName = @parameterName
+            ORDER BY COALESCE(ExceedanceRatio, 0) DESC, CAST([Value] AS FLOAT) DESC
+            """;
+
+        var sqlParams = new Dictionary<string, object> { ["parameterName"] = parameterName };
+        if (regionFilter is not null)
+            sqlParams["regionName"] = regionFilter;
+        if (sectorFilter is not null)
+            sqlParams["sectorName"] = sectorFilter;
+
+        try
+        {
+            var result = await _sqlExecutor.ExecuteAsync(sql, sqlParams, ct);
+            if (!result.Success || result.Rows.Count == 0)
+            {
+                _log.Warning("BuildSchoolsMainPollutantRows: no results for param={Param} region={Region}", parameterName, regionFilter ?? "all");
+                return [];
+            }
+            return result.Rows;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "BuildSchoolsMainPollutantRows: SQL failed for param={Param} region={Region}", parameterName, regionFilter ?? "all");
+            return [];
         }
     }
 

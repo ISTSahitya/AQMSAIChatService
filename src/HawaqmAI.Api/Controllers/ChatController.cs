@@ -1030,6 +1030,68 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 2d-pre-0. Hard pre-check: schools + "main pollutant" → force schools_main_pollutant ──
+        // "Show me Abu Dhabi region schools where CO2 is the main pollutant" must route to
+        // schools_main_pollutant, which uses 1H exceedance-ratio SQL logic — not schools_latest_pollutant.
+        var mainPollutantSchoolPhrases = new[] {
+            "main pollutant", "primary pollutant", "is the main", "as the main", "as main pollutant",
+            "as primary pollutant", "main indoor", "identified as the main", "main air quality concern"
+        };
+        // Also catches "which site has PM2.5 as their main pollutant" (no school word)
+        bool isGenericSiteMainPollutant = hasParameterKeyword
+            && mainPollutantSchoolPhrases.Any(p => lowerMsg.Contains(p))
+            && (lowerMsg.Contains("site") || lowerMsg.Contains("school") || lowerMsg.Contains("location") || lowerMsg.Contains("station"));
+
+        bool isMainPollutantSchoolQuery = (isGenericSchoolMsg || isGenericSiteMainPollutant) && hasParameterKeyword
+            && mainPollutantSchoolPhrases.Any(p => lowerMsg.Contains(p));
+
+        if (isMainPollutantSchoolQuery)
+        {
+            _log.Debug("ChatController: schools-main-pollutant pre-check fired → forcing schools_main_pollutant");
+            var mainPollTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "schools_main_pollutant");
+            if (mainPollTemplate is not null && mainPollTemplate.ApiCall is not null)
+            {
+                var mainPollBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+                var mainPollFillResult = await _azureAI.FillParametersAsync(request.Message, mainPollTemplate, history, scope, ct);
+                var mainPollApiResult = await _externalApi.CallAsync(mainPollTemplate.ApiCall, mainPollFillResult.Parameters, scope, mainPollBearerToken, user, mainPollTemplate.Id, ct);
+                if (mainPollApiResult.Success)
+                {
+                    var mainPollMsgId = Guid.NewGuid();
+                    var mainPollSummary = await _azureAI.SummarizeResultsAsync(request.Message, mainPollTemplate, mainPollApiResult.Rows, scope, ct);
+                    await _sessionService.SaveBothMessagesAsync(
+                        sessionId: session.SessionId,
+                        userContent: request.Message,
+                        assistantMessageId: mainPollMsgId,
+                        assistantContent: mainPollSummary,
+                        sql: null,
+                        responseType: mainPollTemplate.ResponseType,
+                        chartType: null,
+                        chartDataJson: null,
+                        dataSource: mainPollTemplate.TableUsed,
+                        dateRange: null,
+                        modelUsed: null,
+                        executionTimeMs: (int)mainPollApiResult.ExecutionTimeMs,
+                        tokenCount: 0,
+                        ct: ct);
+                    if (session.MessageCount <= 1)
+                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                    return Ok(_formatter.Format(
+                        sessionId: session.SessionId,
+                        messageId: mainPollMsgId,
+                        template: mainPollTemplate,
+                        llmSummary: mainPollSummary,
+                        rows: mainPollApiResult.Rows,
+                        rowCount: mainPollApiResult.Rows.Count,
+                        executionTimeMs: (int)mainPollApiResult.ExecutionTimeMs,
+                        scope: scope,
+                        modelUsed: null,
+                        tokenCount: 0));
+                }
+                _log.Warning("ChatController: schools_main_pollutant pre-check API call failed: {Error}", mainPollApiResult.Error);
+            }
+            // Fall through to normal routing if template missing or API failed
+        }
+
         // ── 2d-pre. Hard pre-check: generic schools + pollutant → force schools_latest_pollutant ──
         // "Show me a table of all Abu Dhabi schools with their latest CO2 reading" must never
         // resolve to site_aqi_single. Force schools_latest_pollutant directly.
@@ -1040,7 +1102,8 @@ public sealed class ChatController : ControllerBase
             "sensitive groups", "critical", "hotspot"
         };
         bool hasAqiQualityCategoryWord = aqiQualityCategoryWords.Any(k => lowerMsg.Contains(k));
-        if (isGenericSchoolMsg && hasParameterKeyword && !isChartDistribution && !hasAqiQualityCategoryWord)
+        if (isGenericSchoolMsg && hasParameterKeyword && !isChartDistribution && !hasAqiQualityCategoryWord
+            && !isMainPollutantSchoolQuery)
         {
             _log.Debug("ChatController: generic-school-pollutant pre-check fired → forcing schools_latest_pollutant");
             var schoolPollTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "schools_latest_pollutant");

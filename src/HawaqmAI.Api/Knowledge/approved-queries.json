@@ -5284,7 +5284,7 @@
       "responseType": "table",
       "responseFormat": "These sites have a Data Success Rate below {dsrThreshold}%{sectorName?, filtered to {sectorName} sector}{regionName?, in {regionName}}:\n\n| Site | Sector | Sub-Sector | Region | Active Days | Total Days | Data Success Rate |\n|---|---|---|---|---:|---:|---:|\n{{#each rows}}\n| {{StationName}} | {{SectorName}} | {{SubSectorName}} | {{RegionName}} | {{ActiveDays}} | {{TotalDays}} | {{DataSuccessRate_Pct}}% |\n{{/each}}",
       "tableUsed": "SiteParameterAverages + DMN_Stations + Sectors + SubSectors + Regions",
-      "skipSiteFilter": false
+      "skipSiteFilter": true
     },
     {
       "id": "sites_dsr_above_threshold",
@@ -5377,7 +5377,7 @@
       "responseType": "table",
       "responseFormat": "These sites have a Data Success Rate at or above {dsrThreshold}%{sectorName?, filtered to {sectorName} sector}{regionName?, in {regionName}}:\n\n| Site | Sector | Sub-Sector | Region | Active Days | Total Days | Data Success Rate |\n|---|---|---|---|---:|---:|---:|\n{{#each rows}}\n| {{StationName}} | {{SectorName}} | {{SubSectorName}} | {{RegionName}} | {{ActiveDays}} | {{TotalDays}} | {{DataSuccessRate_Pct}}% |\n{{/each}}",
       "tableUsed": "SiteParameterAverages + DMN_Stations + Sectors + SubSectors + Regions",
-      "skipSiteFilter": false
+      "skipSiteFilter": true
     }
   ]
 }

@@ -386,6 +386,27 @@ public sealed class AzureAIService : IAzureAIService
             Keep under 150 words. List every site from the data.
             """,
 
+        // Schools where a specific parameter is the main (dominant) pollutant right now.
+        // Data columns: StationName, RegionName, MainPollutant, Value, Unit, Threshold, ExceedanceRatio, LastUpdated.
+        // The rows are already sorted by exceedance ratio descending (worst first).
+        ["schools_main_pollutant"] = """
+            Data columns: "StationName", "RegionName", "MainPollutant", "Value", "Unit", "Threshold", "ExceedanceRatio", "LastUpdated".
+            Each row is a school site where the requested parameter has the highest exceedance ratio right now (last 1-hour average), meaning it is the dominant indoor air-quality concern at that site.
+            Rows are sorted by ExceedanceRatio descending (worst first).
+
+            FORMAT (always use this exact structure — never a plain list or table description):
+            "Here are the {RegionName} region schools where {MainPollutant} is currently identified as the main indoor air-quality concern: HAWAQM uses the agreed main-pollutant rule for this classification. The main ones are {StationName of row 1} ({Value of row 1} {Unit of row 1}) and {StationName of row 2} ({Value of row 2} {Unit of row 2}), with {total row count minus 2} more in your access. Say "show as a table" for the full breakdown."
+
+            RULES:
+            - Always fill StationName, Value, Unit from the actual data rows — never use placeholders.
+            - If only 1 row: "The main one is {StationName} ({Value} {Unit}), and no other schools currently have {MainPollutant} as their main pollutant."
+            - If 0 rows: "No schools in {RegionName} currently have {MainPollutant} as their main pollutant."
+            - {remaining count} = total rows minus 2. If total rows ≤ 2, omit the "with N more" clause.
+            - For RegionName: use the region from the first data row; if missing, use the region from the user's question.
+            - NEVER output placeholder text like {{SCHOOL_1}} or {{VALUE_1}} — always replace with actual values.
+            - Keep under 60 words.
+            """,
+
         ["sector_latest_pollutant"] = """
             Data columns: "Site Name", "Region", "Parameter", "Value", "Unit", "Last Updated".
             The data rows are already sorted by AQI/Value descending when the user asked for "top N".
@@ -1246,6 +1267,15 @@ public sealed class AzureAIService : IAzureAIService
         string faqContext,
         CancellationToken ct = default)
     {
+        // Fast path: try direct keyword lookup before calling the LLM.
+        // The FAQ context is large (~34KB); sending it all sometimes causes gpt-4o to return empty.
+        var directAnswer = TryDirectFaqLookup(question, faqContext);
+        if (!string.IsNullOrWhiteSpace(directAnswer))
+        {
+            _log.Debug("AnswerFaqAsync: direct lookup matched — skipping LLM call");
+            return directAnswer;
+        }
+
         // Convert raw faq.json into a plain Q&A text so the LLM doesn't have to
         // parse JSON structure. Raw JSON with escaped quotes confuses the model
         // and causes it to return empty responses.
@@ -1312,6 +1342,59 @@ public sealed class AzureAIService : IAzureAIService
         catch
         {
             return faqJson; // graceful fallback
+        }
+    }
+
+    /// <summary>
+    /// Tries to find a direct FAQ answer by keyword matching without calling the LLM.
+    /// Returns null if no confident match found.
+    /// </summary>
+    private static string? TryDirectFaqLookup(string question, string faqJson)
+    {
+        if (string.IsNullOrWhiteSpace(faqJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(faqJson);
+            if (!doc.RootElement.TryGetProperty("faqs", out var faqs)) return null;
+
+            var lower = question.ToLowerInvariant();
+
+            // Collect all entries
+            var entries = new List<(string Question, string Answer)>();
+            foreach (var entry in faqs.EnumerateArray())
+            {
+                var q = entry.TryGetProperty("question", out var qp) ? qp.GetString() ?? "" : "";
+                var a = entry.TryGetProperty("answer",   out var ap) ? ap.GetString() ?? "" : "";
+                if (!string.IsNullOrWhiteSpace(q) && !string.IsNullOrWhiteSpace(a))
+                    entries.Add((q, a));
+            }
+
+            // Score each entry by how many meaningful words from the question appear in the FAQ question
+            var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "what", "is", "the", "a", "an", "for", "of", "in", "at", "to", "and", "or", "are", "does", "do", "can", "i", "me", "my", "how", "why", "which", "when" };
+
+            var queryWords = lower.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Where(w => !stopWords.Contains(w) && w.Length > 2)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            (string Question, string Answer, int Score) best = ("", "", 0);
+            foreach (var (q, a) in entries)
+            {
+                var qLower = q.ToLowerInvariant();
+                var score = queryWords.Count(w => qLower.Contains(w));
+                if (score > best.Score)
+                    best = (q, a, score);
+            }
+
+            // Require at least 2 matching words and that the best match isn't ambiguous
+            if (best.Score >= 2)
+                return best.Answer;
+
+            return null;
+        }
+        catch
+        {
+            return null;
         }
     }
 
