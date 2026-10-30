@@ -452,12 +452,35 @@ public sealed class QueryRouterService : IQueryRouterService
             @"in\s+20\d{2}|on\s+20\d{2}|20\d{2})",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    // Phrases that unambiguously signal an indoor vs ambient (outdoor) AQI comparison.
+    // Detected at the top of ScoreTemplate so the override fires before any other logic.
+    private static readonly string[] IndoorAmbientPhrases =
+    [
+        "ambient station", "nearest ambient", "nearest outdoor station",
+        "indoor vs outdoor", "indoor and outdoor", "compare indoor aqi",
+        "indoor aqi with ambient", "indoor aqi vs ambient", "indoor outdoor aqi",
+        "compare with ambient", "compare with outdoor", "outdoor aqi near",
+        "ambient aqi near", "current indoor aqi", "indoor aqi at",
+        "with the nearest ambient", "higher or lower than the nearest",
+        "compare aqi with ambient", "compare aqi with outdoor",
+        "compared with the nearest ambient", "is the aqi higher or lower than",
+        "nearest ambient station"
+    ];
+
     private static double ScoreTemplate(ApprovedQuery template, HashSet<string> questionTokens, string originalQuestion)
     {
         if (template.Patterns.Count == 0) return 0;
 
         double maxScore = 0;
         var lowerQuestion = originalQuestion.ToLowerInvariant();
+
+        // ── HARD OVERRIDE: indoor vs ambient compare ─────────────────────────
+        // Any question containing an ambient-station comparison phrase must ONLY
+        // route to indoor_ambient_compare — never to schools_latest_pollutant,
+        // site_aqi_single, or any other template. Score 1.15 bypasses the LLM.
+        bool isAmbientCompareQ = IndoorAmbientPhrases.Any(p => lowerQuestion.Contains(p));
+        if (isAmbientCompareQ)
+            return template.Id == "indoor_ambient_compare" ? 1.15 : 0.0;
 
         // Hard override: live-data site templates must never win when a specific past date is mentioned.
         // Site historical data must always route to site_daily_averages / site_single_parameter_reading.
@@ -768,22 +791,35 @@ public sealed class QueryRouterService : IQueryRouterService
         // Explicitly exclude sector-filter questions — "sites under Residential sector" is NOT a school question
         // even if a GenericSchoolPhrase substring happens to match.
         bool isSectorFilterQ = SectorFilterContext.Any(ctx => lowerQuestion.Contains(ctx));
+        bool hasNamedSchool = NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k));
         bool isGenericSchoolQuestion = !isSectorFilterQ
+            && !hasNamedSchool
             && (GenericSchoolPhrases.Any(p => lowerQuestion.Contains(p))
-                || (lowerQuestion.Contains("schools") && !NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k))));
+                || lowerQuestion.Contains("schools"));
 
         // Penalise site_aqi_all when the question contains a specific site name —
         // a named-site question must use site_aqi_single, not the all-sites table.
         bool hasSiteName = !isGenericSchoolQuestion
-            && (QuestionHasSiteName(lowerQuestion)
-                || NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k)));
+            && (QuestionHasSiteName(lowerQuestion) || hasNamedSchool);
         if (template.Id == "site_aqi_all" && hasSiteName)
             maxScore *= 0.02;
 
 
+        // Detect indoor vs ambient compare early — used to guard site_aqi_single boost below
+        var indoorAmbientPhrasesEarly = new[] {
+            "ambient station", "indoor vs outdoor", "indoor and outdoor", "nearest ambient",
+            "nearest outdoor station", "outdoor aqi near", "ambient aqi near",
+            "compare indoor aqi", "indoor aqi with ambient", "indoor aqi vs ambient",
+            "compare with outdoor", "compare with ambient", "indoor outdoor aqi",
+            "current indoor aqi", "indoor aqi at", "with the nearest ambient",
+            "higher or lower than the nearest", "is the aqi at"
+        };
+        bool isIndoorAmbientCompareEarly = indoorAmbientPhrasesEarly.Any(p => lowerQuestion.Contains(p));
+
         // Boost site_aqi_single when the question contains a specific site name and asks for AQI or readings.
         // Generic school questions (e.g. "Abu Dhabi schools CO2") must NOT trigger this boost —
         // they route to schools_latest_pollutant instead.
+        // Also must NOT trigger for indoor/ambient comparison questions — those route to indoor_ambient_compare.
         bool isAqiOrReadingQuestion = lowerQuestion.Contains("aqi") || lowerQuestion.Contains("air quality")
             || lowerQuestion.Contains("reading") || lowerQuestion.Contains("co2")
             || lowerQuestion.Contains("pm2.5") || lowerQuestion.Contains("pm10")
@@ -795,7 +831,8 @@ public sealed class QueryRouterService : IQueryRouterService
             || lowerQuestion.Contains("current air") || lowerQuestion.Contains("air today");
         // Do NOT boost site_aqi_single when a past date is present — historical site data
         // must route to site_daily_averages / site_single_parameter_reading instead.
-        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion && !hasSpecificDate)
+        // Do NOT boost when this is an indoor/ambient comparison question.
+        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion && !hasSpecificDate && !isIndoorAmbientCompareEarly)
             maxScore = Math.Max(maxScore, 0.96);
 
         // Detect DSR / AQI-exceedance questions — these must route to the DSR/exceedance templates,
@@ -827,7 +864,7 @@ public sealed class QueryRouterService : IQueryRouterService
         var deviceStatusWords = new[] { "online devices", "offline devices", "active devices", "inactive devices" };
         bool isDeviceStatusQuestion = deviceStatusWords.Any(w => lowerQuestion.Contains(w));
 
-        if (template.Id == "schools_latest_pollutant" && isGenericSchoolQuestion && !isDsrOrExceedanceQuestion && !hasAqiQualitySignal && !isDeviceStatusQuestion)
+        if (template.Id == "schools_latest_pollutant" && isGenericSchoolQuestion && !isDsrOrExceedanceQuestion && !hasAqiQualitySignal && !isDeviceStatusQuestion && !isIndoorAmbientCompareEarly)
             maxScore = Math.Max(maxScore, 0.96);
         // Penalise schools_latest_pollutant for DSR/exceedance questions
         if (template.Id == "schools_latest_pollutant" && isDsrOrExceedanceQuestion)
@@ -998,17 +1035,14 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
-        // Boost indoor_ambient_compare for questions comparing indoor AQI with ambient/outdoor station
-        var indoorAmbientPhrases = new[] {
-            "ambient station", "indoor vs outdoor", "indoor and outdoor", "nearest ambient",
-            "nearest outdoor station", "outdoor aqi near", "ambient aqi near",
-            "compare indoor aqi", "indoor aqi with ambient", "indoor aqi vs ambient",
-            "compare with outdoor", "compare with ambient", "indoor outdoor aqi"
-        };
-        bool isIndoorAmbientCompare = indoorAmbientPhrases.Any(p => lowerQuestion.Contains(p));
+        // Boost indoor_ambient_compare for questions comparing indoor AQI with ambient/outdoor station.
+        // Uses the same detection computed earlier (isIndoorAmbientCompareEarly) to stay consistent.
+        // Score > HighConfidenceThreshold (1.10) so the router bypasses the LLM entirely —
+        // the LLM has been observed picking schools_latest_pollutant for these questions.
+        bool isIndoorAmbientCompare = isIndoorAmbientCompareEarly;
         if (template.Id == "indoor_ambient_compare" && isIndoorAmbientCompare)
         {
-            maxScore = Math.Max(maxScore, 0.96);
+            maxScore = Math.Max(maxScore, 1.15);
         }
         if (template.Id != "indoor_ambient_compare" && isIndoorAmbientCompare)
         {
@@ -1313,7 +1347,15 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore = Math.Max(maxScore, 0.95);
 
         // Penalise site_count for list-intent questions — those go to sites_by_filter.
-        if (template.Id == "site_count" && isListIntent && !isCountIntent)
+        // Exception: sector/region grouping phrases always belong to site_count even if phrased as "show me".
+        bool isSectorOrRegionGrouping =
+            (lowerQuestion.Contains("for each sector") || lowerQuestion.Contains("by sector") ||
+             lowerQuestion.Contains("per sector") || lowerQuestion.Contains("each sector") ||
+             lowerQuestion.Contains("sector wise") || lowerQuestion.Contains("sector-wise") ||
+             lowerQuestion.Contains("for each region") || lowerQuestion.Contains("by region") ||
+             lowerQuestion.Contains("per region") || lowerQuestion.Contains("each region"))
+            && (lowerQuestion.Contains("site") || lowerQuestion.Contains("station"));
+        if (template.Id == "site_count" && isListIntent && !isCountIntent && !isSectorOrRegionGrouping)
             maxScore *= 0.05;
 
         // Penalise sites_by_filter for count-intent questions — routes to site_count instead.
@@ -1386,8 +1428,7 @@ public sealed class QueryRouterService : IQueryRouterService
 
         // Penalise schools_latest_pollutant when the question names a SPECIFIC school/site —
         // questions with a unique school proper noun must route to site_aqi_single, not the generic school list.
-        if (template.Id == "schools_latest_pollutant"
-            && NamedSchoolIndicators.Any(k => lowerQuestion.Contains(k)))
+        if (template.Id == "schools_latest_pollutant" && hasNamedSchool)
         {
             maxScore *= 0.02;
         }
@@ -1540,6 +1581,17 @@ public sealed class QueryRouterService : IQueryRouterService
             && (lowerQuestion.Contains("by sector") || lowerQuestion.Contains("per sector") ||
                 lowerQuestion.Contains("each sector"))
             && (lowerQuestion.Contains("site") || lowerQuestion.Contains("station"));
+
+        // "show me sites for each sector" / "sites for each sector" / "show sites per sector" —
+        // these are count-by-sector requests dressed as list questions; always route to site_count.
+        var isSitesBySectorPhrase =
+            (lowerQuestion.Contains("site") || lowerQuestion.Contains("station"))
+            && (lowerQuestion.Contains("for each sector") || lowerQuestion.Contains("by sector") ||
+                lowerQuestion.Contains("per sector") || lowerQuestion.Contains("each sector") ||
+                lowerQuestion.Contains("sector wise") || lowerQuestion.Contains("sectorwise") ||
+                lowerQuestion.Contains("sector-wise"));
+
+        if (isSitesBySectorPhrase) isCountBySectorQuestion = true;
 
         var isCountByRegionQuestion =
             (lowerQuestion.Contains("count") || lowerQuestion.Contains("how many") ||
@@ -1760,7 +1812,9 @@ public sealed class QueryRouterService : IQueryRouterService
             "tell me how many devices", "can you tell me how many devices",
             "active devices count", "active device count", "device online count", "device active count",
             "devices online count", "devices active count", "number of active devices", "number of online devices",
-            "count of active devices", "count active devices", "total active devices", "total online devices"
+            "count of active devices", "count active devices", "total active devices", "total online devices",
+            "total number of active devices", "total active device count", "active devices right now",
+            "devices active right now", "how many devices right now", "how many devices are currently online"
         };
         bool isActiveDeviceCountQuestion = activeDeviceCountPhrases.Any(p => lowerQuestion.Contains(p))
             && !lowerQuestion.Contains("dsr") && !lowerQuestion.Contains("data success")

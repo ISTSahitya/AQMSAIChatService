@@ -43,7 +43,7 @@
     {
       "intent": "devices_at_site",
       "pattern": "which devices are installed at site",
-      "template": "{StationName} has {DeviceCount} registered device(s): {DeviceList}."
+      "template": "There are {DeviceCount} device(s) installed at {StationName}: {DeviceList}. Let me know if you'd like the current status or latest readings for any of them."
     },
     {
       "intent": "total_device_count",
@@ -53,22 +53,22 @@
     {
       "intent": "active_device_count",
       "pattern": "how many devices are active",
-      "template": "{ActiveDeviceCount} devices are currently active out of {TotalDeviceCount} registered devices."
+      "template": "At the moment, {ActiveDeviceCount} out of {TotalDeviceCount} devices in your account are active and sending data. Let me know if you'd like to see the inactive devices and when they last reported."
     },
     {
       "intent": "total_site_count",
-      "pattern": "how many sites are registered",
-      "template": "HAWAQM currently has {TotalSiteCount} registered sites."
+      "pattern": "how many sites are registered / available / in hawaqm / do we have",
+      "template": "HAWAQM covers three regions. Based on your account access, the current site distribution is: Abu Dhabi: {AbuDhabiCount} ({AbuDhabiActive} active), Al Ain: {AlAinCount} ({AlAinActive} active), and Al Dhafra: {AlDhafraCount} ({AlDhafraActive} active), for a total of {TotalSiteCount} sites."
     },
     {
       "intent": "sites_by_region_count",
-      "pattern": "how many sites in Abudhabi AL Ain AlDhafra",
-      "template": "The current site distribution is Abudhabi: {AbuDhabiCount}, AL Ain: {AlAinCount}, and AlDhafra: {AlDhafraCount}."
+      "pattern": "how many sites in Abu Dhabi / Al Ain / Al Dhafra / per region / by region",
+      "template": "HAWAQM covers three regions. Based on your account access, the current site distribution is: Abu Dhabi: {AbuDhabiCount} ({AbuDhabiActive} active), Al Ain: {AlAinCount} ({AlAinActive} active), and Al Dhafra: {AlDhafraCount} ({AlDhafraActive} active), for a total of {TotalSiteCount} sites."
     },
     {
       "intent": "sites_by_sector_count",
-      "pattern": "how many sites in each sector",
-      "template": "The current sector distribution is Public & Government School: {SchoolCount}, Residential: {ResidentialCount}, Commercial: {CommercialCount}, and Industrial: {IndustrialCount}."
+      "pattern": "how many sites in each sector / per sector / by sector",
+      "template": "Based on your account access, the current site distribution across sectors is: Public & Government School: {SchoolCount}, Residential: {ResidentialCount}, Commercial: {CommercialCount}, and Industrial: {IndustrialCount}, for a total of {TotalSiteCount} sites."
     },
     {
       "intent": "region_aqi_single",
@@ -77,8 +77,8 @@
     },
     {
       "intent": "region_aqi_all",
-      "pattern": "current AQI values for all regions",
-      "template": "The current regional AQI values are Abudhabi: {AbuDhabiAQI} ({AbuDhabiLevel}), AL Ain: {AlAinAQI} ({AlAinLevel}), and AlDhafra: {AlDhafraAQI} ({AlDhafraLevel})."
+      "pattern": "current AQI values for all regions / AQI for Abu Dhabi Al Ain Al Dhafra / AQI in each region",
+      "template": "As of the latest available data, the current regional AQI values are: Abu Dhabi: {AbuDhabiAQI} ({AbuDhabiLevel}), Al Ain: {AlAinAQI} ({AlAinLevel}), and Al Dhafra: {AlDhafraAQI} ({AlDhafraLevel})."
     },
     {
       "intent": "highest_aqi_today",

@@ -2135,15 +2135,17 @@ public sealed class ExternalApiService : IExternalApiService
         }
 
         // Resolve live-status mode:
-        //   null / "Active" (default) → online devices only
-        //   "All"                     → all devices regardless of status
-        //   "Inactive"                → offline/inactive devices only
-        var statusMode = string.IsNullOrWhiteSpace(liveStatusFilter) ? "Active"
+        //   null (default) → "All": include all sites (Active + Inactive) so school/site listings
+        //                    are not silently missing inactive sites. Matches schools_pollutant behaviour.
+        //   "Active"       → online devices only (user explicitly asked for active/live)
+        //   "Inactive"     → offline/inactive devices only
+        var statusMode = string.IsNullOrWhiteSpace(liveStatusFilter) ? "All"
             : liveStatusFilter.Trim().ToLowerInvariant() switch
             {
-                "all"                    => "All",
-                "inactive" or "offline"  => "Inactive",
-                _                        => "Active"
+                "active" or "online" or "live" => "Active",
+                "all"                          => "All",
+                "inactive" or "offline"        => "Inactive",
+                _                              => "All"
             };
 
         // One row per station — API already pre-averages parameters per station.
@@ -2424,28 +2426,46 @@ public sealed class ExternalApiService : IExternalApiService
         }
 
         // ── 2. Query last 1H ParameterAverages per device × pollutant ───────
-        // Join Parameters_Excedence_Values (interval=1 for 1H) to get the threshold.
+        // Step A: find each device's latest 1H average slot (MAX Interval within last 2 hrs).
+        // Step B: pull all parameters recorded at that exact slot for each device.
+        // Step C: rank parameters within each device — highest exceedance ratio wins.
+        //         Parameters with a threshold always beat those without one.
+        //         Fall back to raw value when no threshold exists (e.g. O3 not in excedence table).
         // Exclude AQI Index — it is derived, not a raw pollutant.
-        // RANK() picks the single latest record per device×pollutant combination.
         var sql = $"""
-            WITH Ranked AS (
+            WITH
+
+            -- Step A: latest 1H slot per device
+            LatestInterval AS (
+                SELECT
+                    p.DeviceID,
+                    MAX(pa.Interval) AS LatestSlot
+                FROM ParameterAverages pa
+                JOIN DMN_Parameters  p   ON pa.ParameterID = p.ID
+                JOIN DMN_Devices     dev ON p.DeviceID     = dev.DeviceId
+                JOIN DMN_Stations    s   ON dev.StationID  = s.ID
+                WHERE s.ID            = {matched.StationId}
+                  AND pa.Status       = 1
+                  AND p.ParameterName <> 'AQI Index'
+                  AND pa.Interval    >= DATEADD(HOUR, -2, GETDATE())
+                GROUP BY p.DeviceID
+            ),
+
+            -- Step B: all parameters at that latest slot
+            LatestParams AS (
                 SELECT
                     dev.DeviceName,
                     dev.Location,
                     p.ParameterName,
-                    pa.Parametervalue          AS [Value],
-                    u.UnitName                 AS Unit,
-                    ev.ExcedenceValue          AS Threshold,
+                    pa.Parametervalue           AS [Value],
+                    u.UnitName                  AS Unit,
+                    ev.ExcedenceValue           AS Threshold,
+                    pa.Interval                 AS LastUpdated,
                     CASE
                         WHEN ev.ExcedenceValue IS NOT NULL AND ev.ExcedenceValue > 0
                         THEN CAST(pa.Parametervalue AS FLOAT) / ev.ExcedenceValue
                         ELSE NULL
-                    END                        AS ExceedanceRatio,
-                    pa.Interval                AS LastUpdated,
-                    RANK() OVER (
-                        PARTITION BY dev.DeviceId, p.ID
-                        ORDER BY pa.Interval DESC
-                    )                          AS rn
+                    END                         AS ExceedanceRatio
                 FROM ParameterAverages pa
                 JOIN DMN_Parameters   p   ON pa.ParameterID = p.ID
                 LEFT JOIN ReportedUnits u  ON p.UnitID      = u.ID
@@ -2453,35 +2473,37 @@ public sealed class ExternalApiService : IExternalApiService
                 JOIN DMN_Stations     s   ON dev.StationID  = s.ID
                 LEFT JOIN Parameters_Excedence_Values ev
                     ON ev.Parameter = p.ParameterName
-                    AND ev.Interval = 1
-                WHERE s.ID             = {matched.StationId}
-                  AND pa.Status        = 1
-                  AND p.ParameterName  <> 'AQI Index'
-                  AND pa.Interval     >= DATEADD(HOUR, -2, GETDATE())
+                   AND ev.Interval  = 1
+                JOIN LatestInterval li
+                    ON li.DeviceID   = p.DeviceID
+                   AND li.LatestSlot = pa.Interval
+                WHERE s.ID            = {matched.StationId}
+                  AND pa.Status       = 1
+                  AND p.ParameterName <> 'AQI Index'
             ),
-            Latest AS (
-                SELECT * FROM Ranked WHERE rn = 1
-            ),
-            BestPerDevice AS (
+
+            -- Step C: rank to find main pollutant per device
+            RankedPerDevice AS (
                 SELECT *,
-                    RANK() OVER (
+                    ROW_NUMBER() OVER (
                         PARTITION BY DeviceName
                         ORDER BY
-                            COALESCE(ExceedanceRatio, 0) DESC,
-                            CAST([Value] AS FLOAT) DESC
+                            CASE WHEN ExceedanceRatio IS NOT NULL THEN 0 ELSE 1 END ASC,
+                            COALESCE(ExceedanceRatio, 0)    DESC,
+                            CAST([Value] AS FLOAT)          DESC
                     ) AS deviceRank
-                FROM Latest
+                FROM LatestParams
             )
             SELECT
                 DeviceName,
                 Location,
-                ParameterName  AS MainPollutant,
+                ParameterName                       AS MainPollutant,
                 [Value],
                 Unit,
                 Threshold,
-                ROUND(ExceedanceRatio, 3) AS ExceedanceRatio,
+                ROUND(COALESCE(ExceedanceRatio, 0), 3) AS ExceedanceRatio,
                 LastUpdated
-            FROM BestPerDevice
+            FROM RankedPerDevice
             WHERE deviceRank = 1
             ORDER BY DeviceName
             """;
@@ -2513,9 +2535,12 @@ public sealed class ExternalApiService : IExternalApiService
 
     /// <summary>
     /// Finds all sites (optionally scoped to a sector) where <paramref name="parameterName"/> is the
-    /// main pollutant (highest exceedance ratio in the last 1 hour), optionally filtered by region.
-    /// Returns rows: StationName, RegionName, MainPollutant, Value, Unit, Threshold, ExceedanceRatio, LastUpdated.
-    /// Only sites where that parameter ranks first (deviceRank=1) are included.
+    /// main pollutant for at least one device (highest exceedance ratio in the last 1 hour),
+    /// optionally filtered by region.
+    /// Logic: per device, rank all pollutants — the top-ranked one is that device's "main pollutant".
+    /// A site qualifies if ANY of its devices has the requested parameter as its main pollutant.
+    /// Returns one row per qualifying (site, device) pair:
+    ///   StationName, RegionName, DeviceName, MainPollutant, Value, Unit, Threshold, ExceedanceRatio, LastUpdated.
     /// Pass <paramref name="sectorFilter"/> = "Public &amp; Govt-School" to restrict to schools only.
     /// </summary>
     private async Task<List<Dictionary<string, object?>>> BuildSchoolsMainPollutantRows(
@@ -2541,29 +2566,57 @@ public sealed class ExternalApiService : IExternalApiService
             ? "AND sec.SectorName = @sectorName"
             : "";
 
-        // For each site (optionally scoped to sector): find the single parameter with the highest
-        // (value/threshold) ratio in the last 1H window (mirrors BuildSiteMainPollutantRows logic).
-        // Then keep only sites where that best parameter matches the requested parameterName.
+        // Algorithm (matches the stated requirement):
+        // Step 1 — get all sites in the requested region/sector.
+        // Step 2 — for each device attached to those sites, find its latest 1H average interval.
+        // Step 3 — among all parameters recorded at that exact latest interval for that device,
+        //          find the one with the highest exceedance ratio (value / threshold).
+        //          When no threshold exists for a parameter, fall back to raw value for ranking.
+        //          That parameter is the device's "main pollutant".
+        // Step 4 — keep only devices whose main pollutant matches @parameterName.
         var sql = $"""
-            WITH Ranked AS (
+            WITH
+
+            -- Step 1: latest 1H average interval per device (most recent row in ParameterAverages)
+            LatestInterval AS (
                 SELECT
-                    s.ID                            AS StationId,
+                    p.DeviceID,
+                    MAX(pa.Interval) AS LatestSlot
+                FROM ParameterAverages pa
+                JOIN DMN_Parameters    p   ON pa.ParameterID = p.ID
+                JOIN DMN_Devices       dev ON p.DeviceID     = dev.DeviceId
+                JOIN DMN_Stations      s   ON dev.StationID  = s.ID
+                {sectorClause}
+                LEFT JOIN Regions      r   ON s.RegionID     = r.Id
+                WHERE s.Status        = 1
+                  AND pa.Status       = 1
+                  AND p.ParameterName <> 'AQI Index'
+                  AND pa.Interval    >= DATEADD(HOUR, -2, GETDATE())
+                  {sectorWhereClause}
+                  {regionClause}
+                  {permittedClause}
+                GROUP BY p.DeviceID
+            ),
+
+            -- Step 2: all parameters at that latest slot for each device
+            LatestParams AS (
+                SELECT
+                    s.ID                AS StationId,
                     s.StationName,
                     r.RegionName,
+                    dev.DeviceName,
+                    dev.DeviceId,
                     p.ParameterName,
-                    pa.Parametervalue               AS [Value],
-                    u.UnitName                      AS Unit,
-                    ev.ExcedenceValue               AS Threshold,
+                    pa.Parametervalue   AS [Value],
+                    u.UnitName          AS Unit,
+                    ev.ExcedenceValue   AS Threshold,
+                    pa.Interval         AS LastUpdated,
+                    -- Exceedance ratio: value / threshold; NULL when no threshold row exists
                     CASE
                         WHEN ev.ExcedenceValue IS NOT NULL AND ev.ExcedenceValue > 0
                         THEN CAST(pa.Parametervalue AS FLOAT) / ev.ExcedenceValue
                         ELSE NULL
-                    END                             AS ExceedanceRatio,
-                    pa.Interval                     AS LastUpdated,
-                    RANK() OVER (
-                        PARTITION BY dev.DeviceId, p.ID
-                        ORDER BY pa.Interval DESC
-                    )                               AS rn
+                    END                 AS ExceedanceRatio
                 FROM ParameterAverages pa
                 JOIN DMN_Parameters    p   ON pa.ParameterID  = p.ID
                 LEFT JOIN ReportedUnits u  ON p.UnitID        = u.ID
@@ -2573,41 +2626,49 @@ public sealed class ExternalApiService : IExternalApiService
                 LEFT JOIN Regions      r   ON s.RegionID      = r.Id
                 LEFT JOIN Parameters_Excedence_Values ev
                     ON ev.Parameter = p.ParameterName
-                    AND ev.Interval = 1
+                   AND ev.Interval  = 1
+                -- Only rows that belong to the device's latest slot
+                JOIN LatestInterval li
+                    ON li.DeviceID   = p.DeviceID
+                   AND li.LatestSlot = pa.Interval
                 WHERE s.Status        = 1
                   AND pa.Status       = 1
                   AND p.ParameterName <> 'AQI Index'
-                  AND pa.Interval    >= DATEADD(HOUR, -2, GETDATE())
                   {sectorWhereClause}
                   {regionClause}
                   {permittedClause}
             ),
-            Latest AS (
-                SELECT * FROM Ranked WHERE rn = 1
-            ),
-            BestPerDevice AS (
+
+            -- Step 3: rank parameters within each device to find the main pollutant
+            -- Priority: highest exceedance ratio first; fall back to raw value when no threshold.
+            -- Parameters with a threshold always beat those without one.
+            RankedPerDevice AS (
                 SELECT *,
-                    RANK() OVER (
-                        PARTITION BY StationId, StationName
+                    ROW_NUMBER() OVER (
+                        PARTITION BY DeviceId
                         ORDER BY
-                            COALESCE(ExceedanceRatio, 0) DESC,
-                            CAST([Value] AS FLOAT) DESC
+                            CASE WHEN ExceedanceRatio IS NOT NULL THEN 0 ELSE 1 END ASC,
+                            COALESCE(ExceedanceRatio, 0)       DESC,
+                            CAST([Value] AS FLOAT)             DESC
                     ) AS deviceRank
-                FROM Latest
+                FROM LatestParams
             )
+
+            -- Step 4: keep only devices whose main pollutant matches the requested parameter
             SELECT
                 StationName,
                 RegionName,
-                ParameterName   AS MainPollutant,
-                ROUND(CAST([Value] AS FLOAT), 2) AS [Value],
+                DeviceName,
+                ParameterName                       AS MainPollutant,
+                ROUND(CAST([Value] AS FLOAT), 2)    AS [Value],
                 Unit,
                 Threshold,
-                ROUND(ExceedanceRatio, 3) AS ExceedanceRatio,
+                ROUND(COALESCE(ExceedanceRatio, 0), 3) AS ExceedanceRatio,
                 LastUpdated
-            FROM BestPerDevice
-            WHERE deviceRank = 1
+            FROM RankedPerDevice
+            WHERE deviceRank    = 1
               AND ParameterName = @parameterName
-            ORDER BY COALESCE(ExceedanceRatio, 0) DESC, CAST([Value] AS FLOAT) DESC
+            ORDER BY StationName, DeviceName
             """;
 
         var sqlParams = new Dictionary<string, object> { ["parameterName"] = parameterName };
@@ -2675,11 +2736,19 @@ public sealed class ExternalApiService : IExternalApiService
             return [new Dictionary<string, object?> { ["Error"] = $"No indoor site found matching '{stationName}'." }];
         }
 
-        // Get indoor AQI (average of AQI Index across all devices at the site)
+        // Get indoor AQI — average AQI Index across online devices only (mirrors dashboard behaviour).
+        // Only active (IsOnline) devices are included, matching the dashboard's Status === 1 filter.
         var indoorAqiValues = matched.Devices
-            .Where(d => d.Params.ContainsKey("AQI Index"))
+            .Where(d => d.IsOnline && d.Params.ContainsKey("AQI Index"))
             .Select(d => d.Params["AQI Index"].Value)
             .ToList();
+
+        // Fall back to all devices if none are online (prevents blank result for edge cases)
+        if (indoorAqiValues.Count == 0)
+            indoorAqiValues = matched.Devices
+                .Where(d => d.Params.ContainsKey("AQI Index"))
+                .Select(d => d.Params["AQI Index"].Value)
+                .ToList();
 
         double? indoorAqi = indoorAqiValues.Count > 0 ? indoorAqiValues.Average() : null;
         var indoorLastUpdated = matched.Devices
@@ -2723,7 +2792,7 @@ public sealed class ExternalApiService : IExternalApiService
             return [new Dictionary<string, object?>
             {
                 ["IndoorSite"]     = matched.StationName,
-                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
+                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0, MidpointRounding.AwayFromZero) : "N/A",
                 ["AmbientStation"] = "N/A",
                 ["AmbientAQI"]     = "N/A",
                 ["Distance_km"]    = "N/A",
@@ -2804,7 +2873,7 @@ public sealed class ExternalApiService : IExternalApiService
             return [new Dictionary<string, object?>
             {
                 ["IndoorSite"]     = matched.StationName,
-                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
+                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0, MidpointRounding.AwayFromZero) : "N/A",
                 ["AmbientStation"] = "N/A",
                 ["AmbientAQI"]     = "N/A",
                 ["Distance_km"]    = "N/A",
@@ -2818,7 +2887,7 @@ public sealed class ExternalApiService : IExternalApiService
             return [new Dictionary<string, object?>
             {
                 ["IndoorSite"]     = matched.StationName,
-                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
+                ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0, MidpointRounding.AwayFromZero) : "N/A",
                 ["AmbientStation"] = "N/A",
                 ["AmbientAQI"]     = "N/A",
                 ["Distance_km"]    = "N/A",
@@ -2839,7 +2908,7 @@ public sealed class ExternalApiService : IExternalApiService
         return [new Dictionary<string, object?>
         {
             ["IndoorSite"]     = matched.StationName,
-            ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0) : "N/A",
+            ["IndoorAQI"]      = indoorAqi.HasValue ? (object?)Math.Round(indoorAqi.Value, 0, MidpointRounding.AwayFromZero) : "N/A",
             ["AmbientStation"] = ambientStationName,
             ["AmbientAQI"]     = ambientAqi.HasValue ? (object?)ambientAqi.Value : "N/A",
             ["Difference"]     = diff.HasValue ? (object?)diff.Value : "N/A",
