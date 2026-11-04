@@ -54,6 +54,25 @@ public sealed class StationResolverService : IStationResolverService
             return contains.Id;
         }
 
+        // 2b. Compact contains — strip spaces/hyphens/underscores before comparing.
+        // Handles "test site" ↔ "testsite", "test-site" ↔ "testsite", etc.
+        var compactQuery = query.Replace(" ", "").Replace("-", "").Replace("_", "");
+        var compactContains = stations
+            .Where(s =>
+            {
+                var compactName = s.Name.Replace(" ", "").Replace("-", "").Replace("_", "");
+                return compactName.Contains(compactQuery, StringComparison.OrdinalIgnoreCase)
+                    || compactQuery.Contains(compactName, StringComparison.OrdinalIgnoreCase);
+            })
+            .OrderBy(s => Math.Abs(s.Name.Length - query.Length))
+            .FirstOrDefault();
+
+        if (compactContains != default)
+        {
+            _log.Debug("StationResolver: compact-contains match '{Query}' → '{Name}' ID={Id}", stationName, compactContains.Name, compactContains.Id);
+            return compactContains.Id;
+        }
+
         // 3. Word overlap — score by how many words from the query appear in the station name
         var queryWords = query.Split([' ', '-', '_'], StringSplitOptions.RemoveEmptyEntries)
                               .Where(w => w.Length > 2)

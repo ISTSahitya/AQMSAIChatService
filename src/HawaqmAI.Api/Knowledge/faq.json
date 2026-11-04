@@ -59,7 +59,19 @@
     },
     {
       "question": "What is AQI?",
-      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+      "answer": "In HAWAQM, AQI refers to the Indoor Air Quality Index (IAQ-I) — a single number that summarises how clean or polluted the indoor air is and what health effects you might expect. HAWAQM calculates an IAQ-I for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the IAQ-I, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What is IAQ-I?",
+      "answer": "IAQ-I stands for Indoor Air Quality Index. It is a single number that summarises how clean or polluted the indoor air is at a HAWAQM monitoring site. The IAQ-I is calculated by combining readings from the site's sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the IAQ-I, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What does IAQ-I stand for?",
+      "answer": "IAQ-I stands for Indoor Air Quality Index. It is HAWAQM's primary air quality measure — a single number combining multiple sensor readings to represent the overall indoor air quality at a site. You may also see it referred to as AQI in the system; in HAWAQM both terms refer to the same Indoor Air Quality Index."
+    },
+    {
+      "question": "What is the full form of IAQ-I?",
+      "answer": "The full form of IAQ-I is Indoor Air Quality Index. It is HAWAQM's key metric for measuring indoor air quality, combining multiple sensor parameters into a single index value. The scale: 0–50 Good, 51–100 Moderate, 101–150 Unhealthy for Sensitive Groups, 151–200 Unhealthy, 201–300 Very Unhealthy, above 300 Hazardous."
     },
     {
       "question": "What does an AQI value of 150 mean?",
@@ -396,6 +408,10 @@
     {
       "question": "Why are some sites not visible to me?",
       "answer": "Your view of HAWAQM depends on the access given to your account. Access can be set at a single site, a sector, a region, or the full system for administrators, so the data you see is always within your permitted scope. This also means two people can ask the same question and get different totals, depending on their access. If you need to see more sites or regions, please contact your HAWAQM administrator."
+    },
+    {
+      "question": "Priority report by AQI, exceedance days and DSR",
+      "answer": "The priority ranking report — which orders sites by AQI exceedance days and Data Success Rate — is not yet available in this version of HAWAQM AI Assistant. Please check back in a future update."
     }
   ]
 }

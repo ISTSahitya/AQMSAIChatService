@@ -83,7 +83,6 @@
         "Description": "Free-text description of the site entered by Admin",
         "StationCode": "Short code identifier for the station (may be NULL)",
         "StationGuid": "Unique GUID identifier for the station",
-        "OrganizationName": "Organisation that owns or operates the station",
         "SectorID": "Foreign key to Sectors.Id — required at site creation. Values: 1=Commercial, 2=Public & Govt-School, 3=Industrial, 4=Residential",
         "SubSectorID": "Foreign key to SubSectors.Id — optional. Values depend on SectorID (e.g. SectorID=2: 1=Gov, 2=Private; SectorID=1: 5=Institutional, 6=Commercial)",
         "RegionID": "Foreign key to Regions.Id — required. Values: 1=Abudhabi, 2=AL Ain, 3=AlDhafra",
@@ -282,7 +281,7 @@
   "join_patterns": {
     "readings_with_station_and_parameter": "SELECT pr.*, s.StationName, p.ParameterName, u.UnitName FROM ParameterReadings pr JOIN DMN_Stations s ON pr.StationID = s.ID JOIN DMN_Parameters p ON pr.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID",
     "averages_with_station_and_parameter": "SELECT pa.*, s.StationName, p.ParameterName, u.UnitName FROM ParameterAverages pa JOIN DMN_Stations s ON pa.StationID = s.ID JOIN DMN_Parameters p ON pa.ParameterID = p.ID JOIN ReportedUnits u ON p.UnitID = u.ID",
-    "stations_with_sector_subsector_region": "SELECT s.ID, s.StationName, s.OrganizationName, s.Status, s.moldtest, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, s.CoordinateX, s.CoordinateY FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id"
+    "stations_with_sector_subsector_region": "SELECT s.ID, s.StationName, s.Status, s.moldtest, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, s.CoordinateX, s.CoordinateY FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id"
   },
   "region_name_lookup": {
     "al ain": "AL Ain",

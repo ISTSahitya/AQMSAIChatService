@@ -131,9 +131,15 @@ public sealed class ResponseFormatterService : IResponseFormatterService
             ? rows[0].Keys.ToList()
             : [];
 
-        // For chart type, serialize data as JSON string for ChartData field too
+        // Serialize data rows for persistence so history can reconstruct table/chart visuals.
+        // Tables: preserve original SQL column names (no camelCase) so headers are correct in history.
+        // Charts: keep camelCase to match the existing behaviour already deployed for chart history.
         string? chartDataJson = null;
-        if (responseType == "chart" && rows.Count > 0)
+        if (responseType == "table" && rows.Count > 0)
+        {
+            chartDataJson = JsonSerializer.Serialize(rows);
+        }
+        else if (responseType == "chart" && rows.Count > 0)
         {
             chartDataJson = JsonSerializer.Serialize(rows,
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });

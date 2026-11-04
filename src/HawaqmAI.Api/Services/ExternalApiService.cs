@@ -164,6 +164,17 @@ public sealed class ExternalApiService : IExternalApiService
                             return new { s.Key, s.Name, s.Devices, Score = containmentScore };
                         }
 
+                        // Compact containment — strip spaces/hyphens/underscores from both sides before
+                        // comparing. Handles "test site" ↔ "testsite", "test-site" ↔ "testsite", etc.
+                        var compactStation = normalisedStation.Replace(" ", "").Replace("-", "").Replace("_", "");
+                        var compactQuery   = query.Replace(" ", "").Replace("-", "").Replace("_", "");
+                        if (compactStation.Contains(compactQuery, StringComparison.OrdinalIgnoreCase)
+                            || compactQuery.Contains(compactStation, StringComparison.OrdinalIgnoreCase))
+                        {
+                            var containmentScore = 750.0 - Math.Abs(normalisedStation.Length - query.Length);
+                            return new { s.Key, s.Name, s.Devices, Score = containmentScore };
+                        }
+
                         // Jaccard: intersection / union
                         var intersection = queryWords.Intersect(stationWords).Count();
                         var union = queryWords.Union(stationWords).Count();
@@ -602,7 +613,7 @@ public sealed class ExternalApiService : IExternalApiService
                 };
 
                 var grouped = allSiteRows
-                    .GroupBy(r => r["AQICategory"]?.ToString() ?? "Unknown")
+                    .GroupBy(r => r["AQI Category"]?.ToString() ?? "Unknown")
                     .ToDictionary(g => g.Key, g => g.Count());
 
                 var pieRows = categoryOrder
@@ -867,6 +878,9 @@ public sealed class ExternalApiService : IExternalApiService
             if (apiCall.ResponseShape == "schools_main_pollutant")
             {
                 var parameterName = llmParams.GetValueOrDefault("parameterName") ?? "CO2";
+                // Resolve ASCII shorthand (O3 → O₃, CO2 → CO₂, etc.) to the exact DB ParameterName
+                if (_parameterAliases.TryGetValue(parameterName, out var resolvedAlias))
+                    parameterName = resolvedAlias;
                 // sectorName in llmParams scopes to that sector; default is schools only
                 var sectorFilter2 = llmParams.TryGetValue("sectorName", out var sn) && !string.IsNullOrWhiteSpace(sn)
                     ? sn
@@ -938,11 +952,14 @@ public sealed class ExternalApiService : IExternalApiService
             if (apiCall.ResponseShape == "site_list_with_status")
             {
                 // Support pipe-separated multiple values: "Abu Dhabi|Al Dhafra", "Active|Inactive"
-                var regionFilters = (llmParams.GetValueOrDefault("regionName") ?? "")
+                // Fall back to scope (filter-bar selection) when LLM didn't extract an explicit param.
+                var regionFilters = (llmParams.GetValueOrDefault("regionName")
+                                     ?? (!string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : ""))
                     .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 var statusFilters = (llmParams.GetValueOrDefault("liveStatus") ?? "")
                     .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                var sectorFilters = (llmParams.GetValueOrDefault("sectorName") ?? "")
+                var sectorFilters = (llmParams.GetValueOrDefault("sectorName")
+                                     ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : ""))
                     .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
                 // Query all non-deleted stations with region and sector — same as UI's GetStations()
@@ -957,37 +974,56 @@ public sealed class ExternalApiService : IExternalApiService
                     """;
                 var stationsResult = await _sqlExecutor.ExecuteAsync(stationsSql, new Dictionary<string, object>(), ct);
 
-                // Replicate AdminDAL.DevicesList() live-status logic:
-                //   isActive = any parameter reading within 24h OR LastCommunicationTime within 10min.
-                //   Uses ALL parameters (not just PM2.5/DriverID=4) — some devices may not report PM2.5
-                //   but still be live via other parameters, and AdminDAL falls back to IsEnable=false
-                //   only when NO parameter row exists at all for that device.
-                //   Site is Active if ANY device under that station is active.
-                var deviceStatusSql = """
-                    SELECT
-                        d.StationID,
-                        MAX(CASE
-                            WHEN p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
-                            WHEN p.LastCommunicationTime     >= DATEADD(MINUTE, -10,   GETDATE()) THEN 1
-                            ELSE 0
-                        END) AS HasActiveDevice
-                    FROM DMN_Devices d
-                    LEFT JOIN (
-                        SELECT DeviceID,
-                               MAX(ParameterReadingUpdateTime) AS ParameterReadingUpdateTime,
-                               MAX(LastCommunicationTime)      AS LastCommunicationTime
-                        FROM DMN_Parameters
-                        GROUP BY DeviceID
-                    ) p ON p.DeviceID = d.DeviceId
-                    WHERE ISNULL(d.IsDeleted, 0) = 0
-                    GROUP BY d.StationID
-                    """;
-                var deviceEnableResult = await _sqlExecutor.ExecuteAsync(deviceStatusSql, new Dictionary<string, object>(), ct);
-
-                var deviceEnableByStation = deviceEnableResult.Rows
-                    .ToDictionary(
-                        r => Convert.ToInt32(r["StationID"]),
-                        r => Convert.ToInt32(r["HasActiveDevice"]) == 1);
+                // Use GetAllSiteData (same source as the main app UI) to determine live status and AQI.
+                // This ensures the AI chat Active/Inactive status matches what the app shows exactly.
+                var siteDataJson = _siteDataCache.GetRawJson();
+                Dictionary<int, bool> deviceEnableByStation;
+                Dictionary<int, double?> aqiByStation = new();
+                if (!string.IsNullOrEmpty(siteDataJson))
+                {
+                    // Parse IsOnline and AQI Index per station from the cached API response
+                    var parsedDevices = ParseDevicesFromJson(siteDataJson);
+                    deviceEnableByStation = parsedDevices
+                        .GroupBy(d => d.StationId)
+                        .ToDictionary(g => g.Key, g => g.Any(d => d.IsOnline));
+                    aqiByStation = parsedDevices
+                        .GroupBy(d => d.StationId)
+                        .ToDictionary(g => g.Key, g =>
+                        {
+                            var vals = g.Where(d => d.Params.ContainsKey("AQI Index"))
+                                        .Select(d => d.Params["AQI Index"].Value)
+                                        .ToList();
+                            return vals.Count > 0 ? (double?)Math.Round(vals.Average(), 1) : null;
+                        });
+                }
+                else
+                {
+                    // Fallback to DB query if cache is empty (first-startup race)
+                    var deviceStatusSql = """
+                        SELECT
+                            d.StationID,
+                            MAX(CASE
+                                WHEN p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
+                                WHEN p.LastCommunicationTime     >= DATEADD(MINUTE, -10,   GETDATE()) THEN 1
+                                ELSE 0
+                            END) AS HasActiveDevice
+                        FROM DMN_Devices d
+                        LEFT JOIN (
+                            SELECT DeviceID,
+                                   MAX(ParameterReadingUpdateTime) AS ParameterReadingUpdateTime,
+                                   MAX(LastCommunicationTime)      AS LastCommunicationTime
+                            FROM DMN_Parameters
+                            GROUP BY DeviceID
+                        ) p ON p.DeviceID = d.DeviceId
+                        WHERE ISNULL(d.IsDeleted, 0) = 0
+                        GROUP BY d.StationID
+                        """;
+                    var deviceEnableResult = await _sqlExecutor.ExecuteAsync(deviceStatusSql, new Dictionary<string, object>(), ct);
+                    deviceEnableByStation = deviceEnableResult.Rows
+                        .ToDictionary(
+                            r => Convert.ToInt32(r["StationID"]),
+                            r => Convert.ToInt32(r["HasActiveDevice"]) == 1);
+                }
 
                 // RBAC: restrict to permitted sites for non-admin users
                 var allStationRows = stationsResult.Rows;
@@ -1008,8 +1044,9 @@ public sealed class ExternalApiService : IExternalApiService
                             liveStatus = hasActive ? "Active" : "Inactive";
                         else
                             liveStatus = "No Data";
+                        aqiByStation.TryGetValue(stationId, out var aqi);
 
-                        return new { StationName = name, RegionName = region, SectorName = sector, LiveStatus = liveStatus };
+                        return new { StationName = name, RegionName = region, SectorName = sector, LiveStatus = liveStatus, AQI = aqi };
                     })
                     .Where(s => !string.IsNullOrWhiteSpace(s.StationName))
                     .Where(s => regionFilters.Length == 0
@@ -1023,6 +1060,8 @@ public sealed class ExternalApiService : IExternalApiService
                         ["Site Name"]   = s.StationName,
                         ["Region"]      = s.RegionName,
                         ["Sector"]      = s.SectorName,
+                        ["AQI"]         = (object?)s.AQI,
+                        ["AQI Category"] = s.AQI.HasValue ? (object?)ClassifyAqi(s.AQI.Value) : null,
                         ["Live Status"] = s.LiveStatus
                     })
                     .ToList();
@@ -1626,12 +1665,11 @@ public sealed class ExternalApiService : IExternalApiService
         var sortDesc = !string.Equals(sortOrder, "asc", StringComparison.OrdinalIgnoreCase);
 
         // Resolve live-status mode:
-        //   null (default) → "All": include all school sites (Active + Inactive) so listings/counts
-        //                    are not silently missing inactive schools. Matches UI which shows all sites.
+        //   null (default) → "Active": include only active/online school sites by default.
         //   "Active"       → online devices only (user explicitly asked for active/live)
         //   "Inactive"     → offline devices only
-        //   "All"          → all devices regardless of status
-        var statusMode = string.IsNullOrWhiteSpace(liveStatusFilter) ? "All"
+        //   "All"          → all devices regardless of status (user explicitly asked for all/both)
+        var statusMode = string.IsNullOrWhiteSpace(liveStatusFilter) ? "Active"
             : liveStatusFilter.Trim().ToLowerInvariant() switch
             {
                 "active" or "online" or "live" => "Active",
@@ -1882,7 +1920,7 @@ public sealed class ExternalApiService : IExternalApiService
             .Select(g => new Dictionary<string, object?>
             {
                 ["RegionName"]  = g.Key,
-                ["AQI"]         = Math.Round(g.Average(s => s.AQI!.Value), 0),
+                ["AQI"]         = Math.Round(g.Average(s => s.AQI!.Value), 0, MidpointRounding.AwayFromZero),
                 ["SiteCount"]   = g.Count(),
                 ["LastUpdated"] = g.OrderByDescending(s => s.LastUpdated).First().LastUpdated
             })
@@ -2064,7 +2102,7 @@ public sealed class ExternalApiService : IExternalApiService
                 JOIN Sectors sec ON s.SectorID = sec.Id
                 WHERE (sec.SectorName = @sectorName
                     OR sec.SectorName LIKE '%' + @sectorLike + '%')
-                  AND s.Status = 1
+                  AND ISNULL(s.IsDeleted, 0) = 0
                 """;
             // sectorLike: use a distinctive fragment to avoid over-matching
             // For schools: "School", for Commercial: "Commercial", for Residential: "Residential"
@@ -2172,7 +2210,7 @@ public sealed class ExternalApiService : IExternalApiService
                 var aqiValues = targetDevices.Where(d => d.Params.ContainsKey("AQI Index"))
                                   .Select(d => d.Params["AQI Index"].Value)
                                   .ToList();
-                double? aqi = aqiValues.Count > 0 ? Math.Round(aqiValues.Average(), 0) : (double?)null;
+                double? aqi = aqiValues.Count > 0 ? Math.Round(aqiValues.Average(), 1) : (double?)null;
                 string lastUpdated = targetDevices.Select(d => d.LastUpdated)
                                       .Where(t => !string.IsNullOrWhiteSpace(t))
                                       .OrderByDescending(t => t)
@@ -2185,11 +2223,11 @@ public sealed class ExternalApiService : IExternalApiService
 
                 return (object?)new Dictionary<string, object?>
                 {
-                    ["SiteName"]    = first.StationName,
-                    ["RegionName"]  = first.RegionName,
-                    ["AQI"]         = aqi,
-                    ["AQICategory"] = ClassifyAqi(aqi.Value),
-                    ["LastUpdated"] = lastUpdated
+                    ["Station Name"] = first.StationName,
+                    ["Region"]       = first.RegionName,
+                    ["AQI"]          = aqi,
+                    ["AQI Category"] = ClassifyAqi(aqi.Value),
+                    ["Last Updated"] = lastUpdated
                 };
             })
             .Where(r => r is not null)
@@ -2197,8 +2235,8 @@ public sealed class ExternalApiService : IExternalApiService
             // Second-pass region filter: catches sites whose first device had an empty RegionName
             // but whose row RegionName was populated from a different device in the group.
             .Where(r => normRegion is null ||
-                (!string.IsNullOrWhiteSpace(r["RegionName"]?.ToString()) &&
-                 r["RegionName"]!.ToString()!.Replace(" ", "").Equals(normRegion, StringComparison.OrdinalIgnoreCase)))
+                (!string.IsNullOrWhiteSpace(r["Region"]?.ToString()) &&
+                 r["Region"]!.ToString()!.Replace(" ", "").Equals(normRegion, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(r => r["AQI"] is double d ? d : double.MaxValue)
             .ToList();
 
@@ -2216,7 +2254,7 @@ public sealed class ExternalApiService : IExternalApiService
         // and natural language the LLM might pass through verbatim.
         _log.Information("ExternalApiService: BuildAqiCategoryRows filtering {Total} sites by aqiCategory='{Filter}'. Present: [{Cats}]",
             siteRows.Count, aqiCategoryFilter,
-            string.Join(", ", siteRows.Select(r => r["AQICategory"]?.ToString()).Distinct()));
+            string.Join(", ", siteRows.Select(r => r["AQI Category"]?.ToString()).Distinct()));
 
         static string? ResolveCategory(string word) => word.Trim().ToLowerInvariant() switch
         {
@@ -2251,7 +2289,7 @@ public sealed class ExternalApiService : IExternalApiService
                 continue;
             }
             // Also try the segment directly as a canonical label (LLM may output exact names)
-            if (siteRows.Any(r => string.Equals(r["AQICategory"]?.ToString(), seg, StringComparison.OrdinalIgnoreCase)))
+            if (siteRows.Any(r => string.Equals(r["AQI Category"]?.ToString(), seg, StringComparison.OrdinalIgnoreCase)))
                 resolvedCategories.Add(seg);
         }
 
@@ -2262,7 +2300,7 @@ public sealed class ExternalApiService : IExternalApiService
 
         return siteRows.Where(r =>
         {
-            var cat = r["AQICategory"]?.ToString() ?? "";
+            var cat = r["AQI Category"]?.ToString() ?? "";
             return resolvedCategories.Contains(cat);
         }).ToList();
     }
@@ -2428,14 +2466,15 @@ public sealed class ExternalApiService : IExternalApiService
         // ── 2. Query last 1H ParameterAverages per device × pollutant ───────
         // Step A: find each device's latest 1H average slot (MAX Interval within last 2 hrs).
         // Step B: pull all parameters recorded at that exact slot for each device.
-        // Step C: rank parameters within each device — highest exceedance ratio wins.
-        //         Parameters with a threshold always beat those without one.
-        //         Fall back to raw value when no threshold exists (e.g. O3 not in excedence table).
+        // Step C: rank parameters within each device — highest SubIndex (AQI sub-index) wins.
+        //         SubIndex is the primary criterion; it is calculated for all pollutants including
+        //         O3 (which has no 1H exceedance threshold but does have a sub-index).
+        //         Fall back to exceedance ratio, then raw value when SubIndex is unavailable.
         // Exclude AQI Index — it is derived, not a raw pollutant.
         var sql = $"""
             WITH
 
-            -- Step A: latest 1H slot per device
+            -- Step A: latest 1H slot per device (TypeID=60)
             LatestInterval AS (
                 SELECT
                     p.DeviceID,
@@ -2445,19 +2484,20 @@ public sealed class ExternalApiService : IExternalApiService
                 JOIN DMN_Devices     dev ON p.DeviceID     = dev.DeviceId
                 JOIN DMN_Stations    s   ON dev.StationID  = s.ID
                 WHERE s.ID            = {matched.StationId}
-                  AND pa.Status       = 1
+                  AND pa.TypeID       = 60
                   AND p.ParameterName <> 'AQI Index'
                   AND pa.Interval    >= DATEADD(HOUR, -2, GETDATE())
                 GROUP BY p.DeviceID
             ),
 
-            -- Step B: all parameters at that latest slot
+            -- Step B: all parameters at that latest 1H slot
             LatestParams AS (
                 SELECT
                     dev.DeviceName,
                     dev.Location,
                     p.ParameterName,
                     pa.Parametervalue           AS [Value],
+                    pa.SubIndex                 AS SubIndex,
                     u.UnitName                  AS Unit,
                     ev.ExcedenceValue           AS Threshold,
                     pa.Interval                 AS LastUpdated,
@@ -2478,16 +2518,19 @@ public sealed class ExternalApiService : IExternalApiService
                     ON li.DeviceID   = p.DeviceID
                    AND li.LatestSlot = pa.Interval
                 WHERE s.ID            = {matched.StationId}
-                  AND pa.Status       = 1
+                  AND pa.TypeID       = 60
                   AND p.ParameterName <> 'AQI Index'
             ),
 
             -- Step C: rank to find main pollutant per device
+            -- SubIndex (AQI sub-index) is the primary criterion — correctly handles pollutants
+            -- like O3 that have no 1H exceedance threshold but do have a calculated sub-index.
             RankedPerDevice AS (
                 SELECT *,
                     ROW_NUMBER() OVER (
                         PARTITION BY DeviceName
                         ORDER BY
+                            COALESCE(SubIndex, 0)           DESC,
                             CASE WHEN ExceedanceRatio IS NOT NULL THEN 0 ELSE 1 END ASC,
                             COALESCE(ExceedanceRatio, 0)    DESC,
                             CAST([Value] AS FLOAT)          DESC
@@ -2570,14 +2613,15 @@ public sealed class ExternalApiService : IExternalApiService
         // Step 1 — get all sites in the requested region/sector.
         // Step 2 — for each device attached to those sites, find its latest 1H average interval.
         // Step 3 — among all parameters recorded at that exact latest interval for that device,
-        //          find the one with the highest exceedance ratio (value / threshold).
-        //          When no threshold exists for a parameter, fall back to raw value for ranking.
+        //          find the one with the highest SubIndex (AQI sub-index). SubIndex is the primary
+        //          criterion and correctly handles pollutants like O3 that have no 1H exceedance
+        //          threshold. Fall back to exceedance ratio then raw value when SubIndex is unavailable.
         //          That parameter is the device's "main pollutant".
         // Step 4 — keep only devices whose main pollutant matches @parameterName.
         var sql = $"""
             WITH
 
-            -- Step 1: latest 1H average interval per device (most recent row in ParameterAverages)
+            -- Step 1: latest 1H average interval per device (TypeID=60, most recent row)
             LatestInterval AS (
                 SELECT
                     p.DeviceID,
@@ -2589,7 +2633,7 @@ public sealed class ExternalApiService : IExternalApiService
                 {sectorClause}
                 LEFT JOIN Regions      r   ON s.RegionID     = r.Id
                 WHERE s.Status        = 1
-                  AND pa.Status       = 1
+                  AND pa.TypeID       = 60
                   AND p.ParameterName <> 'AQI Index'
                   AND pa.Interval    >= DATEADD(HOUR, -2, GETDATE())
                   {sectorWhereClause}
@@ -2598,7 +2642,7 @@ public sealed class ExternalApiService : IExternalApiService
                 GROUP BY p.DeviceID
             ),
 
-            -- Step 2: all parameters at that latest slot for each device
+            -- Step 2: all parameters at that latest 1H slot for each device
             LatestParams AS (
                 SELECT
                     s.ID                AS StationId,
@@ -2608,6 +2652,7 @@ public sealed class ExternalApiService : IExternalApiService
                     dev.DeviceId,
                     p.ParameterName,
                     pa.Parametervalue   AS [Value],
+                    pa.SubIndex         AS SubIndex,
                     u.UnitName          AS Unit,
                     ev.ExcedenceValue   AS Threshold,
                     pa.Interval         AS LastUpdated,
@@ -2627,12 +2672,12 @@ public sealed class ExternalApiService : IExternalApiService
                 LEFT JOIN Parameters_Excedence_Values ev
                     ON ev.Parameter = p.ParameterName
                    AND ev.Interval  = 1
-                -- Only rows that belong to the device's latest slot
+                -- Only rows that belong to the device's latest 1H slot
                 JOIN LatestInterval li
                     ON li.DeviceID   = p.DeviceID
                    AND li.LatestSlot = pa.Interval
                 WHERE s.Status        = 1
-                  AND pa.Status       = 1
+                  AND pa.TypeID       = 60
                   AND p.ParameterName <> 'AQI Index'
                   {sectorWhereClause}
                   {regionClause}
@@ -2640,13 +2685,14 @@ public sealed class ExternalApiService : IExternalApiService
             ),
 
             -- Step 3: rank parameters within each device to find the main pollutant
-            -- Priority: highest exceedance ratio first; fall back to raw value when no threshold.
-            -- Parameters with a threshold always beat those without one.
+            -- SubIndex (AQI sub-index) is the primary criterion — correctly handles pollutants
+            -- like O3 that have no 1H exceedance threshold but do have a calculated sub-index.
             RankedPerDevice AS (
                 SELECT *,
                     ROW_NUMBER() OVER (
                         PARTITION BY DeviceId
                         ORDER BY
+                            COALESCE(SubIndex, 0)              DESC,
                             CASE WHEN ExceedanceRatio IS NOT NULL THEN 0 ELSE 1 END ASC,
                             COALESCE(ExceedanceRatio, 0)       DESC,
                             CAST([Value] AS FLOAT)             DESC

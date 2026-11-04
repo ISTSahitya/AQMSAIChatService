@@ -13,7 +13,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.ID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName as SubSectorName, r.RegionName, CASE s.Status WHEN 1 THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND sec.SectorName = @sectorName ORDER BY s.StationName",
+      "sql": "SELECT s.ID, s.StationName, s.Location, sec.SectorName, sub.SectorName as SubSectorName, r.RegionName, CASE s.Status WHEN 1 THEN 'Active' ELSE 'Inactive' END AS Status FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND sec.SectorName = @sectorName ORDER BY s.StationName",
       "params": [
         {
           "name": "sectorName",
@@ -714,7 +714,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT s.StationName, s.OrganizationName, sec.SectorName, r.RegionName FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE s.moldtest = 1 AND ISNULL(s.IsDeleted, 0) = 0 ORDER BY s.StationName",
+      "sql": "SELECT s.StationName, sec.SectorName, r.RegionName FROM DMN_Stations s LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE s.moldtest = 1 AND ISNULL(s.IsDeleted, 0) = 0 ORDER BY s.StationName",
       "params": [],
       "responseType": "table",
       "tableUsed": "DMN_Stations"
@@ -2288,14 +2288,40 @@
         "aqi in 2025",
         "aqi in 2024",
         "aqi in 2023",
+        "aqi in 2022",
+        "aqi in 2021",
+        "aqi in 2020",
+        "aqi in 2019",
+        "aqi — 2025",
+        "aqi — 2024",
+        "aqi — 2023",
+        "aqi — 2022",
+        "aqi — 2021",
+        "aqi — 2020",
+        "aqi — 2019",
         "air quality in 2025",
         "air quality in 2024",
+        "air quality in 2023",
+        "air quality in 2022",
+        "air quality in 2021",
+        "air quality in 2020",
+        "air quality in 2019",
         "yearly average from parameter averages",
         "annual average from parameter averages",
         "what was the aqi in 2025",
         "what was the aqi in 2024",
+        "what was the aqi in 2023",
+        "what was the aqi in 2022",
+        "what was the aqi in 2021",
+        "what was the aqi in 2020",
+        "what was the aqi in 2019",
         "aqi for 2025",
-        "aqi for 2024"
+        "aqi for 2024",
+        "aqi for 2023",
+        "aqi for 2022",
+        "aqi for 2021",
+        "aqi for 2020",
+        "aqi for 2019"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
@@ -2345,7 +2371,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH DailyAQI AS ( SELECT spa.StationID, CAST(spa.Interval AS DATE) AS ReadingDate, ROUND(MAX(CAST(spa.Parametervalue AS FLOAT)), 1) AS DailyAQI FROM SiteParameterAverages spa WHERE spa.TypeID = 14440 AND spa.ParameterName = 'AQI Index' AND spa.Parametervalue IS NOT NULL AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY spa.StationID, CAST(spa.Interval AS DATE) ), ExceedanceSummary AS ( SELECT StationID, COUNT(*) AS TotalReadingDays, SUM(CASE WHEN DailyAQI > @aqiThreshold THEN 1 ELSE 0 END) AS DaysExceeded FROM DailyAQI GROUP BY StationID HAVING SUM(CASE WHEN DailyAQI > @aqiThreshold THEN 1 ELSE 0 END) >= 2 ), DeviceActivedays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ) SELECT s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, es.DaysExceeded, es.TotalReadingDays, ISNULL(dad.ActiveDays, 0) AS DeviceActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DataSuccessRate_Pct FROM ExceedanceSummary es JOIN DMN_Stations s ON es.StationID = s.ID LEFT JOIN DeviceActivedays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) >= @dsrThreshold ORDER BY es.DaysExceeded DESC, s.StationName",
+      "sql": "WITH DailyAQI AS ( SELECT spa.StationID, CAST(spa.Interval AS DATE) AS ReadingDate, ROUND(MAX(CAST(spa.Parametervalue AS FLOAT)), 1) AS DailyAQI FROM SiteParameterAverages spa WHERE spa.TypeID = 14440 AND spa.ParameterName = 'AQI Index' AND spa.Parametervalue IS NOT NULL AND CAST(spa.Interval AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY spa.StationID, CAST(spa.Interval AS DATE) ), ExceedanceSummary AS ( SELECT StationID, COUNT(*) AS TotalReadingDays, SUM(CASE WHEN DailyAQI > @aqiThreshold THEN 1 ELSE 0 END) AS DaysExceeded FROM DailyAQI GROUP BY StationID HAVING SUM(CASE WHEN DailyAQI > @aqiThreshold THEN 1 ELSE 0 END) >= 2 ), DeviceActivedays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ) SELECT s.StationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, es.DaysExceeded, es.TotalReadingDays, ISNULL(dad.ActiveDays, 0) AS DeviceActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DataSuccessRate_Pct FROM ExceedanceSummary es JOIN DMN_Stations s ON es.StationID = s.ID LEFT JOIN DeviceActivedays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) >= @dsrThreshold ORDER BY es.DaysExceeded DESC, s.StationName",
       "params": [
         {
           "name": "aqiThreshold",
@@ -2412,7 +2438,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH DeviceActiveDays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(dad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN DeviceActiveDays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, OrganizationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct < @dsrThreshold ORDER BY DSR_Pct ASC, StationName",
+      "sql": "WITH DeviceActiveDays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(dad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN DeviceActiveDays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct < @dsrThreshold ORDER BY DSR_Pct ASC, StationName",
       "params": [
         {
           "name": "dsrThreshold",
@@ -2491,7 +2517,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "WITH DeviceActiveDays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.OrganizationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(dad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN DeviceActiveDays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, OrganizationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct >= @dsrThreshold ORDER BY DSR_Pct DESC, StationName",
+      "sql": "WITH DeviceActiveDays AS ( SELECT d.StationID, COUNT(DISTINCT CAST(dc.RecordedDate AS DATE)) AS ActiveDays FROM DeviceCompliance dc JOIN DMN_Devices d ON dc.DeviceId = d.DeviceId WHERE dc.IsActive = 1 AND CAST(dc.RecordedDate AS DATE) BETWEEN CAST(DATEADD(DAY, -30, GETDATE()) AS DATE) AND CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) GROUP BY d.StationID ), SiteDSR AS ( SELECT s.ID AS StationID, s.StationName, s.Location, sec.SectorName, sub.SectorName AS SubSectorName, r.RegionName, ISNULL(dad.ActiveDays, 0) AS ActiveDays, ROUND(100.0 * ISNULL(dad.ActiveDays, 0) / 30.0, 1) AS DSR_Pct FROM DMN_Stations s LEFT JOIN DeviceActiveDays dad ON dad.StationID = s.ID LEFT JOIN Sectors sec ON s.SectorID = sec.Id LEFT JOIN SubSectors sub ON s.SubSectorID = sub.Id LEFT JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR sec.SectorName LIKE '%' + @sectorName + '%') AND (@regionName IS NULL OR r.RegionName LIKE '%' + @regionName + '%') ) SELECT StationName, SectorName, SubSectorName, RegionName, ActiveDays, 30 AS TotalDays, DSR_Pct AS DataSuccessRate_Pct FROM SiteDSR WHERE DSR_Pct >= @dsrThreshold ORDER BY DSR_Pct DESC, StationName",
       "params": [
         {
           "name": "dsrThreshold",

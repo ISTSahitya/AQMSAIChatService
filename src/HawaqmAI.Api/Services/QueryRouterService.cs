@@ -452,6 +452,47 @@ public sealed class QueryRouterService : IQueryRouterService
             @"in\s+20\d{2}|on\s+20\d{2}|20\d{2})",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    // Phrases that unambiguously signal an access/visibility question — must route to faq_answer,
+    // never to list_stations or any data-returning template.
+    private static readonly string[] AccessVisibilityPhrases =
+    [
+        "why can't i see all",
+        "why can't i see all the sites",
+        "why can't i see all sites",
+        "why don't i see all the sites",
+        "why don't i see all sites",
+        "why am i not seeing all sites",
+        "why can i not see all sites",
+        "i can't see all sites",
+        "cannot see all sites",
+        "not seeing all sites",
+        "why are some sites missing",
+        "sites missing from my view",
+        "missing sites",
+        "not all sites visible",
+        "why is my access limited",
+        "limited site access",
+        "only see some sites",
+        "can only see some sites",
+        "see more sites",
+        "access more sites"
+    ];
+
+    // Phrases that signal a live "bad air" AQI filter question — must route to site_aqi_by_category,
+    // never to sector_stations (which lists all stations regardless of AQI).
+    private static readonly string[] BadAirPhrases =
+    [
+        "bad air",
+        "poor air quality",
+        "unhealthy air",
+        "bad air right now",
+        "bad air quality right now",
+        "schools with bad air",
+        "sites with bad air",
+        "have bad air",
+        "having bad air"
+    ];
+
     // Phrases that unambiguously signal an indoor vs ambient (outdoor) AQI comparison.
     // Detected at the top of ScoreTemplate so the override fires before any other logic.
     private static readonly string[] IndoorAmbientPhrases =
@@ -473,6 +514,38 @@ public sealed class QueryRouterService : IQueryRouterService
 
         double maxScore = 0;
         var lowerQuestion = originalQuestion.ToLowerInvariant();
+
+        // ── HARD OVERRIDE: specific device name + status/online/offline word → device_status ─
+        // "Is SEI200M 0003 online or offline?", "is BA 0010 active?" etc. must ALWAYS route
+        // to device_status — never to devices_by_filter (which lists all devices).
+        // Score 1.15 bypasses the LLM entirely so it cannot override this decision.
+        bool isDeviceStatusQ = QuestionHasDeviceName(lowerQuestion)
+            && DeviceStatusKeywords.Any(k => lowerQuestion.Contains(k));
+        if (isDeviceStatusQ)
+            return template.Id == "device_status" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: bad air / poor air quality → site_aqi_by_category ─
+        // "bad air right now", "schools with bad air" etc. must never route to
+        // sector_stations (lists ALL stations) — force the AQI category filter instead.
+        bool isBadAirQ = BadAirPhrases.Any(p => lowerQuestion.Contains(p));
+        if (isBadAirQ)
+            return template.Id == "site_aqi_by_category" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: active/inactive status filter questions → sites_filtered ─
+        // "list of active abu dhabi schools", "active schools in al ain" etc. must route
+        // to sites_filtered (supports sector + region + status), never to list_stations.
+        bool isStatusFilterQ = (lowerQuestion.Contains("active") || lowerQuestion.Contains("inactive"))
+            && (lowerQuestion.Contains("school") || lowerQuestion.Contains("site") || lowerQuestion.Contains("station")
+                || lowerQuestion.Contains("residential") || lowerQuestion.Contains("commercial"));
+        if (isStatusFilterQ)
+            return template.Id == "sites_filtered" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: access / visibility questions → FAQ ───────────────
+        // "Why can't I see all the sites?" must never route to list_stations.
+        // Force faq_answer so the static access-control explanation is returned.
+        bool isAccessVisibilityQ = AccessVisibilityPhrases.Any(p => lowerQuestion.Contains(p));
+        if (isAccessVisibilityQ)
+            return template.Id == "faq_answer" ? 1.15 : 0.0;
 
         // ── HARD OVERRIDE: indoor vs ambient compare ─────────────────────────
         // Any question containing an ambient-station comparison phrase must ONLY
@@ -1830,6 +1903,11 @@ public sealed class QueryRouterService : IQueryRouterService
             && !lowerQuestion.Contains("dsr") && !lowerQuestion.Contains("data success")
             && !lowerQuestion.Contains("data availability") && !lowerQuestion.Contains("compliance"))
             maxScore *= 0.1;
+
+        // Penalise list_devices (total registered count) when user asks about ACTIVE devices —
+        // list_devices has no active filter and would return all registered devices instead.
+        if (template.Id == "list_devices" && isActiveDeviceCountQuestion)
+            maxScore *= 0.05;
 
         // Boost devices_by_model_chart for device model distribution chart questions
         var deviceModelChartPhrases = new[] {
