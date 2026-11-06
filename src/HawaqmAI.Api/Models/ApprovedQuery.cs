@@ -80,6 +80,13 @@ public sealed class ApiCallDefinition
     /// "sites"   = one row per site (GetAllSiteData response shape).
     /// </summary>
     public string ResponseShape { get; set; } = "devices";
+
+    /// <summary>
+    /// Fixed parameters injected into llmParams before shape processing.
+    /// These override LLM-extracted values and cannot be changed by the user's question.
+    /// Example: {"minValue": "150", "liveStatus": "Active"} for priority_hotspots.
+    /// </summary>
+    public Dictionary<string, string> FixedParams { get; set; } = new();
 }
 
 /// <summary>A single parameter definition within an approved query template.</summary>

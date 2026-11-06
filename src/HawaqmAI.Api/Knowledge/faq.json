@@ -18,8 +18,8 @@
       "answer": "A site is shown as inactive only when all devices at that site have stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device is still active, the site remains active."
     },
     {
-      "question": "How is the site AQI calculated when a site has more than one device?",
-      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
+      "question": "How is the site AQI calculated when a site has more than one device? / How can one device have a high reading while the overall site AQI is still acceptable?",
+      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
     },
     {
       "question": "Which air-quality parameters are monitored by HAWAQM?",
@@ -163,7 +163,7 @@
     },
     {
       "question": "How is the site AQI calculated?",
-      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
+      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
     },
     {
       "question": "Can you confirm a school is safe for children to attend today?",
@@ -266,7 +266,7 @@
       "answer": "No. Missing values are never estimated or filled in. You get the real measurements, a clear note of which period is missing, and the Data Success Rate for context."
     },
     {
-      "question": "Why do the total device and active device figures not change when I select an older year on the dashboard?",
+      "question": "Should the device numbers change when I select a different year? / Why do the total device and active device figures not change when I select an older year on the dashboard?",
       "answer": "Those two numbers count what is registered today — they are not a snapshot of the selected year. That is why they stay the same whichever year you pick."
     },
     {
@@ -299,27 +299,27 @@
     },
     {
       "question": "Can you prove the ventilation system caused yesterday's spike?",
-      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
+      "answer": "HAWAQM records what the sensors measured, but cannot prove the physical cause of a spike. To investigate, ask me for the AQI timeline or the pollutant readings at that site for the period in question — the data will show which parameters peaked and when, which helps narrow down the source."
     },
     {
       "question": "What caused the AQI spike at the school yesterday?",
-      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
+      "answer": "HAWAQM records what the sensors measured, but cannot prove the physical cause of a spike. To investigate, ask me for the AQI timeline or the pollutant readings at that site for the period in question — the data will show which parameters peaked and when, which helps narrow down the source."
     },
     {
       "question": "Why did the AQI spike at a site?",
-      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
+      "answer": "HAWAQM records what the sensors measured, but cannot prove the physical cause of a spike. To investigate, ask me for the AQI timeline or the pollutant readings at that site for the period in question — the data will show which parameters peaked and when, which helps narrow down the source."
     },
     {
       "question": "Why was the AQI high at a site yesterday?",
-      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
+      "answer": "HAWAQM records what the sensors measured, but cannot prove the physical cause of a spike. To investigate, ask me for the AQI timeline or the pollutant readings at that site for the period in question — the data will show which parameters peaked and when, which helps narrow down the source."
     },
     {
       "question": "Can you tell me which weather condition caused a pollutant spike?",
-      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
+      "answer": "HAWAQM records what the sensors measured, but cannot prove the physical cause of a spike. To investigate, ask me for the AQI timeline or the pollutant readings at that site for the period in question — the data will show which parameters peaked and when, which helps narrow down the source."
     },
     {
       "question": "Yesterday's AQI spike and ventilation at a school",
-      "answer": "I can show what the data recorded: AQI peaked at {PEAK_AQI} at {TIME}, with {POLLUTANT_LIST} rising at the same time. The data cannot prove the physical cause, but it narrows the question — would you like to see the timeline?"
+      "answer": "HAWAQM records what the sensors measured, but cannot prove the physical cause of a spike. To investigate, ask me for the AQI timeline or the pollutant readings at that site for the period in question — the data will show which parameters peaked and when, which helps narrow down the source."
     },
     {
       "question": "If the nearest ambient station and indoor site have different update times, can I compare them directly?",
@@ -347,15 +347,15 @@
     },
     {
       "question": "Why can the site AQI look acceptable while one device shows a much higher reading?",
-      "answer": "Yes, it can. The site value is an average, so one device running high can be offset by the other running low. If something feels off, ask me to compare the two devices side by side."
+      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
     },
     {
-      "question": "Could the site average be hiding a problem on one device?",
+      "question": "Could the site average be hiding a problem on one device? / Could one device have poor readings even if the overall site AQI looks okay?",
       "answer": "Yes, it can. The site value is an average, so one device running high can be offset by the other running low. If something feels off, ask me to compare the two devices side by side."
     },
     {
       "question": "Why do the total device and active device counts not change when I select a different year on the Executive Dashboard?",
-      "answer": "The total device and active device counts reflect the current registered and active state of devices today, not a historical snapshot for the selected year. These figures represent the current system state and do not change when a different year is selected."
+      "answer": "Those two numbers count what is registered today — they are not a snapshot of the selected year. That is why they stay the same whichever year you pick."
     },
     {
       "question": "Why is a site not showing on the geographical map even though it is registered in HAWAQM?",

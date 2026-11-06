@@ -2,7 +2,7 @@
   "queries": [
     {
       "id": "schools_main_pollutant",
-      "description": "Find all school sites (Public & Govt-School sector) where a specific parameter (e.g. CO2, PM2.5) is currently the main pollutant — i.e. the parameter with the highest exceedance ratio in the last 1-hour average. Use when the user asks which schools have a given parameter as their main or primary pollutant, optionally filtered by region. NEVER use for plain pollutant readings — use schools_latest_pollutant for that.",
+      "description": "Find all sites in a given sector where a specific parameter (e.g. CO2, PM2.5, O3) is currently the main pollutant — i.e. the parameter with the highest exceedance ratio in the last 1-hour average. Defaults to Public & Govt-School sector when no sector is specified. Use when the user asks which schools, residential sites, or commercial sites have a given parameter as their main or primary pollutant, optionally filtered by region. NEVER use for plain pollutant readings — use schools_latest_pollutant for that. Set sectorName to 'Residential' for residential queries, 'Commercial' for commercial queries, 'Public & Govt-School' for school queries.",
       "patterns": [
         "schools where co2 is the main pollutant",
         "schools where pm2.5 is the main pollutant",
@@ -30,7 +30,16 @@
         "pm2.5 primary pollutant schools",
         "schools where the main pollutant is",
         "table view for all abu dhabi region schools where co2 is the main pollutant",
-        "table view for schools where co2 is the main pollutant"
+        "table view for schools where co2 is the main pollutant",
+        "residential sites with o3 as main pollutant",
+        "residential sites where o3 is the main pollutant",
+        "residential sites with co2 as main pollutant",
+        "residential where o3 is main pollutant",
+        "residential with o3 as main pollutant",
+        "commercial sites with o3 as main pollutant",
+        "commercial sites where co2 is the main pollutant",
+        "sites with o3 as main pollutant",
+        "sites where o3 is the main pollutant"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
@@ -65,6 +74,17 @@
             "Al Ain",
             "AlDhafra",
             "Al Dhafra"
+          ]
+        },
+        {
+          "name": "sectorName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": [
+            "Public & Govt-School",
+            "Residential",
+            "Commercial"
           ]
         }
       ],
@@ -153,7 +173,7 @@
     },
     {
       "id": "schools_latest_pollutant",
-      "description": "Get the latest reading of a specific pollutant (e.g. CO2, PM2.5, AQI) across ALL school sites (Public & Govt-School sector), optionally filtered by region. Use when user asks about schools generically (e.g. 'all schools', 'Abu Dhabi region schools', 'schools in Al Ain') WITH a pollutant or air quality context — even if phrased as 'where CO2 is the main pollutant', 'table view for schools', 'show schools with CO2'. NEVER use when a specific school name is mentioned — use site_aqi_single instead. Default (no liveStatus) = Active/online devices only. If user says 'all' set liveStatus=All. If user says 'offline' or 'inactive' set liveStatus=Inactive.",
+      "description": "Get the latest reading of a specific pollutant (e.g. CO2, PM2.5, AQI) across ALL school sites (Public & Govt-School sector), optionally filtered by region. ONLY use when the word 'school' or 'schools' is explicitly present in the question (e.g. 'all schools', 'Abu Dhabi region schools', 'schools in Al Ain'). NEVER use for region-only AQI questions like 'Abu Dhabi AQI' or 'AQI for Abu Dhabi' — use region_aqi_geographical instead. NEVER use when a specific school name is mentioned — use site_aqi_single instead. Default (no liveStatus) = Active/online devices only. If user says 'all' set liveStatus=All. If user says 'offline' or 'inactive' set liveStatus=Inactive.",
       "patterns": [
         "latest aqi for schools",
         "school aqi",

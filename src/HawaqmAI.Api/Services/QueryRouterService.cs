@@ -371,14 +371,15 @@ public sealed class QueryRouterService : IQueryRouterService
         "madinat", "khalidiyah", "corniche", "mangrove", "reem", "yas",
         "wahda", "rowdah", "muroor", "electra", "hameem", "liwa", "gayathi",
         "reyada", "reayada", "kaltham", "obeidli", "gems", "british",
-        "shawamekh", "al shawamekh"
+        "shawamekh", "al shawamekh",
+        "areej"
     ];
 
     // Sector name words — "residential", "commercial", "institutional" appear in both sector filters
     // ("all residential sites") and actual site names ("Abudhabi Commercial Institutional Site1").
     // QuestionHasSiteName uses context to decide which interpretation applies.
     private static readonly string[] SectorNameWords =
-        ["residential", "commercial", "institutional", "institution"];
+        ["residential", "residence", "commercial", "institutional", "institution"];
 
     // Generic site-listing context words — when sector words appear with these, it's a sector filter,
     // not a specific site name (e.g. "all Abu Dhabi sites under Residential sector").
@@ -702,6 +703,7 @@ public sealed class QueryRouterService : IQueryRouterService
         // Penalise list_devices (system-wide count, admin only) for site-specific device questions
         var deviceAtSitePhrases = new[] {
             "devices at", "devices for", "devices installed at", "devices under",
+            "devices in", "sensors in",
             "sensors at", "sensors for", "sensors installed at", "sensors under",
             "devices available at", "available at", "list devices", "which devices are",
             "how many devices does", "how many devices at", "how many sensors does",
@@ -872,8 +874,13 @@ public sealed class QueryRouterService : IQueryRouterService
 
         // Penalise site_aqi_all when the question contains a specific site name —
         // a named-site question must use site_aqi_single, not the all-sites table.
+        // Also treat "X site" / "X station" as a named-site signal when X is not a generic word —
+        // this catches personal-name sites like "Shifa Mohamed Khamis site" that have no keyword in SiteNameIndicators.
+        bool hasNamedSitePattern = System.Text.RegularExpressions.Regex.IsMatch(
+            lowerQuestion,
+            @"\b(?!all\b|any\b|each\b|every\b|the\b|a\b|this\b|that\b|which\b|active\b|inactive\b|residential\b|commercial\b|institutional\b|school\b|public\b|private\b)\w+\s+(site|station)\b");
         bool hasSiteName = !isGenericSchoolQuestion
-            && (QuestionHasSiteName(lowerQuestion) || hasNamedSchool);
+            && (QuestionHasSiteName(lowerQuestion) || hasNamedSchool || hasNamedSitePattern);
         if (template.Id == "site_aqi_all" && hasSiteName)
             maxScore *= 0.02;
 
@@ -889,10 +896,33 @@ public sealed class QueryRouterService : IQueryRouterService
         };
         bool isIndoorAmbientCompareEarly = indoorAmbientPhrasesEarly.Any(p => lowerQuestion.Contains(p));
 
+        // Detect "site reading" / "all readings" phrases — user wants full pollutant table, not just AQI.
+        // These must route to site_readings_all, NOT site_aqi_single.
+        bool isSiteReadingQuestion = lowerQuestion.Contains("site reading")
+            || lowerQuestion.Contains("site readings")
+            || lowerQuestion.Contains("reading of the site")
+            || lowerQuestion.Contains("readings of the site")
+            || lowerQuestion.Contains("all readings")
+            || lowerQuestion.Contains("all parameters")
+            || lowerQuestion.Contains("all pollutants")
+            || lowerQuestion.Contains("complete readings")
+            || lowerQuestion.Contains("full readings")
+            || lowerQuestion.Contains("pollutant readings")
+            || lowerQuestion.Contains("parameter readings")
+            || lowerQuestion.Contains("all current readings")
+            || lowerQuestion.Contains("show me all readings")
+            || lowerQuestion.Contains("readings at the site");
+
+        if (template.Id == "site_readings_all" && hasSiteName && isSiteReadingQuestion && !hasSpecificDate)
+            maxScore = Math.Max(maxScore, 0.97);
+        if (template.Id == "site_aqi_single" && isSiteReadingQuestion)
+            maxScore *= 0.05;
+
         // Boost site_aqi_single when the question contains a specific site name and asks for AQI or readings.
         // Generic school questions (e.g. "Abu Dhabi schools CO2") must NOT trigger this boost —
         // they route to schools_latest_pollutant instead.
         // Also must NOT trigger for indoor/ambient comparison questions — those route to indoor_ambient_compare.
+        // Do NOT trigger for "site reading" questions — those need all pollutants, not just AQI.
         bool isAqiOrReadingQuestion = lowerQuestion.Contains("aqi") || lowerQuestion.Contains("air quality")
             || lowerQuestion.Contains("reading") || lowerQuestion.Contains("co2")
             || lowerQuestion.Contains("pm2.5") || lowerQuestion.Contains("pm10")
@@ -905,7 +935,8 @@ public sealed class QueryRouterService : IQueryRouterService
         // Do NOT boost site_aqi_single when a past date is present — historical site data
         // must route to site_daily_averages / site_single_parameter_reading instead.
         // Do NOT boost when this is an indoor/ambient comparison question.
-        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion && !hasSpecificDate && !isIndoorAmbientCompareEarly)
+        // Do NOT boost when user wants full site readings (isSiteReadingQuestion) — site_readings_all wins.
+        if (template.Id == "site_aqi_single" && hasSiteName && isAqiOrReadingQuestion && !isGenericSchoolQuestion && !hasSpecificDate && !isIndoorAmbientCompareEarly && !isSiteReadingQuestion)
             maxScore = Math.Max(maxScore, 0.96);
 
         // Detect DSR / AQI-exceedance questions — these must route to the DSR/exceedance templates,
@@ -1000,6 +1031,7 @@ public sealed class QueryRouterService : IQueryRouterService
         bool isSectorListQuestion =
             lowerQuestion.Contains("commercial") ||
             lowerQuestion.Contains("residential") ||
+            lowerQuestion.Contains("residence") ||
             lowerQuestion.Contains("govt-school") ||
             lowerQuestion.Contains("govt school") ||
             lowerQuestion.Contains("gov school") ||
@@ -1023,7 +1055,9 @@ public sealed class QueryRouterService : IQueryRouterService
 
         // Boost sites_by_filter and penalise sites_filtered for sector-based listing questions.
         // sites_filtered has no sectorName param — it cannot filter by sector at all.
-        if (isSectorListQuestion && template.Id == "sites_by_filter")
+        // Do NOT apply the sites_by_filter boost when the question is asking about devices AT a named site
+        // (e.g. "devices in Areej Residential") — "Residential" is part of the site name, not a sector filter.
+        if (isSectorListQuestion && !isDeviceAtSiteQuestion && template.Id == "sites_by_filter")
             maxScore = Math.Max(maxScore, 0.98);
         if (isSectorListQuestion && template.Id == "sites_filtered")
             maxScore *= 0.05;
@@ -1734,6 +1768,13 @@ public sealed class QueryRouterService : IQueryRouterService
             maxScore *= 0.05;
         }
 
+        // Penalise current_all_stations when the question is about "most/top polluted sites" —
+        // those should route to priority_hotspots, not dump all station readings.
+        if (template.Id == "current_all_stations"
+            && (lowerQuestion.Contains("most polluted") || lowerQuestion.Contains("top polluted")
+                || lowerQuestion.Contains("worst polluted") || lowerQuestion.Contains("highest polluted")))
+            maxScore *= 0.05;
+
         // Penalise current_all_stations when the question is about listing sites by sector —
         // those should route to sites_by_filter, not current_all_stations which requires
         // a @parameterName and will throw a SQL error.
@@ -1857,7 +1898,9 @@ public sealed class QueryRouterService : IQueryRouterService
             "priority hotspot", "priority hotspots", "what are the hotspots", "show hotspots",
             "list hotspots", "hotspot sites", "which sites are hotspot", "which sites are critical",
             "show critical sites", "list critical sites", "sites flagged as critical",
-            "dashboard hotspot", "executive dashboard hotspot", "sites with critical aqi"
+            "dashboard hotspot", "executive dashboard hotspot", "sites with critical aqi",
+            "most polluted sites", "top polluted sites", "show most polluted", "show the most polluted",
+            "most polluted locations", "highest polluted sites", "worst polluted sites"
         };
         bool isHotspotList = hotspotListPhrases.Any(p => lowerQuestion.Contains(p));
         if (template.Id == "priority_hotspots" && isHotspotList)
@@ -1907,6 +1950,28 @@ public sealed class QueryRouterService : IQueryRouterService
         // Penalise list_devices (total registered count) when user asks about ACTIVE devices —
         // list_devices has no active filter and would return all registered devices instead.
         if (template.Id == "list_devices" && isActiveDeviceCountQuestion)
+            maxScore *= 0.05;
+
+        // Boost count_devices_by_filter for HOW MANY / TOTAL / COUNT questions about devices
+        // filtered by region, sector, or status — these must return a number, NOT a list.
+        var deviceCountKeywords = new[] {
+            "how many devices", "how many sensors", "total devices", "total number of devices",
+            "total sensors", "device count", "number of devices", "count of devices",
+            "count devices", "devices total", "total number of sensors", "number of sensors"
+        };
+        bool isDeviceCountQuestion = deviceCountKeywords.Any(k => lowerQuestion.Contains(k))
+            && !lowerQuestion.Contains("which device") && !lowerQuestion.Contains("list device")
+            && !lowerQuestion.Contains("show device") && !lowerQuestion.Contains("show me device")
+            && !isDeviceAtSiteQuestion; // site-specific listing stays with devices_by_filter
+
+        if (template.Id == "count_devices_by_filter" && isDeviceCountQuestion)
+            maxScore = Math.Max(maxScore, 0.97);
+        // Penalise listing templates for pure device count questions — they return rows, not a number
+        if (template.Id == "devices_by_filter" && isDeviceCountQuestion && !isDeviceAtSiteQuestion)
+            maxScore *= 0.1;
+        if (template.Id == "schools_latest_pollutant" && isDeviceCountQuestion)
+            maxScore *= 0.05;
+        if (template.Id == "sector_latest_pollutant" && isDeviceCountQuestion)
             maxScore *= 0.05;
 
         // Boost devices_by_model_chart for device model distribution chart questions
@@ -2064,6 +2129,17 @@ public sealed class QueryRouterService : IQueryRouterService
         var isDevicePerSiteQuestion =
             lowerQuestion.Contains("without device") ||
             lowerQuestion.Contains("no device") ||
+            lowerQuestion.Contains("no devices installed") ||
+            lowerQuestion.Contains("devices not yet installed") ||
+            lowerQuestion.Contains("not yet installed") ||
+            lowerQuestion.Contains("has no devices") ||
+            lowerQuestion.Contains("have no devices") ||
+            lowerQuestion.Contains("0 devices") ||
+            lowerQuestion.Contains("zero devices") ||
+            lowerQuestion.Contains("no number of devices") ||
+            (lowerQuestion.Contains("site") && lowerQuestion.Contains("no device")) ||
+            (lowerQuestion.Contains("residence") && lowerQuestion.Contains("no device")) ||
+            (lowerQuestion.Contains("school") && lowerQuestion.Contains("no device")) ||
             (lowerQuestion.Contains("don't have") && lowerQuestion.Contains("device")) ||
             lowerQuestion.Contains("devices per site") ||
             lowerQuestion.Contains("device per site") ||

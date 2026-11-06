@@ -259,23 +259,11 @@ public sealed class ExternalApiService : IExternalApiService
                 _log.Debug("ExternalApiService: resolved '{Query}' → '{Station}' (ID={Id}, score={Score})",
                     nameToResolve, matched.Name, matched.Key, matched.Score);
 
-                // Use cache for this site's readings — filter matched station rows from allJson.
-                // Falls back to live GetSiteData only when the site has no rows in cache
-                // (e.g. a site with no parameter readings at all).
-                var cachedSiteDevices = matched.Devices
-                    .Select(d => d with { StationName = matched.Name })
-                    .ToList();
-
+                // Always fetch live readings from GetSiteData so the chat reflects the same
+                // real-time values the frontend shows. The cache is used only for name resolution.
                 List<DeviceReading> siteDevices;
-                if (cachedSiteDevices.Count > 0 && cachedSiteDevices.Any(d => d.Params.Count > 0))
                 {
-                    _log.Debug("ExternalApiService: using cache for site '{Station}' readings ({Count} devices)", matched.Name, cachedSiteDevices.Count);
-                    siteDevices = cachedSiteDevices;
-                    sw.Stop();
-                }
-                else
-                {
-                    _log.Debug("ExternalApiService: cache has no readings for '{Station}' — falling back to live GetSiteData", matched.Name);
+                    _log.Debug("ExternalApiService: fetching live readings for '{Station}' via GetSiteData", matched.Name);
                     var siteUrl = _options.BaseUrl.TrimEnd('/') + $"/api/AirQuality/GetSiteData?siteId={matched.Key}";
                     using var siteReq = new HttpRequestMessage(HttpMethod.Get, siteUrl);
                     ApplyAuth(siteReq, bearerToken);
@@ -306,22 +294,30 @@ public sealed class ExternalApiService : IExternalApiService
                 // site_readings_all omits "Site Name" from each row — it's in the intro sentence
                 // and repeating it in every table row is redundant.
                 var includeSiteName = templateId != "site_readings_all";
+
+                // Active (online) devices only — inactive devices must not contribute to AQI.
+                // Fall back to all devices only when every device is inactive (edge case).
+                var activeDevices = siteDevices.Where(d => d.IsOnline).ToList();
+                var devicesForAqi = activeDevices.Count > 0 ? activeDevices : siteDevices;
+
                 var allParamRows = siteDevices
                     .SelectMany(d => d.Params.Select(p =>
                     {
                         var row = new Dictionary<string, object?>();
                         if (includeSiteName) row["Site Name"] = matched.Name;
                         row["Parameter"]    = p.Key;
-                        row["Value"]        = Math.Round(p.Value.Value, 2);
+                        row["Value"]        = p.Key == "AQI Index"
+                            ? Math.Round(p.Value.Value, 0, MidpointRounding.AwayFromZero)
+                            : Math.Round(p.Value.Value, 2);
                         row["Unit"]         = p.Value.Unit;
                         row["Last Updated"] = d.LastUpdated;
+                        row["_IsActive"]    = d.IsOnline; // internal flag, stripped before return
                         return row;
                     }))
                     .ToList();
 
                 // If the site has multiple devices, collapse per-parameter rows into one.
-                // AQI is averaged across all devices (site-level AQI = avg of device AQIs).
-                // All other parameters fall back to the most-recently-updated device value.
+                // AQI uses active devices only; all other parameters use the most-recently-updated device.
                 if (siteDevices.Count > 1)
                 {
                     allParamRows = allParamRows
@@ -331,24 +327,48 @@ public sealed class ExternalApiService : IExternalApiService
                             var paramName = g.Key;
                             if (paramName == "AQI Index")
                             {
-                                // Average AQI across all devices for this site
-                                var validRows = g
-                                    .Where(r => r["Value"] is not null && double.TryParse(r["Value"]?.ToString(), out _))
+                                // Average AQI across active devices only
+                                var activeRows = g
+                                    .Where(r => r["Value"] is not null && double.TryParse(r["Value"]?.ToString(), out _)
+                                        && r["_IsActive"] is true)
                                     .ToList();
+                                // Fall back to all devices if none are active (edge case)
+                                var validRows = activeRows.Count > 0
+                                    ? activeRows
+                                    : g.Where(r => r["Value"] is not null && double.TryParse(r["Value"]?.ToString(), out _)).ToList();
                                 if (validRows.Count == 0) return g.First();
                                 var avgValue = validRows.Average(r => Convert.ToDouble(r["Value"]));
                                 var newest = validRows.OrderByDescending(r => r["Last Updated"]?.ToString() ?? "").First();
                                 var averaged = new Dictionary<string, object?>(newest)
                                 {
-                                    ["Value"] = Math.Round(avgValue, 2)
+                                    ["Value"] = Math.Round(avgValue, 0, MidpointRounding.AwayFromZero)
                                 };
+                                averaged.Remove("_IsActive");
                                 return averaged;
                             }
-                            // For all other parameters, pick the most-recently-updated device
-                            return g.OrderByDescending(r => r["Last Updated"]?.ToString() ?? "").First();
+                            // For all other parameters, average across active devices (mirrors GetAllSiteData logic).
+                            // Fall back to most-recently-updated device if no active devices have a value.
+                            var activeParamRows = g
+                                .Where(r => r["_IsActive"] is true && r["Value"] is not null && double.TryParse(r["Value"]?.ToString(), out _))
+                                .ToList();
+                            var paramRows = activeParamRows.Count > 0
+                                ? activeParamRows
+                                : g.Where(r => r["Value"] is not null && double.TryParse(r["Value"]?.ToString(), out _)).ToList();
+                            if (paramRows.Count == 0) { var f = g.First(); f.Remove("_IsActive"); return f; }
+                            var avgParam = paramRows.Average(r => Convert.ToDouble(r["Value"]));
+                            var newestParam = paramRows.OrderByDescending(r => r["Last Updated"]?.ToString() ?? "").First();
+                            var avgParamRow = new Dictionary<string, object?>(newestParam)
+                            {
+                                ["Value"] = Math.Round(avgParam, 1)
+                            };
+                            avgParamRow.Remove("_IsActive");
+                            return avgParamRow;
                         })
                         .ToList();
                 }
+
+                // Strip the internal flag from single-device rows
+                foreach (var row in allParamRows) row.Remove("_IsActive");
 
                 _log.Debug("ExternalApiService: site_aqi_single → {Count} parameter rows for '{Site}'", allParamRows.Count, matched.Name);
 
@@ -360,9 +380,12 @@ public sealed class ExternalApiService : IExternalApiService
                 };
             }
 
-            // For region_aqi / compliance_stats / priority_hotspots: default year to current year if not provided
-            if ((apiCall.ResponseShape == "region_aqi" || apiCall.ResponseShape == "compliance_stats"
-                 || apiCall.ResponseShape == "priority_hotspots")
+            // Apply fixedParams from template definition — these override LLM-extracted values.
+            foreach (var kv in apiCall.FixedParams)
+                llmParams[kv.Key] = kv.Value;
+
+            // For region_aqi / compliance_stats: default year to current year if not provided
+            if ((apiCall.ResponseShape == "region_aqi" || apiCall.ResponseShape == "compliance_stats")
                 && !llmParams.ContainsKey("year"))
                 llmParams["year"] = DateTime.UtcNow.Year.ToString();
 
@@ -560,17 +583,8 @@ public sealed class ExternalApiService : IExternalApiService
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
-            // priority_hotspots: parse Compliancestatas response → one row per critical site.
-            // criticalSiteDetails = [{ID, StationName}]. Returns site list with overall AQI context.
-            if (apiCall.ResponseShape == "priority_hotspots")
-            {
-                var rows2 = ParsePriorityHotspotRows(json);
-                _log.Information("ExternalApiService: priority_hotspots → {Count} hotspot sites", rows2.Count);
-                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
-            }
-
             // aqi_category_filter: classify all sites by AQI category, optionally filter to one.
-            // "critical" / "hotspot" maps to Unhealthy + Very Unhealthy + Hazardous combined.
+            // "critical" / "hotspot" maps to IAQ-I > 150 (Executive Dashboard threshold: minValue=150).
             // Optional sectorName filters results to a specific sector (e.g. "Public & Govt-School").
             if (apiCall.ResponseShape == "aqi_category_filter")
             {
@@ -731,20 +745,18 @@ public sealed class ExternalApiService : IExternalApiService
                     """;
                 var stStationsResult = await _sqlExecutor.ExecuteAsync(stStationsSql, new Dictionary<string, object>(), ct);
 
-                // Active = any device with parameter reading within 24h or LastCommunicationTime within 10min
+                // Active = any device with LastCommunicationTime within 24h
                 var stDeviceStatusSql = """
                     SELECT
                         d.StationID,
                         MAX(CASE
-                            WHEN p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
-                            WHEN p.LastCommunicationTime     >= DATEADD(MINUTE, -10,   GETDATE()) THEN 1
+                            WHEN p.LastCommunicationTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
                             ELSE 0
                         END) AS HasActiveDevice
                     FROM DMN_Devices d
                     LEFT JOIN (
                         SELECT DeviceID,
-                               MAX(ParameterReadingUpdateTime) AS ParameterReadingUpdateTime,
-                               MAX(LastCommunicationTime)      AS LastCommunicationTime
+                               MAX(LastCommunicationTime) AS LastCommunicationTime
                         FROM DMN_Parameters
                         GROUP BY DeviceID
                     ) p ON p.DeviceID = d.DeviceId
@@ -974,18 +986,46 @@ public sealed class ExternalApiService : IExternalApiService
                     """;
                 var stationsResult = await _sqlExecutor.ExecuteAsync(stationsSql, new Dictionary<string, object>(), ct);
 
-                // Use GetAllSiteData (same source as the main app UI) to determine live status and AQI.
-                // This ensures the AI chat Active/Inactive status matches what the app shows exactly.
-                var siteDataJson = _siteDataCache.GetRawJson();
-                Dictionary<int, bool> deviceEnableByStation;
+                // Always query DMN_Devices from DB to determine live status.
+                // GetAllSiteData only returns 186 of 203 stations (omits those with no recent readings),
+                // so basing liveStatus on the cache misclassifies offline-only stations as "No Data".
+                // Replicates the Site Overview dashboard logic exactly:
+                //   DevicesList() sets IsEnable = (LastCommunicationTime >= Now - 1440 min, DriverID=4)
+                //   Site is Active if ANY device for that station communicated in last 1440 min.
+                //   Site is Inactive if it HAS devices but NONE communicated in last 1440 min.
+                //   Site is No Data if it has NO devices assigned.
+                var deviceStatusSql = """
+                    SELECT
+                        d.StationID,
+                        COUNT(*) AS DeviceCount,
+                        MAX(CASE
+                            WHEN p.LastCommunicationTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
+                            ELSE 0
+                        END) AS HasActiveDevice
+                    FROM DMN_Devices d
+                    LEFT JOIN (
+                        SELECT DeviceID, MAX(LastCommunicationTime) AS LastCommunicationTime
+                        FROM DMN_Parameters
+                        WHERE DriverID = 4
+                        GROUP BY DeviceID
+                    ) p ON p.DeviceID = d.DeviceId
+                    WHERE ISNULL(d.IsDeleted, 0) = 0
+                    GROUP BY d.StationID
+                    """;
+                var deviceEnableResult = await _sqlExecutor.ExecuteAsync(deviceStatusSql, new Dictionary<string, object>(), ct);
+                // Key: StationID → (hasActiveDevice, hasAnyDevice)
+                var deviceStatusByStation = deviceEnableResult.Rows
+                    .ToDictionary(
+                        r => Convert.ToInt32(r["StationID"]),
+                        r => (hasEnabled: Convert.ToInt32(r["HasActiveDevice"]) == 1,
+                              hasDevices: Convert.ToInt32(r["DeviceCount"]) > 0));
+
+                // AQI values come from the cache (best-effort; null if station not in cache)
                 Dictionary<int, double?> aqiByStation = new();
+                var siteDataJson = _siteDataCache.GetRawJson();
                 if (!string.IsNullOrEmpty(siteDataJson))
                 {
-                    // Parse IsOnline and AQI Index per station from the cached API response
                     var parsedDevices = ParseDevicesFromJson(siteDataJson);
-                    deviceEnableByStation = parsedDevices
-                        .GroupBy(d => d.StationId)
-                        .ToDictionary(g => g.Key, g => g.Any(d => d.IsOnline));
                     aqiByStation = parsedDevices
                         .GroupBy(d => d.StationId)
                         .ToDictionary(g => g.Key, g =>
@@ -995,34 +1035,6 @@ public sealed class ExternalApiService : IExternalApiService
                                         .ToList();
                             return vals.Count > 0 ? (double?)Math.Round(vals.Average(), 1) : null;
                         });
-                }
-                else
-                {
-                    // Fallback to DB query if cache is empty (first-startup race)
-                    var deviceStatusSql = """
-                        SELECT
-                            d.StationID,
-                            MAX(CASE
-                                WHEN p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -1440, GETDATE()) THEN 1
-                                WHEN p.LastCommunicationTime     >= DATEADD(MINUTE, -10,   GETDATE()) THEN 1
-                                ELSE 0
-                            END) AS HasActiveDevice
-                        FROM DMN_Devices d
-                        LEFT JOIN (
-                            SELECT DeviceID,
-                                   MAX(ParameterReadingUpdateTime) AS ParameterReadingUpdateTime,
-                                   MAX(LastCommunicationTime)      AS LastCommunicationTime
-                            FROM DMN_Parameters
-                            GROUP BY DeviceID
-                        ) p ON p.DeviceID = d.DeviceId
-                        WHERE ISNULL(d.IsDeleted, 0) = 0
-                        GROUP BY d.StationID
-                        """;
-                    var deviceEnableResult = await _sqlExecutor.ExecuteAsync(deviceStatusSql, new Dictionary<string, object>(), ct);
-                    deviceEnableByStation = deviceEnableResult.Rows
-                        .ToDictionary(
-                            r => Convert.ToInt32(r["StationID"]),
-                            r => Convert.ToInt32(r["HasActiveDevice"]) == 1);
                 }
 
                 // RBAC: restrict to permitted sites for non-admin users
@@ -1040,8 +1052,8 @@ public sealed class ExternalApiService : IExternalApiService
                         var region     = r["RegionName"]?.ToString() ?? "";
                         var sector     = r["SectorName"]?.ToString() ?? "";
                         string liveStatus;
-                        if (deviceEnableByStation.TryGetValue(stationId, out var hasActive))
-                            liveStatus = hasActive ? "Active" : "Inactive";
+                        if (deviceStatusByStation.TryGetValue(stationId, out var devStatus))
+                            liveStatus = devStatus.hasEnabled ? "Active" : "Inactive";
                         else
                             liveStatus = "No Data";
                         aqiByStation.TryGetValue(stationId, out var aqi);
@@ -1101,6 +1113,31 @@ public sealed class ExternalApiService : IExternalApiService
             else
             {
                 rows = Flatten(json, apiCall.ResponseShape, regionFilter);
+            }
+
+            // For region_aqi: override ActiveStationsCount with the live-cache count (24h recency)
+            // because the GetRegionGeographicalDataAQI API counts Status==1 sites (a static DB flag),
+            // while the site cache applies the same 24h communication cutoff as the web UI.
+            if (apiCall.ResponseShape == "region_aqi")
+            {
+                var cacheJson = _siteDataCache.GetRawJson();
+                if (!string.IsNullOrEmpty(cacheJson))
+                {
+                    var liveRows = BuildRegionAqiLiveRows(cacheJson, null); // all regions, no filter
+                    var liveCountsByRegion = liveRows
+                        .Where(r => r.TryGetValue("RegionName", out var rn) && rn is string)
+                        .ToDictionary(
+                            r => r["RegionName"]!.ToString()!,
+                            r => r.TryGetValue("ActiveStationsCount", out var c) ? c : null,
+                            StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var row in rows)
+                    {
+                        if (row.TryGetValue("RegionName", out var rn) && rn is string regionName
+                            && liveCountsByRegion.TryGetValue(regionName, out var liveCount))
+                            row["ActiveStationsCount"] = liveCount;
+                    }
+                }
             }
 
             // For device_latest: filter to requested parameter if user asked for a specific one
@@ -1871,8 +1908,9 @@ public sealed class ExternalApiService : IExternalApiService
     {
         var allDevices = ParseDevicesFromJson(json);
 
-        // Step 1: per station — average AQI across drivers (mirrors DAL averaging logic)
-        var stationAqiValues = allDevices
+        // Step 1: per station — active sites only (mirrors Executive Dashboard active-site filter)
+        var allOnlineStations = allDevices
+            .Where(d => d.IsOnline && !string.IsNullOrWhiteSpace(d.RegionName))
             .GroupBy(d => new { d.StationId, d.StationName, d.RegionName })
             .Select(g =>
             {
@@ -1911,19 +1949,41 @@ public sealed class ExternalApiService : IExternalApiService
                     LastUpdated = latestUpdate
                 };
             })
-            .Where(s => s.AQI.HasValue && !string.IsNullOrWhiteSpace(s.RegionName))
             .ToList();
 
-        // Step 2: per region — average station-level AQI values
-        var regionRows = stationAqiValues
-            .GroupBy(s => s.RegionName)
-            .Select(g => new Dictionary<string, object?>
+        // Sites with a valid AQI reading — used for AQI averaging only.
+        var stationAqiValues = allOnlineStations
+            .Where(s => s.AQI.HasValue)
+            .ToList();
+
+        // Total site count per region = ALL registered sites regardless of online/offline status,
+        // matching the app's site count displayed in the Site Overview page.
+        var totalSiteCountByRegion = allDevices
+            .Where(d => !string.IsNullOrWhiteSpace(d.RegionName))
+            .GroupBy(d => new { d.StationId, d.RegionName })
+            .GroupBy(g => g.Key.RegionName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        // Step 2: per region — average AQI from online stations, total site count for display.
+        var regionRows = totalSiteCountByRegion.Keys
+            .Select(regionName =>
             {
-                ["RegionName"]  = g.Key,
-                ["AQI"]         = Math.Round(g.Average(s => s.AQI!.Value), 0, MidpointRounding.AwayFromZero),
-                ["SiteCount"]   = g.Count(),
-                ["LastUpdated"] = g.OrderByDescending(s => s.LastUpdated).First().LastUpdated
+                var aqiStations = stationAqiValues.Where(s => s.RegionName == regionName).ToList();
+                var lastUpdated = allOnlineStations
+                    .Where(s => s.RegionName == regionName)
+                    .OrderByDescending(s => s.LastUpdated)
+                    .FirstOrDefault()?.LastUpdated ?? "";
+                return new Dictionary<string, object?>
+                {
+                    ["RegionName"]          = regionName,
+                    ["AQI"]                 = aqiStations.Count > 0
+                        ? (object?)Math.Round(aqiStations.Average(s => s.AQI!.Value), 0, MidpointRounding.AwayFromZero)
+                        : null,
+                    ["ActiveStationsCount"] = totalSiteCountByRegion[regionName],
+                    ["LastUpdated"]         = lastUpdated
+                };
             })
+            .Where(r => r["AQI"] != null)   // only emit regions that have live AQI data
             .OrderBy(r => r["RegionName"]?.ToString())
             .ToList();
 
@@ -2069,7 +2129,7 @@ public sealed class ExternalApiService : IExternalApiService
     /// Classifies all sites by their current AQI category, with optional filters:
     /// aqiCategory (Good/Moderate/Unhealthy/…, pipe-separated for multi), sectorName,
     /// regionName, minValue (AQI &gt; N), maxValue (AQI &lt;= N).
-    /// "Critical"/"hotspot" maps to AQI &gt; 100.
+    /// "Critical"/"hotspot" maps to AQI &gt; 150 (Executive Dashboard definition).
     /// Returns one row per site: SiteName, RegionName, AQI, AQICategory, LastUpdated.
     /// </summary>
     private async Task<List<Dictionary<string, object?>>> BuildAqiCategoryRows(
@@ -2193,11 +2253,12 @@ public sealed class ExternalApiService : IExternalApiService
             {
                 var first = g.First();
                 bool siteHasOnline  = g.Any(d => d.IsOnline);
-                bool siteHasOffline = g.Any(d => !d.IsOnline);
+                // A site is Inactive only when ALL its devices are offline (mirrors dashboard logic)
+                bool siteIsInactive = !siteHasOnline;
 
                 // Apply live-status filter at site level
                 if (statusMode == "Active"   && !siteHasOnline)  return null;
-                if (statusMode == "Inactive" && !siteHasOffline) return null;
+                if (statusMode == "Inactive" && !siteIsInactive) return null;
 
                 // Select devices to read AQI from based on mode
                 var targetDevices = statusMode == "Inactive"
@@ -2206,20 +2267,22 @@ public sealed class ExternalApiService : IExternalApiService
                         ? g.ToList()
                         : g.Where(d => d.IsOnline).ToList(); // Active
 
-                // Average AQI Index across target devices at this station
+                // Average AQI Index across target devices at this station.
+                // For Inactive mode: AQI is expected to be null (no recent readings) — keep the site row anyway.
                 var aqiValues = targetDevices.Where(d => d.Params.ContainsKey("AQI Index"))
                                   .Select(d => d.Params["AQI Index"].Value)
                                   .ToList();
                 double? aqi = aqiValues.Count > 0 ? Math.Round(aqiValues.Average(), 1) : (double?)null;
-                string lastUpdated = targetDevices.Select(d => d.LastUpdated)
+                string lastUpdated = g.Select(d => d.LastUpdated)
                                       .Where(t => !string.IsNullOrWhiteSpace(t))
                                       .OrderByDescending(t => t)
                                       .FirstOrDefault() ?? "";
-                if (!aqi.HasValue) return null;
+                // Drop null-AQI sites only when searching Active/All — inactive sites legitimately have no AQI
+                if (!aqi.HasValue && statusMode != "Inactive") return null;
 
-                // AQI numeric range filter — applied before category classification
-                if (minAqi.HasValue && aqi.Value <= minAqi.Value) return null;
-                if (maxAqi.HasValue && aqi.Value > maxAqi.Value)  return null;
+                // AQI numeric range filter — applied before category classification (skip for null-AQI inactive sites)
+                if (aqi.HasValue && minAqi.HasValue && aqi.Value <= minAqi.Value) return null;
+                if (aqi.HasValue && maxAqi.HasValue && aqi.Value > maxAqi.Value)  return null;
 
                 return (object?)new Dictionary<string, object?>
                 {
@@ -2237,7 +2300,7 @@ public sealed class ExternalApiService : IExternalApiService
             .Where(r => normRegion is null ||
                 (!string.IsNullOrWhiteSpace(r["Region"]?.ToString()) &&
                  r["Region"]!.ToString()!.Replace(" ", "").Equals(normRegion, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(r => r["AQI"] is double d ? d : double.MaxValue)
+            .OrderByDescending(r => r["AQI"] is double d ? d : double.MinValue)
             .ToList();
 
         // If no category/range filters, return region-filtered rows as-is
@@ -2264,8 +2327,10 @@ public sealed class ExternalApiService : IExternalApiService
                 or "vulnerable" or "kids" or "children" or "elderly"  => "Unhealthy for Sensitive Groups",
             "unhealthy" or "poor" or "bad" or "harmful" or "polluted" => "Unhealthy",
             "very unhealthy" or "very bad" or "very poor" or "severe" => "Very Unhealthy",
-            "hazardous" or "dangerous" or "deadly" or "toxic"
-                or "critical" or "hotspot" or "hotspots"              => "Hazardous",
+            "hazardous" or "dangerous" or "deadly" or "toxic"         => "Hazardous",
+            // "critical"/"hotspot" are NOT mapped to Hazardous — they route via minValue=150 (IAQ-I > 150),
+            // not by AQI category. If they reach here as a category filter, treat as unknown so the
+            // numeric minValue path handles them instead of filtering to AQI > 300 only.
             _ => null
         };
 
@@ -2807,8 +2872,9 @@ public sealed class ExternalApiService : IExternalApiService
         double? indoorLng = null, indoorLat = null;
         try
         {
+            // DMN_Stations stores CoordinateX = Latitude (~24°N), CoordinateY = Longitude (~54-56°E)
             var coordSql = $"""
-                SELECT TOP 1 TRY_CAST(CoordinateX AS FLOAT) AS Lng, TRY_CAST(CoordinateY AS FLOAT) AS Lat
+                SELECT TOP 1 TRY_CAST(CoordinateX AS FLOAT) AS Lat, TRY_CAST(CoordinateY AS FLOAT) AS Lng
                 FROM DMN_Stations
                 WHERE StationName LIKE '%{stationName.Replace("'", "''")}%'
                   AND ISNULL(IsDeleted, 0) = 0
@@ -2821,10 +2887,10 @@ public sealed class ExternalApiService : IExternalApiService
             if (coordResult.Rows.Count > 0)
             {
                 var r = coordResult.Rows[0];
-                if (r.TryGetValue("Lng", out var cx) && double.TryParse(cx?.ToString(), out var lng))
-                    indoorLng = lng;
-                if (r.TryGetValue("Lat", out var cy) && double.TryParse(cy?.ToString(), out var lat))
+                if (r.TryGetValue("Lat", out var cx) && double.TryParse(cx?.ToString(), out var lat))
                     indoorLat = lat;
+                if (r.TryGetValue("Lng", out var cy) && double.TryParse(cy?.ToString(), out var lng))
+                    indoorLng = lng;
             }
             _log.Debug("indoor_ambient_compare: indoor coords Lng={Lng} Lat={Lat}", indoorLng, indoorLat);
         }
