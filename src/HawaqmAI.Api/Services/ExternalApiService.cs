@@ -916,6 +916,19 @@ public sealed class ExternalApiService : IExternalApiService
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
+            // all_sites_pollutant: rank ALL active sites by a specific pollutant using live GetAllSiteData.
+            // Supports topN (top 5, top 10…), sortOrder ("desc"=highest first, "asc"=lowest first),
+            // and optional sector/region filters. Used by highest_readings and lowest_readings templates.
+            if (apiCall.ResponseShape == "all_sites_pollutant")
+            {
+                var parameterName = llmParams.GetValueOrDefault("parameterName") ?? "PM2.5";
+                var liveStatusAsp = llmParams.GetValueOrDefault("liveStatus");
+                var rows2 = await BuildAllSitesPollutantRows(json, parameterName, regionFilter, llmParams, ct, liveStatusAsp);
+                _log.Information("ExternalApiService: all_sites_pollutant → {Count} rows for param={Param} region={Region} liveStatus={Status}",
+                    rows2.Count, parameterName, regionFilter ?? "all", liveStatusAsp ?? "Active");
+                return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
+            }
+
             // site_aqi_trend_yearly: resolve devices under the site, then query ParameterAveragesYear
             // for AQI average per year and DeviceCompliance for DSR per year over the last N years.
             if (apiCall.ResponseShape == "site_aqi_trend_yearly")
@@ -1900,6 +1913,161 @@ public sealed class ExternalApiService : IExternalApiService
     }
 
     /// <summary>
+    /// Ranks ALL active sites by a specific pollutant from the live GetAllSiteData response.
+    /// Mirrors BuildSchoolPollutantRows but without a sector restriction.
+    /// Supports topN, sortOrder ("desc"=highest first / "asc"=lowest first),
+    /// optional sectorName filter, optional regionName filter, and liveStatus.
+    /// Default liveStatus = "Active" (online sites only) to match the question intent.
+    /// </summary>
+    private async Task<List<Dictionary<string, object?>>> BuildAllSitesPollutantRows(
+        string json,
+        string parameterName,
+        string? regionFilter,
+        Dictionary<string, string> llmParams,
+        CancellationToken ct,
+        string? liveStatusFilter = null)
+    {
+        // Optional sector filter — if the user asked for a specific sector, fetch only those site IDs
+        llmParams.TryGetValue("sectorName", out var sectorNameFilter);
+        bool hasSectorFilter = !string.IsNullOrWhiteSpace(sectorNameFilter);
+
+        HashSet<int>? sectorSiteIds = null;
+        if (hasSectorFilter)
+        {
+            var sectorSql = """
+                SELECT s.ID
+                FROM DMN_Stations s
+                JOIN Sectors sec ON s.SectorID = sec.Id
+                WHERE sec.SectorName = @sectorName AND s.Status = 1
+                """;
+            var sectorResult = await _sqlExecutor.ExecuteAsync(
+                sectorSql,
+                new Dictionary<string, object> { ["sectorName"] = sectorNameFilter! },
+                ct);
+            if (sectorResult.Success && sectorResult.Rows.Count > 0)
+                sectorSiteIds = sectorResult.Rows
+                    .Where(r => r["ID"] is not null)
+                    .Select(r => Convert.ToInt32(r["ID"]))
+                    .ToHashSet();
+        }
+
+        // Optional RBAC sector from DMN_Stations (same active-site filter as other methods)
+        // Fetch StationName + RegionName for display
+        var stationInfoSql = """
+            SELECT s.ID, s.StationName, r.RegionName
+            FROM DMN_Stations s
+            LEFT JOIN Regions r ON s.RegionID = r.Id
+            WHERE s.Status = 1
+            """;
+        var stationInfoResult = await _sqlExecutor.ExecuteAsync(stationInfoSql, new Dictionary<string, object>(), ct);
+        var stationInfo = stationInfoResult.Success
+            ? stationInfoResult.Rows
+                .Where(r => r["ID"] is not null)
+                .ToDictionary(
+                    r => Convert.ToInt32(r["ID"]),
+                    r => (Name: r["StationName"]?.ToString() ?? "", Region: r["RegionName"]?.ToString() ?? ""))
+            : new Dictionary<int, (string Name, string Region)>();
+
+        // Parse numeric filters
+        double? minValue = llmParams.TryGetValue("minValue", out var minStr) && double.TryParse(minStr, out var mn) ? mn : null;
+        double? maxValue = llmParams.TryGetValue("maxValue", out var maxStr) && double.TryParse(maxStr, out var mx) ? mx : null;
+
+        // topN and sortOrder
+        int? topN = llmParams.TryGetValue("topN", out var topNStr) && int.TryParse(topNStr, out var tn) && tn > 0 ? tn : null;
+        var sortOrder = llmParams.GetValueOrDefault("sortOrder") ?? (topN.HasValue ? "desc" : "desc");
+        var sortDesc = !string.Equals(sortOrder, "asc", StringComparison.OrdinalIgnoreCase);
+
+        // Live-status mode: default Active (online sites only)
+        var statusMode = string.IsNullOrWhiteSpace(liveStatusFilter) ? "Active"
+            : liveStatusFilter.Trim().ToLowerInvariant() switch
+            {
+                "active" or "online" or "live" => "Active",
+                "inactive" or "offline"        => "Inactive",
+                _                              => "All"
+            };
+
+        var allDevices = ParseDevicesFromJson(json);
+        var results = new List<Dictionary<string, object?>>();
+
+        var paramVariants = new[] { parameterName }
+            .Concat(_parameterAliases.TryGetValue(parameterName, out var alias) ? [alias] : Array.Empty<string>())
+            .ToArray();
+
+        foreach (var group in allDevices.GroupBy(d => d.StationId))
+        {
+            // Sector filter
+            if (sectorSiteIds is not null && !sectorSiteIds.Contains(group.Key))
+                continue;
+
+            // Region filter (case/space-insensitive)
+            if (!string.IsNullOrWhiteSpace(regionFilter))
+            {
+                var siteRegion = group.First().RegionName ?? "";
+                if (!string.Equals(
+                        siteRegion.Replace(" ", "", StringComparison.Ordinal),
+                        regionFilter!.Replace(" ", "", StringComparison.Ordinal),
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+
+            // Live-status filter
+            bool siteHasOnline  = group.Any(d => d.IsOnline);
+            bool siteHasOffline = group.Any(d => !d.IsOnline);
+            if (statusMode == "Active"   && !siteHasOnline)  continue;
+            if (statusMode == "Inactive" && !siteHasOffline) continue;
+
+            var targetDevices = statusMode == "Inactive"
+                ? group.Where(d => !d.IsOnline).ToList()
+                : statusMode == "All"
+                    ? group.ToList()
+                    : group.Where(d => d.IsOnline).ToList();
+
+            // Average parameter value across target devices
+            var paramReadings = targetDevices
+                .SelectMany(d => paramVariants
+                    .Where(v => d.Params.ContainsKey(v))
+                    .Select(v => d.Params[v]))
+                .ToList();
+
+            if (paramReadings.Count == 0) continue;
+
+            var value       = Math.Round(paramReadings.Select(r => r.Value).Average(), 2);
+            var unit        = paramReadings.First().Unit;
+            var lastUpdated = targetDevices.Select(d => d.LastUpdated)
+                                .Where(t => !string.IsNullOrWhiteSpace(t))
+                                .OrderByDescending(t => t)
+                                .FirstOrDefault() ?? "";
+
+            if (minValue.HasValue && value <= minValue.Value) continue;
+            if (maxValue.HasValue && value >  maxValue.Value) continue;
+
+            // Resolve display name from DB info (fallback to API field)
+            var siteName = stationInfo.TryGetValue(group.Key, out var si) ? si.Item1 : group.First().StationName;
+
+            var row = new Dictionary<string, object?>
+            {
+                ["Site Name"]      = siteName,
+                ["Parameter Name"] = parameterName,
+                ["Value"]          = value,
+            };
+            if (!parameterName.Equals("AQI Index", StringComparison.OrdinalIgnoreCase))
+                row["Unit"] = unit;
+            row["Last Updated"] = lastUpdated;
+            results.Add(row);
+        }
+
+        // Sort by value
+        IEnumerable<Dictionary<string, object?>> ordered = sortDesc
+            ? results.OrderByDescending(r => Convert.ToDouble(r["Value"]))
+            : results.OrderBy(r => Convert.ToDouble(r["Value"]));
+
+        if (topN.HasValue)
+            ordered = ordered.Take(topN.Value);
+
+        return ordered.ToList();
+    }
+
+    /// <summary>
     /// Aggregates AQI Index per region from GetAllSiteData response — same logic as Executive Dashboard.
     ///
     /// The API returns one DeviceReading per StationId/DriverId combination (multiple rows per station
@@ -2879,16 +3047,16 @@ public sealed class ExternalApiService : IExternalApiService
         double? indoorLng = null, indoorLat = null;
         try
         {
-            // DMN_Stations stores CoordinateX = Latitude (~24°N), CoordinateY = Longitude (~54-56°E)
+            // DMN_Stations stores CoordinateY = Latitude (~24°N), CoordinateX = Longitude (~54-56°E)
             var coordSql = $"""
-                SELECT TOP 1 TRY_CAST(CoordinateX AS FLOAT) AS Lat, TRY_CAST(CoordinateY AS FLOAT) AS Lng
+                SELECT TOP 1 TRY_CAST(CoordinateY AS FLOAT) AS Lat, TRY_CAST(CoordinateX AS FLOAT) AS Lng
                 FROM DMN_Stations
                 WHERE StationName LIKE '%{stationName.Replace("'", "''")}%'
                   AND ISNULL(IsDeleted, 0) = 0
-                  AND TRY_CAST(CoordinateX AS FLOAT) IS NOT NULL
                   AND TRY_CAST(CoordinateY AS FLOAT) IS NOT NULL
-                  AND TRY_CAST(CoordinateX AS FLOAT) <> 0
+                  AND TRY_CAST(CoordinateX AS FLOAT) IS NOT NULL
                   AND TRY_CAST(CoordinateY AS FLOAT) <> 0
+                  AND TRY_CAST(CoordinateX AS FLOAT) <> 0
                 """;
             var coordResult = await _sqlExecutor.ExecuteAsync(coordSql, new Dictionary<string, object>(), ct);
             if (coordResult.Rows.Count > 0)
@@ -2948,13 +3116,13 @@ public sealed class ExternalApiService : IExternalApiService
             LatestAQI AS (
                 SELECT TOP 1
                     ad.ParameterValue AS AmbientAQI,
-                    ad.RecordedDate   AS AmbientTimestamp
+                    ad.ObservedAt     AS AmbientTimestamp
                 FROM AmbientData ad
                 JOIN AmbientParameters ap ON ad.ParameterId = ap.Id
                 JOIN NearestStation ns    ON ad.StationId   = ns.AmbientStationID
-                WHERE ap.ParameterName LIKE '%AQI%'
+                WHERE ap.ParameterName = 'AQI'
                   AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL
-                ORDER BY TRY_CONVERT(DATE, ad.RecordedDate, 105) DESC
+                ORDER BY ad.ObservedAt DESC
             )
             SELECT
                 ns.AmbientStationName,

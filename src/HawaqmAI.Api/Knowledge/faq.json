@@ -187,11 +187,11 @@
     },
     {
       "question": "What was the AQI at a school in a past year?",
-      "answer": "Historical site-level AQI data is not available in HAWAQM."
+      "answer": "I couldn't find any results for AQI at that school for the requested period. Try widening the date range or choosing a different site."
     },
     {
       "question": "What was the air quality at a site in a previous year or month?",
-      "answer": "Historical site-level air quality data is not available in HAWAQM."
+      "answer": "I couldn't find any results for air quality at that site for the requested period. Try widening the date range or choosing a different site."
     },
     {
       "question": "Can you tell me tomorrow's weather forecast?",

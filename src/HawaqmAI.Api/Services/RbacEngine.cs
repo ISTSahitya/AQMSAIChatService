@@ -300,26 +300,39 @@ public sealed class RbacEngine : IRbacEngine
     // DB canonical parameter names (chemical Unicode subscripts as stored in DMN_Parameters)
     private static readonly Dictionary<string, string> _parameterAliases = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["CO2"]    = "CO\u2082",   // CO₂
-        ["CO₂"]    = "CO\u2082",
-        ["O3"]     = "O\u2083",    // O₃
-        ["O₃"]     = "O\u2083",
-        ["NO2"]    = "NO\u2082",   // NO₂
-        ["NO₂"]    = "NO\u2082",
-        ["CH2O"]   = "CH\u2082O",  // CH₂O
-        ["CH₂O"]   = "CH\u2082O",
-        ["SO2"]    = "SO\u2082",   // SO₂
-        ["SO₂"]    = "SO\u2082",
+        ["CO2"]              = "CO\u2082",   // CO₂
+        ["CO₂"]              = "CO\u2082",
+        ["carbon dioxide"]   = "CO\u2082",
+        ["O3"]               = "O\u2083",    // O₃
+        ["O₃"]               = "O\u2083",
+        ["ozone"]            = "O\u2083",
+        ["NO2"]              = "NO\u2082",   // NO₂
+        ["NO₂"]              = "NO\u2082",
+        ["nitrogen dioxide"] = "NO\u2082",
+        ["CH2O"]             = "CH\u2082O",  // CH₂O
+        ["CH₂O"]             = "CH\u2082O",
+        ["formaldehyde"]     = "CH\u2082O",
+        ["SO2"]              = "SO\u2082",   // SO₂
+        ["SO₂"]              = "SO\u2082",
+        ["sulfur dioxide"]   = "SO\u2082",
+        ["sulphur dioxide"]  = "SO\u2082",
         // Plain names that already match DB — map to themselves so allowed-list passes
-        ["PM2.5"]       = "PM2.5",
-        ["PM10"]        = "PM10",
-        ["CO"]          = "CO",
-        ["TVOC"]        = "TVOC",
-        ["VOC"]         = "VOC",
-        ["Temperature"] = "Temperature",
-        ["Humidity"]    = "Humidity",
-        ["AQI Index"]   = "AQI Index",
-        ["Noise"]       = "Noise",
+        ["PM2.5"]              = "PM2.5",
+        ["particulate matter"] = "PM2.5",
+        ["fine particles"]     = "PM2.5",
+        ["fine dust"]          = "PM2.5",
+        ["PM10"]               = "PM10",
+        ["coarse particles"]   = "PM10",
+        ["coarse dust"]        = "PM10",
+        ["CO"]                 = "CO",
+        ["carbon monoxide"]    = "CO",
+        ["TVOC"]               = "TVOC",
+        ["VOC"]                = "TVOC",
+        ["volatile organic"]   = "TVOC",
+        ["Temperature"]        = "Temperature",
+        ["Humidity"]           = "Humidity",
+        ["AQI Index"]          = "AQI Index",
+        ["Noise"]              = "Noise",
     };
 
     private static object? ConvertParam(QueryParam param, string rawValue)

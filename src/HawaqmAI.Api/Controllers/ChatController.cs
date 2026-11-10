@@ -1092,7 +1092,9 @@ public sealed class ChatController : ControllerBase
         // a region name but are asking about sites within a sector — must NOT route to region AQI.
         bool msgHasSectorWord = lowerMsg.Contains("residential") || lowerMsg.Contains("commercial")
             || lowerMsg.Contains("institutional") || lowerMsg.Contains("school") || lowerMsg.Contains("sector");
-        if (isRegionQuestion && (lowerMsg.Contains("aqi") || lowerMsg.Contains("iaq") || lowerMsg.Contains("air quality")) && !msgHasSiteNameIndicator && !msgHasSectorWord)
+        bool msgHasExplicitChartRequest = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph") || lowerMsg.Contains("in pie")
+            || lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph");
+        if (isRegionQuestion && (lowerMsg.Contains("aqi") || lowerMsg.Contains("iaq") || lowerMsg.Contains("air quality")) && !msgHasSiteNameIndicator && !msgHasSectorWord && !msgHasExplicitChartRequest)
         {
             _log.Debug("ChatController: region-AQI pre-check fired → forcing region_aqi_geographical");
             var regionAqiTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "region_aqi_geographical");
@@ -1240,7 +1242,8 @@ public sealed class ChatController : ControllerBase
         var parameterKeywords = new[]
         {
             "pm2.5", "pm 2.5", "pm10", "pm 10", "co2", "carbon dioxide", "carbon monoxide",
-            "no2", "nitrogen dioxide", "o3", "ozone", "tvoc", "voc", "ch2o", "formaldehyde",
+            "no2", "nitrogen dioxide", "o3", "ozone", "so2", "sulfur dioxide", "sulphur dioxide",
+            "tvoc", "voc", "ch2o", "formaldehyde", "particulate matter", "fine particles", "coarse particles",
             "temperature", "temp", "humidity", "noise", "aqi", "air quality index",
             "air quality", "air-quality", "air quality category", "air quality level",
             "reading", "readings", "level", "levels", "value", "concentration"
@@ -2743,7 +2746,10 @@ public sealed class ChatController : ControllerBase
             "aqi distribution", "sites aqi distribution", "aqi category distribution",
             "sites by aqi", "aqi breakdown"
         };
-        bool isAqiLevelChart = aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k));
+        // Also catch "pie chart aqi ..." and "... aqi in pie chart" patterns (must have explicit chart word to avoid grabbing plain AQI queries)
+        bool hasPieOrBarWord = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph") || lowerMsg.Contains("in pie") || lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph");
+        bool isAqiLevelChart = aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k))
+            || (hasPieOrBarWord && lowerMsg.Contains("aqi") && !lowerMsg.Contains("school") && !lowerMsg.Contains("moe"));
 
         if (isAqiLevelChart)
         {
@@ -2893,8 +2899,13 @@ public sealed class ChatController : ControllerBase
         // not requesting a list of all offline devices — exclude those from the offline pre-check.
         bool msgHasSpecificDeviceCode = System.Text.RegularExpressions.Regex.IsMatch(
             lowerMsg, @"(ba\s*\d{1,4}|sei\s*100\s*m\s*\d{1,4})");
+        // Count/number intent must NOT be treated as a listing question — route to count template instead
+        bool msgIsDeviceCountIntent = (lowerMsg.Contains("count") || lowerMsg.Contains("how many")
+            || lowerMsg.Contains("total") || lowerMsg.Contains("number of"))
+            && (lowerMsg.Contains("device") || lowerMsg.Contains("sensor"));
         bool isOfflineDeviceQuestion = offlineKeywords.Any(k => lowerMsg.Contains(k))
             && !msgHasSpecificDeviceCode   // single-device status queries must NOT be treated as list queries
+            && !msgIsDeviceCountIntent     // count questions must route to active_device_count, not list
             && !lowerMsg.Contains("should be checked first")   // FAQ advisory → already handled above
             && !lowerMsg.Contains("when is a device considered");  // FAQ definition → already handled above
 
@@ -4083,15 +4094,254 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 2z2. Hard pre-check: compound multi-pollutant highest/lowest question ──
+        // Detects questions that ask for highest/lowest for two or more different pollutants in one message,
+        // e.g. "which site has the highest PM2.5 and lowest CO?" or "highest PM2.5 and lowest PM10 and highest CO2".
+        // Each sub-question is run against highest_readings or lowest_readings independently and results combined.
+        {
+            var pollutantNames = new[] { "pm2.5", "pm10", "co2", "co ", " co?", "no2", "o3", "so2", "tvoc", "ch2o", "aqi" };
+            var highestWords   = new[] { "highest", "worst", "most polluted", "maximum", "top" };
+            var lowestWords    = new[] { "lowest", "cleanest", "minimum", "least polluted", "best" };
+
+            int pollutantCount = pollutantNames.Count(p => lowerMsg.Contains(p));
+            bool hasHighest    = highestWords.Any(w => lowerMsg.Contains(w));
+            bool hasLowest     = lowestWords.Any(w => lowerMsg.Contains(w));
+
+            // Trigger when: 2+ pollutants AND both highest+lowest, OR 2+ pollutants AND one direction
+            // AND the message contains "and" (indicating compound question)
+            bool isMultiPollutant = pollutantCount >= 2 && (lowerMsg.Contains(" and ") || lowerMsg.Contains("&"))
+                && (hasHighest || hasLowest);
+
+            if (isMultiPollutant)
+            {
+                _log.Information("ChatController: multi-pollutant pre-check fired for message: {Msg}", enrichedMessage);
+
+                // Split on " and " to get sub-questions
+                var mpParts = System.Text.RegularExpressions.Regex.Split(
+                    enrichedMessage,
+                    @"\s+and\s+",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+                var allTemplates = await _queryRouter.GetPermittedTemplatesAsync(user, ct);
+                var highTemplate = allTemplates.FirstOrDefault(t => t.Id == "highest_readings");
+                var lowTemplate  = allTemplates.FirstOrDefault(t => t.Id == "lowest_readings");
+
+                if (highTemplate?.ApiCall is not null && lowTemplate?.ApiCall is not null)
+                {
+                    var mpBearer = Request.Headers.Authorization.ToString()
+                        .Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+
+                    var mpCombinedRows = new List<Dictionary<string, object?>>();
+                    var mpSummaryParts = new List<string>();
+                    int mpTotalExecMs  = 0;
+                    int mpTotalTokens  = 0;
+                    string? mpFirstModel = null;
+                    ApprovedQuery? mpLastTemplate = null;
+
+                    foreach (var part in mpParts)
+                    {
+                        var partLower = part.ToLowerInvariant();
+                        bool partHasPollutant = pollutantNames.Any(p => partLower.Contains(p));
+                        if (!partHasPollutant) continue;
+
+                        // Determine direction for this part
+                        bool partIsHighest = highestWords.Any(w => partLower.Contains(w));
+                        bool partIsLowest  = lowestWords.Any(w => partLower.Contains(w));
+
+                        // If the part has no direction keyword, inherit from the full message
+                        if (!partIsHighest && !partIsLowest)
+                        {
+                            partIsHighest = hasHighest && !hasLowest;
+                            partIsLowest  = hasLowest && !hasHighest;
+                            if (!partIsHighest && !partIsLowest) partIsHighest = true; // default: highest
+                        }
+
+                        var chosenTemplate = partIsLowest && !partIsHighest ? lowTemplate : highTemplate;
+                        mpLastTemplate = chosenTemplate;
+
+                        // Build sub-question with direction context
+                        string subQ = part.Trim();
+                        if (!partIsHighest && !partIsLowest) subQ = "which site has the highest " + subQ;
+
+                        var mpFill = await _azureAI.FillParametersAsync(subQ, chosenTemplate, null, scope, ct);
+                        mpFirstModel ??= mpFill.ModelUsed;
+                        mpTotalTokens += mpFill.TokensUsed;
+
+                        // Force sortOrder based on direction if LLM didn't set it
+                        if (!mpFill.Parameters.ContainsKey("sortOrder") || string.IsNullOrWhiteSpace(mpFill.Parameters.GetValueOrDefault("sortOrder")))
+                            mpFill.Parameters["sortOrder"] = partIsLowest && !partIsHighest ? "asc" : "desc";
+
+                        // Force topN=1 if not set (single highest/lowest)
+                        if (!mpFill.Parameters.ContainsKey("topN") || string.IsNullOrWhiteSpace(mpFill.Parameters.GetValueOrDefault("topN")))
+                            mpFill.Parameters["topN"] = "1";
+
+                        // Extract pollutant from the part if LLM missed it
+                        if (!mpFill.Parameters.ContainsKey("parameterName") || string.IsNullOrWhiteSpace(mpFill.Parameters.GetValueOrDefault("parameterName")))
+                        {
+                            foreach (var p in new[] { "PM2.5", "PM10", "CO2", "CO", "NO2", "O3", "SO2", "TVOC", "CH2O", "AQI Index" })
+                            {
+                                if (partLower.Contains(p.ToLowerInvariant()) || partLower.Contains(p.Replace(".", "").ToLowerInvariant()))
+                                {
+                                    mpFill.Parameters["parameterName"] = p;
+                                    break;
+                                }
+                            }
+                        }
+
+                        var mpResult = await _externalApi.CallAsync(chosenTemplate.ApiCall, mpFill.Parameters, scope, mpBearer, user, chosenTemplate.Id, ct);
+                        mpTotalExecMs += (int)mpResult.ExecutionTimeMs;
+
+                        if (mpResult.Success && mpResult.Rows.Count > 0)
+                        {
+                            // Tag each row with direction context
+                            foreach (var row in mpResult.Rows)
+                                row["_direction"] = partIsLowest && !partIsHighest ? "lowest" : "highest";
+                            mpCombinedRows.AddRange(mpResult.Rows);
+                        }
+                        else
+                        {
+                            var mpParam = mpFill.Parameters.GetValueOrDefault("parameterName") ?? "pollutant";
+                            mpSummaryParts.Add($"No live data found for {mpParam}.");
+                        }
+                    }
+
+                    if (mpCombinedRows.Count > 0 || mpSummaryParts.Count > 0)
+                    {
+                        // Remove internal direction tag before display
+                        foreach (var row in mpCombinedRows) row.Remove("_direction");
+
+                        var mpFinalTemplate = mpLastTemplate ?? highTemplate;
+                        var mpSummary = mpCombinedRows.Count > 0
+                            ? await _azureAI.SummarizeResultsAsync(request.Message, mpFinalTemplate, mpCombinedRows, scope, ct)
+                            : string.Join(" ", mpSummaryParts);
+                        if (mpSummaryParts.Count > 0 && mpCombinedRows.Count > 0)
+                            mpSummary += " " + string.Join(" ", mpSummaryParts);
+
+                        var mpMsgId = Guid.NewGuid();
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: mpMsgId,
+                            assistantContent: mpSummary,
+                            sql: null,
+                            responseType: mpFinalTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: SerializeRowsForHistory(mpFinalTemplate.ResponseType, mpCombinedRows),
+                            dataSource: mpFinalTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: mpFirstModel,
+                            executionTimeMs: mpTotalExecMs,
+                            tokenCount: mpTotalTokens,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: mpMsgId,
+                            template: mpFinalTemplate,
+                            llmSummary: mpSummary,
+                            rows: mpCombinedRows,
+                            rowCount: mpCombinedRows.Count,
+                            executionTimeMs: mpTotalExecMs,
+                            scope: scope,
+                            modelUsed: mpFirstModel,
+                            tokenCount: mpTotalTokens));
+                    }
+                    _log.Warning("ChatController: multi-pollutant pre-check returned no rows — falling through to routing");
+                }
+            }
+        }
+
         // ── 3. Route the question to an approved template ───────────────────
         var routeResult = await _queryRouter.RouteAsync(enrichedMessage, user, history, ct);
 
         if (routeResult.NeedsClarification)
         {
             await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
+
+            // Detect if the user is asking about a pollutant/parameter with no site/device mentioned.
+            // Route to schools_latest_pollutant for all-sites reading instead of returning an error.
+            var pollutantNames = new[] {
+                "pm2.5", "pm10", "co2", "co", "no2", "so2", "o3", "ozone", "tvoc", "voc", "ch2o",
+                "formaldehyde", "temperature", "humidity", "noise", "aqi", "particulate"
+            };
+            // Map aliases to canonical parameter names the template understands
+            var pollutantAliasMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ozone"] = "O3", ["o3"] = "O3", ["pm2.5"] = "PM2.5", ["pm10"] = "PM10",
+                ["co2"] = "CO2", ["no2"] = "NO2", ["so2"] = "SO2", ["tvoc"] = "TVOC",
+                ["voc"] = "VOC", ["ch2o"] = "CH2O", ["formaldehyde"] = "CH2O",
+                ["temperature"] = "Temperature", ["humidity"] = "Humidity",
+                ["noise"] = "Noise", ["co"] = "CO", ["aqi"] = "AQI Index"
+            };
+            bool looksLikePollutantQuestion = pollutantNames.Any(p => lowerMsg.Contains(p))
+                && (lowerMsg.Contains("reading") || lowerMsg.Contains("current") || lowerMsg.Contains("level")
+                    || lowerMsg.Contains("value") || lowerMsg.Contains("now") || lowerMsg.Contains("latest")
+                    || lowerMsg.Contains("all sites") || lowerMsg.Contains("all the sites"));
+
+            if (looksLikePollutantQuestion)
+            {
+                // Find matched pollutant and map to canonical name
+                var matchedAlias = pollutantNames.FirstOrDefault(p => lowerMsg.Contains(p)) ?? "AQI Index";
+                var canonicalParam = pollutantAliasMap.TryGetValue(matchedAlias, out var cp) ? cp : "AQI Index";
+
+                var allSitesPollTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct))
+                    .FirstOrDefault(t => t.Id == "all_sites_latest_pollutant");
+                if (allSitesPollTemplate is not null)
+                {
+                    var pollParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["parameterName"] = canonicalParam
+                    };
+                    var (pollSql, pollSqlParams) = _rbac.BuildSafeQuery(allSitesPollTemplate, pollParams, user, scope);
+                    var (pollValid, _) = SqlValidator.Validate(pollSql);
+                    if (pollValid)
+                    {
+                        var pollResult = await _sqlExecutor.ExecuteAsync(pollSql, pollSqlParams, ct);
+                        if (pollResult.Success && pollResult.Rows.Count > 0)
+                        {
+                            var pollMsgId = Guid.NewGuid();
+                            var pollSummary = await _azureAI.SummarizeResultsAsync(request.Message, allSitesPollTemplate, pollResult.Rows, scope, ct);
+                            await _sessionService.SaveBothMessagesAsync(
+                                sessionId: session.SessionId,
+                                userContent: request.Message,
+                                assistantMessageId: pollMsgId,
+                                assistantContent: pollSummary,
+                                sql: pollSql,
+                                responseType: allSitesPollTemplate.ResponseType,
+                                chartType: null,
+                                chartDataJson: SerializeRowsForHistory(allSitesPollTemplate.ResponseType, pollResult.Rows),
+                                dataSource: allSitesPollTemplate.TableUsed,
+                                dateRange: null,
+                                modelUsed: null,
+                                executionTimeMs: (int)pollResult.ExecutionTimeMs,
+                                tokenCount: 0,
+                                ct: ct);
+                            if (session.MessageCount <= 1)
+                                _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                            return Ok(_formatter.Format(
+                                sessionId: session.SessionId,
+                                messageId: pollMsgId,
+                                template: allSitesPollTemplate,
+                                llmSummary: pollSummary,
+                                rows: pollResult.Rows,
+                                rowCount: pollResult.Rows.Count,
+                                executionTimeMs: (int)pollResult.ExecutionTimeMs,
+                                scope: scope,
+                                modelUsed: null,
+                                tokenCount: 0));
+                        }
+                    }
+                }
+            }
+
+            string clarifyMsg = looksLikePollutantQuestion
+                ? $"Which site or device are you asking about? For example: 'current {(pollutantNames.FirstOrDefault(p => lowerMsg.Contains(p)) ?? "PM2.5").ToUpperInvariant()} reading at Al Reyada School' or 'current reading for BA 0001'."
+                : "I'm sorry — that's outside my scope. I can only help with HAWAQM air-quality data. If it's useful, you could ask me: 'Which devices are offline right now?' or 'What is the current AQI at my school?'";
+
             return Ok(_formatter.FormatError(
                 session.SessionId,
-                "I'm sorry — that's outside my scope. I can only help with HAWAQM air-quality data. If it's useful, you could ask me: 'Which devices are offline right now?' or 'What is the current AQI at my school?'",
+                clarifyMsg,
                 "CLARIFY"));
         }
 
@@ -4303,6 +4553,109 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 3g. Hard override: pollutant + no site name → all_sites_latest_pollutant ──
+        // Catches "current CO2 reading", "show me the current O3 reading", "ozone reading" etc.
+        // when no specific site or device is mentioned — return readings across all sites.
+        {
+            var pollutantTokens3g = new[] {
+                "pm2.5", "pm10", "co2", "no2", "so2", "o3", "ozone", "tvoc", "voc", "ch2o",
+                "formaldehyde", "temperature", "humidity", "noise", "co"
+            };
+            var pollutantAliasMap3g = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ozone"] = "O3", ["o3"] = "O3", ["pm2.5"] = "PM2.5", ["pm10"] = "PM10",
+                ["co2"] = "CO2", ["no2"] = "NO2", ["so2"] = "SO2", ["tvoc"] = "TVOC",
+                ["voc"] = "VOC", ["ch2o"] = "CH2O", ["formaldehyde"] = "CH2O",
+                ["temperature"] = "Temperature", ["humidity"] = "Humidity",
+                ["noise"] = "Noise", ["co"] = "CO"
+            };
+            // "co" needs word-boundary check to avoid matching "commercial", "current", etc.
+            bool hasPollutantToken = pollutantTokens3g.Where(p => p != "co").Any(p => lowerMsg.Contains(p))
+                || System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\bco\b");
+            bool hasPollutantReadingWord = lowerMsg.Contains("reading") || lowerMsg.Contains("level")
+                || lowerMsg.Contains("value") || lowerMsg.Contains("current") || lowerMsg.Contains("latest")
+                || lowerMsg.Contains("show me") || lowerMsg.Contains("what is") || lowerMsg.Contains("what are");
+            // Detect region filter in message
+            string? detectedRegion3g = null;
+            if (lowerMsg.Contains("al ain") || lowerMsg.Contains("alain"))
+                detectedRegion3g = "Al Ain";
+            else if (lowerMsg.Contains("abu dhabi") || lowerMsg.Contains("abudhabi"))
+                detectedRegion3g = "Abu Dhabi";
+            else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                detectedRegion3g = "Al Dhafra";
+
+            // Trigger when pollutant + reading word AND:
+            //   • no device code, AND
+            //   • no specific site ref OR it's actually a region reference (e.g. "Al Ain sites")
+            bool noSpecificSite = !msgHasSpecificDeviceCode && (!hasAtSiteRef || detectedRegion3g != null);
+            if (hasPollutantToken && hasPollutantReadingWord && noSpecificSite
+                && routeResult.Template?.Id is not "all_sites_latest_pollutant")
+            {
+                var allPollTemplate = _queryRouter.GetPermittedTemplates(user)
+                    .FirstOrDefault(t => t.Id == "all_sites_latest_pollutant");
+                if (allPollTemplate is not null)
+                {
+                    var matchedToken = pollutantTokens3g.First(p => lowerMsg.Contains(p));
+                    var canonicalParam3g = pollutantAliasMap3g.TryGetValue(matchedToken, out var cp3g) ? cp3g : matchedToken.ToUpperInvariant();
+                    _log.Information("ChatController: overriding '{From}' → all_sites_latest_pollutant (pollutant={Param}, region={Region})",
+                        routeResult.Template?.Id ?? "candidates", canonicalParam3g, detectedRegion3g ?? "all");
+                    routeResult = new QueryRouterResult
+                    {
+                        Template = allPollTemplate,
+                        Score = 1.0,
+                        Candidates = [],
+                        PreviousTemplateId = routeResult.PreviousTemplateId
+                    };
+                    // Pre-fill params — parameterName required, regionName optional
+                    var allPollMsgId = Guid.NewGuid();
+                    var allPollParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["parameterName"] = canonicalParam3g
+                    };
+                    if (detectedRegion3g != null)
+                        allPollParams["regionName"] = detectedRegion3g;
+                    var (allPollSql, allPollSqlParams) = _rbac.BuildSafeQuery(allPollTemplate, allPollParams, user, scope);
+                    var (allPollValid, _) = SqlValidator.Validate(allPollSql);
+                    if (allPollValid)
+                    {
+                        var allPollResult = await _sqlExecutor.ExecuteAsync(allPollSql, allPollSqlParams, ct);
+                        if (allPollResult.Success && allPollResult.Rows.Count > 0)
+                        {
+                            var allPollSummary = await _azureAI.SummarizeResultsAsync(request.Message, allPollTemplate, allPollResult.Rows, scope, ct);
+                            await _sessionService.SaveBothMessagesAsync(
+                                sessionId: session.SessionId,
+                                userContent: request.Message,
+                                assistantMessageId: allPollMsgId,
+                                assistantContent: allPollSummary,
+                                sql: allPollSql,
+                                responseType: allPollTemplate.ResponseType,
+                                chartType: null,
+                                chartDataJson: SerializeRowsForHistory(allPollTemplate.ResponseType, allPollResult.Rows),
+                                dataSource: allPollTemplate.TableUsed,
+                                dateRange: null,
+                                modelUsed: null,
+                                executionTimeMs: (int)allPollResult.ExecutionTimeMs,
+                                tokenCount: 0,
+                                ct: ct);
+                            if (session.MessageCount <= 1)
+                                _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                            return Ok(_formatter.Format(
+                                sessionId: session.SessionId,
+                                messageId: allPollMsgId,
+                                template: allPollTemplate,
+                                llmSummary: allPollSummary,
+                                rows: allPollResult.Rows,
+                                rowCount: allPollResult.Rows.Count,
+                                executionTimeMs: (int)allPollResult.ExecutionTimeMs,
+                                scope: scope,
+                                modelUsed: null,
+                                tokenCount: 0));
+                        }
+                    }
+                }
+            }
+        }
+
         // ── 4. LLM fills parameters (and optionally selects template) ──────
         ApprovedQuery template;
         Dictionary<string, string> llmParams;
@@ -4349,7 +4702,11 @@ public sealed class ChatController : ControllerBase
             "how many schools are inactive", "inactive site count", "sites that are inactive",
             "sites not active", "sites that are offline", "sites currently inactive", "sites currently offline",
             "what are the total inactive", "what are the inactive" };
-        if (inactiveKeywords.Any(k => lowerMsg.Contains(k)))
+        // Count/number intent must NOT be forced to sites_filtered (list) — it should use site_count (number)
+        bool msgIsSiteCountIntent = (lowerMsg.Contains("count") || lowerMsg.Contains("how many")
+            || lowerMsg.Contains("total") || lowerMsg.Contains("number of"))
+            && (lowerMsg.Contains("site") || lowerMsg.Contains("station") || lowerMsg.Contains("school"));
+        if (inactiveKeywords.Any(k => lowerMsg.Contains(k)) && !msgIsSiteCountIntent)
         {
             // Force sites_filtered — it uses site_list_with_status responseShape which sources from
             // DMN_Stations directly, so all inactive sites appear (including those with no devices
@@ -5831,7 +6188,7 @@ public sealed class ChatController : ControllerBase
             && template.Id is "dust_event_response" or "indoor_source_analysis";
         if ((resultRows.Count == 0 && template.ResponseType != "text") || isTextTemplateWithNoData)
         {
-            var noDataMessage = BuildNoDataMessage(template.Id, scope, llmParams.GetValueOrDefault("aqiCategory"), llmParams.GetValueOrDefault("sectorName"), llmParams.GetValueOrDefault("liveStatus"));
+            var noDataMessage = BuildNoDataMessage(template.Id, scope, llmParams.GetValueOrDefault("aqiCategory"), llmParams.GetValueOrDefault("sectorName"), llmParams.GetValueOrDefault("liveStatus"), llmParams.GetValueOrDefault("stationName"), llmParams.GetValueOrDefault("parameterName"));
 
             var noDataMsgId = Guid.NewGuid();
             await _sessionService.SaveBothMessagesAsync(
@@ -6013,11 +6370,28 @@ public sealed class ChatController : ControllerBase
                     || lowerMsg.Contains("sites so far") || lowerMsg.Contains("total") && lowerMsg.Contains("sites"))
                 && !lowerMsg.Contains("region") && !lowerMsg.Contains("sector") && !lowerMsg.Contains("breakdown") && !lowerMsg.Contains("each");
 
+            // Detect active/inactive/offline intent in the user's question
+            bool scWantsActive   = lowerMsg.Contains("active")   && !lowerMsg.Contains("inactive");
+            bool scWantsInactive = lowerMsg.Contains("inactive") || lowerMsg.Contains("offline");
+
             bool siteCountUsedLlm = false;
             if (isTotalOnlyQuestion && isRegionBreakdown)
             {
-                int scTotal = resultRows.Sum(r => int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(), out var n) ? n : 0);
-                summary = $"HAWAQM currently has {scTotal} registered sites.";
+                if (scWantsActive)
+                {
+                    int scActive = resultRows.Sum(r => int.TryParse(r.GetValueOrDefault("ActiveSites")?.ToString(), out var n) ? n : 0);
+                    summary = $"There are currently {scActive} active sites.";
+                }
+                else if (scWantsInactive)
+                {
+                    int scInactive = resultRows.Sum(r => int.TryParse(r.GetValueOrDefault("InactiveSites")?.ToString(), out var n) ? n : 0);
+                    summary = $"There are currently {scInactive} inactive sites.";
+                }
+                else
+                {
+                    int scTotal = resultRows.Sum(r => int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(), out var n) ? n : 0);
+                    summary = $"HAWAQM currently has {scTotal} registered sites.";
+                }
                 tokensUsed = 0;
             }
             else if (isRegionBreakdown)
@@ -6047,8 +6421,13 @@ public sealed class ChatController : ControllerBase
                 var scRegion   = r.GetValueOrDefault("RegionName")?.ToString() ?? regionParam;
                 int scTotal2   = int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(),    out var ts2) ? ts2 : 0;
                 int scActive2  = int.TryParse(r.GetValueOrDefault("ActiveSites")?.ToString(),   out var ac2) ? ac2 : 0;
-                int scInactive = int.TryParse(r.GetValueOrDefault("InactiveSites")?.ToString(), out var ic2) ? ic2 : 0;
-                summary = $"The {scRegion} region has {scTotal2} sites in total — {scActive2} active and {scInactive} inactive.";
+                int scInactive2 = int.TryParse(r.GetValueOrDefault("InactiveSites")?.ToString(), out var ic2) ? ic2 : 0;
+                if (scWantsActive)
+                    summary = $"There are currently {scActive2} active sites in {scRegion}.";
+                else if (scWantsInactive)
+                    summary = $"There are currently {scInactive2} inactive sites in {scRegion}.";
+                else
+                    summary = $"The {scRegion} region has {scTotal2} sites in total — {scActive2} active and {scInactive2} inactive.";
             }
             else
             {
@@ -6402,7 +6781,15 @@ public sealed class ChatController : ControllerBase
             return $"Here is the AQI category breakdown for {totalSites} {siteLabel}{regionSuffix}. The table below shows the count per category.";
     }
 
-    private static string BuildNoDataMessage(string templateId, ResolvedScope scope, string? aqiCategory = null, string? sectorName = null, string? liveStatus = null)
+    private static string BuildHistoricalNoDataMessage(string? parameterName, string? siteName, string date)
+    {
+        var topic = !string.IsNullOrWhiteSpace(parameterName) ? parameterName : "data";
+        var site  = !string.IsNullOrWhiteSpace(siteName)      ? siteName      : "that site";
+        var period = !string.IsNullOrWhiteSpace(date)          ? date          : "the requested period";
+        return $"I couldn't find any results for {topic} at {site} for {period}. Try widening the date range or choosing a different site.";
+    }
+
+    private static string BuildNoDataMessage(string templateId, ResolvedScope scope, string? aqiCategory = null, string? sectorName = null, string? liveStatus = null, string? siteName = null, string? parameterName = null)
     {
         var region = string.IsNullOrWhiteSpace(scope.Region) ? null : scope.Region;
         var sector = sectorName ?? (string.IsNullOrWhiteSpace(scope.Sector) ? null : scope.Sector);
@@ -6479,13 +6866,13 @@ public sealed class ChatController : ControllerBase
                 "Readings for this device are still being updated. Please check back in a few minutes.",
 
             "site_daily_averages" or "site_single_parameter_reading" =>
-                "I couldn't find any results for that site for the requested date. Daily averages are computed at midnight — try a past date (e.g. yesterday or earlier) or widen the date range.",
+                BuildHistoricalNoDataMessage(parameterName, siteName, date),
 
             "site_monthly_averages" =>
-                "I couldn't find any results for that site and month. Monthly averages may not yet be available for recent months — try an earlier month.",
+                BuildHistoricalNoDataMessage(parameterName, siteName, date),
 
             "site_yearly_averages" or "site_yearly_averages_pay" =>
-                "I couldn't find any yearly average data for that site and year. HAWAQM yearly averages are only available from the years the system has been recording data — historical data before the system's deployment is not available. Try a more recent year or check the site name.",
+                BuildHistoricalNoDataMessage(parameterName, siteName, date),
 
             "dust_event_response" or "indoor_source_analysis" =>
                 "I couldn't find any results for that site and date. This can happen if: (1) the site name doesn't exactly match a registered site, (2) the site has no GPS coordinates configured (required for nearest ambient station lookup), or (3) no daily average data exists for that date. Please verify the site name and date, then try again. Example: \"How did indoor air quality at Al Reyada School respond during the dust event on 2026-03-15?\"",

@@ -263,7 +263,9 @@ public sealed class QueryRouterService : IQueryRouterService
 
     // Parameter names that indicate a pollutant-reading request
     private static readonly HashSet<string> PollutantTokens = new(StringComparer.OrdinalIgnoreCase)
-        { "co", "no2", "so2", "co2", "pm2.5", "pm10", "o3", "tvoc", "ch2o", "aqi", "temperature", "humidity", "voc", "noise" };
+        { "co", "no2", "so2", "co2", "pm2.5", "pm10", "o3", "tvoc", "ch2o", "aqi", "temperature", "humidity", "voc", "noise",
+          "ozone", "carbon monoxide", "carbon dioxide", "nitrogen dioxide", "sulfur dioxide", "sulphur dioxide",
+          "particulate matter", "fine particles", "fine dust", "coarse particles", "formaldehyde", "volatile organic" };
 
     // Regex-style check: question contains a device name pattern.
     //
@@ -583,14 +585,123 @@ public sealed class QueryRouterService : IQueryRouterService
         if (isDsrBelowEarly)
             return template.Id == "sites_dsr_below_threshold" ? 1.15 : 0.0;
 
+        // ── HARD OVERRIDE: "total count / number of" sites → site_count (text) ─
+        // MUST come before isStatusFilterQ — "how many active sites" contains "active" + "site"
+        // which would otherwise be caught by the status-filter override and return a table list.
+        var siteListingPhrases = new[] {
+            "list all active sites", "list all inactive sites", "list active sites", "list inactive sites",
+            "list all sites", "list the sites", "list sites",
+            "show active sites", "show inactive sites", "show all sites", "show me active sites",
+            "show me inactive sites", "show me all sites", "show me the sites",
+            "can you list the sites", "can you list all sites", "can you list active sites",
+            "can you list inactive sites", "can you show the sites", "can you show me the sites",
+            "give me a list of sites", "give me the sites", "give me all sites",
+            "list all schools", "list active schools", "list inactive schools",
+            "list all stations", "list active stations", "list inactive stations"
+        };
+        var siteCountPhrases = new[] {
+            "how many active sites", "how many inactive sites",
+            "total number of active sites", "total number of inactive sites",
+            "total active sites", "total inactive sites",
+            "number of active sites", "number of inactive sites",
+            "count of active sites", "count of inactive sites",
+            "count of offline sites", "count of online sites",
+            "count of offline stations", "count of online stations",
+            "total offline sites", "total online sites",
+            "total offline stations", "total online stations",
+            "number of offline sites", "number of online sites",
+            "offline site count", "online site count",
+            "offline sites count", "online sites count",
+            "how many offline sites", "how many online sites",
+            "how many offline stations", "how many online stations",
+            "how many sites are active", "how many sites are inactive",
+            "how many sites are currently active", "how many sites are currently inactive",
+            "how many sites are online", "how many sites are offline",
+            "how many sites are currently online", "how many sites are currently offline",
+            "how many sites", "how many stations", "total number of sites", "total number of stations",
+            "total sites", "total stations", "site count", "station count",
+            "number of sites", "number of stations", "count of sites", "count of stations"
+        };
+        bool isSiteCountIntent = siteCountPhrases.Any(p => lowerQuestion.Contains(p))
+            && !QuestionHasDeviceName(lowerQuestion)
+            && !siteListingPhrases.Any(p => lowerQuestion.Contains(p)); // listing beats counting
+        if (isSiteCountIntent)
+            return template.Id == "site_count" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: "list/show" site intent → sites_by_filter (table) ─
+        bool isSiteListingIntent = siteListingPhrases.Any(p => lowerQuestion.Contains(p))
+            && !QuestionHasDeviceName(lowerQuestion);
+        if (isSiteListingIntent)
+            return template.Id == "sites_by_filter" ? 1.15 : 0.0;
+
         // ── HARD OVERRIDE: active/inactive status filter questions → sites_filtered ─
         // "list of active abu dhabi schools", "active schools in al ain" etc. must route
         // to sites_filtered (supports sector + region + status), never to list_stations.
+        // Guard: skip if this is a count question — those are already handled above.
         bool isStatusFilterQ = (lowerQuestion.Contains("active") || lowerQuestion.Contains("inactive"))
             && (lowerQuestion.Contains("school") || lowerQuestion.Contains("site") || lowerQuestion.Contains("station")
                 || lowerQuestion.Contains("residential") || lowerQuestion.Contains("commercial"));
         if (isStatusFilterQ)
             return template.Id == "sites_filtered" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: "total count / number of" devices → count template ─
+        // MUST come before device listing override.
+        // "count of offline devices", "how many active devices", "total offline devices" etc.
+        // must route to active_device_count / count_devices_by_filter (text), NOT devices_by_filter (table).
+        var deviceListingPhrases = new[] {
+            "list all active", "list all inactive", "list active devices", "list inactive devices",
+            "list all devices", "list the devices", "list devices",
+            "show active devices", "show inactive devices", "show all devices", "show me active devices",
+            "show me inactive devices", "show me all devices", "show me the devices",
+            "give me a list of", "can you list", "can you show"
+        };
+        var deviceCountPhrases = new[] {
+            "how many active", "how many inactive", "total number of active", "total number of inactive",
+            "total active devices", "total inactive devices", "number of active devices",
+            "number of inactive devices", "count of active devices", "count of inactive devices",
+            "count of offline devices", "count of online devices", "count of offline sensors", "count of online sensors",
+            "count of inactive devices", "count of inactive sensors",
+            "total active device", "total inactive device", "how many devices are active",
+            "how many devices are inactive", "how many devices are currently active",
+            "how many devices are currently inactive", "how many devices are online",
+            "how many devices are offline", "how many devices are currently online",
+            "how many devices are currently offline",
+            "total offline devices", "total online devices", "total offline sensors", "total online sensors",
+            "number of offline devices", "number of online devices",
+            "offline device count", "online device count", "offline devices count", "online devices count",
+            "how many offline devices", "how many online devices",
+            "how many offline sensors", "how many online sensors",
+            "count of devices", "count of sensors", "total number of devices", "total number of sensors",
+            "total devices", "total sensors", "device count", "sensor count",
+            "number of devices", "number of sensors"
+        };
+        // Broader catch: "count" or "how many" + device/sensor word with status word (offline/online/active/inactive)
+        var deviceOfflineOnlineWords = new[] { "offline", "online", "active", "inactive" };
+        bool hasDeviceCountWord = lowerQuestion.Contains("count") || lowerQuestion.Contains("how many")
+            || lowerQuestion.Contains("total") || lowerQuestion.Contains("number of");
+        bool hasDeviceWord = lowerQuestion.Contains("device") || lowerQuestion.Contains("sensor");
+        bool hasDeviceStatusWord = deviceOfflineOnlineWords.Any(w => lowerQuestion.Contains(w));
+        bool hasRegionOrSectorFilter = RegionKeywords.Any(k => lowerQuestion.Contains(k))
+            || lowerQuestion.Contains("commercial") || lowerQuestion.Contains("residential")
+            || lowerQuestion.Contains("school sector") || lowerQuestion.Contains("sector");
+        bool isDeviceCountIntent = !QuestionHasDeviceName(lowerQuestion)
+            && !deviceListingPhrases.Any(p => lowerQuestion.Contains(p)) // listing beats counting
+            && (deviceCountPhrases.Any(p => lowerQuestion.Contains(p))
+                || (hasDeviceCountWord && hasDeviceWord)); // broad catch: "count of offline devices", "how many offline sensors"
+        if (isDeviceCountIntent)
+        {
+            // With region/sector filter → count_devices_by_filter; without → active_device_count
+            if (hasRegionOrSectorFilter)
+                return template.Id == "count_devices_by_filter" ? 1.15 : 0.0;
+            return template.Id == "active_device_count" ? 1.15 : 0.0;
+        }
+
+        // ── HARD OVERRIDE: "list/show" device intent (no specific device name) → devices_by_filter ─
+        bool isDeviceListingIntent = deviceListingPhrases.Any(p => lowerQuestion.Contains(p))
+            && hasDeviceWord
+            && !QuestionHasDeviceName(lowerQuestion);
+        if (isDeviceListingIntent)
+            return template.Id == "devices_by_filter" ? 1.15 : 0.0;
 
         // ── HARD OVERRIDE: access / visibility questions → FAQ ───────────────
         // "Why can't I see all the sites?" must never route to list_stations.

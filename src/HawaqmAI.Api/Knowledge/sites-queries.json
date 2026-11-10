@@ -377,7 +377,7 @@
       ],
       "responseType": "text",
       "tableUsed": "DMN_Stations",
-      "skipSiteFilter": false
+      "skipSiteFilter": true
     },
     {
       "id": "sites_by_filter",
@@ -1884,6 +1884,46 @@
       ],
       "responseType": "table",
       "tableUsed": "ParameterReadings"
+    },
+    {
+      "id": "all_sites_latest_pollutant",
+      "description": "Get the latest reading for a SPECIFIC pollutant (e.g. O3, PM2.5, CO2, NO2, SO2, CO, Temperature, Humidity) across ALL sites — when no specific site name is mentioned and user asks for current/latest readings of that pollutant across all sites.",
+      "patterns": [
+        "current ozone reading",
+        "ozone reading for all sites",
+        "ozone reading all sites",
+        "current o3 reading",
+        "o3 reading for all sites",
+        "pm2.5 reading for all sites",
+        "pm10 reading for all sites",
+        "co2 reading for all sites",
+        "no2 reading for all sites",
+        "so2 reading for all sites",
+        "current pollutant reading all sites",
+        "latest pollutant reading all sites",
+        "pollutant reading for all sites"
+      ],
+      "category": "air_quality",
+      "requiredRole": "viewer",
+      "sql": "SELECT s.StationName, r.RegionName, p.ParameterName, ROUND(TRY_CAST(p.ParameterValue AS FLOAT), 2) AS ParameterValue, ru.UnitName, CONVERT(varchar, p.ParameterReadingUpdateTime, 120) AS LastUpdated FROM DMN_Parameters p JOIN DMN_Devices d ON p.DeviceID = d.DeviceId AND ISNULL(d.IsDeleted, 0) = 0 JOIN DMN_Stations s ON d.StationID = s.ID AND ISNULL(s.IsDeleted, 0) = 0 LEFT JOIN Regions r ON s.RegionID = r.Id JOIN ReportedUnits ru ON p.UnitID = ru.ID WHERE p.ParameterName = @parameterName AND p.ParameterValue IS NOT NULL AND p.ParameterReadingUpdateTime >= DATEADD(MINUTE, -1440, GETUTCDATE()) AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) ORDER BY s.StationName",
+      "params": [
+        {
+          "name": "parameterName",
+          "type": "string",
+          "source": "question",
+          "allowed": ["PM2.5", "PM10", "CO", "CO2", "NO2", "O3", "SO2", "Temperature", "Humidity", "AQI Index", "TVOC", "CH2O", "Noise", "VOC"]
+        },
+        {
+          "name": "regionName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": ["Abu Dhabi", "Al Ain", "Al Dhafra"]
+        }
+      ],
+      "responseType": "table",
+      "tableUsed": "ParameterReadings",
+      "skipSiteFilter": true
     },
     {
       "id": "current_all_stations",

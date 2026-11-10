@@ -104,6 +104,37 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use the actual values from the data.
             """,
 
+        // Site count — aggregate rows with TotalSites, ActiveSites, InactiveSites per region/sector
+        ["site_count"] = """
+            Data columns: "RegionName", "SectorName", "TotalSites", "ActiveSites", "InactiveSites".
+            Each row is a region/sector group. ADD UP the relevant column across ALL rows to get the grand total.
+
+            STEP 1 — Identify what the user asked for:
+              • "total sites" / "how many sites" / "registered sites"  → sum TotalSites
+              • "active sites" / "total active" / "how many active"    → sum ActiveSites
+              • "inactive sites" / "offline sites" / "how many inactive" / "count of inactive" → sum InactiveSites
+
+            STEP 2 — Output ONE sentence using the summed value:
+              • TOTAL:    "There are {X} sites registered in HAWAQM."
+              • ACTIVE:   "There are currently {X} active sites."   (X = sum ActiveSites)
+              • INACTIVE: "There are currently {X} inactive sites." (X = sum InactiveSites)
+
+            EXAMPLE — if data has 3 rows with ActiveSites = 2, 1, 0 and user asked "total active sites":
+              Sum = 2+1+0 = 3. Output: "There are currently 3 active sites."
+
+            If user asked for count in a specific REGION (single row):
+            FORMAT: "There are {TotalSites} sites in {RegionName} ({ActiveSites} active, {InactiveSites} inactive)."
+
+            If user asked for count by REGION (all regions):
+            FORMAT: "Site count by region — {RegionName1}: {TotalSites1} ({ActiveSites1} active), {RegionName2}: {TotalSites2} ({ActiveSites2} active), {RegionName3}: {TotalSites3} ({ActiveSites3} active). Total: {grand total} sites."
+
+            If user asked for count by SECTOR:
+            FORMAT: "Site count by sector — {SectorName1}: {TotalSites1}, {SectorName2}: {TotalSites2}, {SectorName3}: {TotalSites3}. Total: {grand total} sites."
+
+            CRITICAL: NEVER output placeholder text. ALWAYS compute the sum from the actual data rows above.
+            CRITICAL: "total active sites" means sum the ActiveSites column — NOT the TotalSites column.
+            """,
+
         // Data Success Rate from Compliancestatas API
         ["data_success_rate"] = """
             Data columns: "DataSuccessRate" (%), "ActiveDevices", "InactiveDevices", "TotalDevices", "AQI", "AQICategory", "CriticalSiteCount".
@@ -1270,7 +1301,10 @@ public sealed class AzureAIService : IAzureAIService
             System.Text.RegularExpressions.RegexOptions.IgnoreCase)
             // Templates with their own format rules must never be reduced to a raw integer row count
             && template.Id != "active_device_count"
-            && template.Id != "count_devices_by_filter";
+            && template.Id != "count_devices_by_filter"
+            // Aggregate count templates return column values (TotalSites/ActiveSites/InactiveSites),
+            // not one row per entity — the LLM must read the actual column value, not results.Count
+            && template.Id != "site_count";
 
         var formatInstruction = isCountIntent && results.Count > 0
             ? $"The user is asking for a COUNT. Output ONLY the integer {results.Count}. No words, no sentence, no punctuation. Just the number."
@@ -2017,7 +2051,7 @@ public sealed class AzureAIService : IAzureAIService
                - Extract liveStatus ONLY when user explicitly says "active" or "inactive" as a site status filter.
                - Do NOT default any param. Omitted params = show all (no filter applied).
             If the user says something that doesn't match any of these three, omit sectorName.
-            For parameterName: map common user words to the allowed parameter name — "co2", "carbon dioxide" → "CO2"; "pm2.5", "fine particles", "fine dust" → "PM2.5"; "pm10", "coarse particles", "coarse dust" → "PM10"; "co", "carbon monoxide" → "CO"; "aqi", "air quality index" → "AQI Index"; "no2", "nitrogen dioxide" → "NO2"; "so2", "sulphur dioxide", "sulfur dioxide" → "SO2"; "o3", "ozone" → "O3"; "tvoc", "voc", "volatile organic" → "VOC"; "ch2o", "formaldehyde" → "CH2O"; "temperature", "temp" → "Temperature"; "humidity" → "Humidity"; "noise", "sound" → "Noise".
+            For parameterName: map common user words to the allowed parameter name — "co2", "carbon dioxide" → "CO2"; "pm2.5", "fine particles", "fine dust", "particulate matter" → "PM2.5"; "pm10", "coarse particles", "coarse dust" → "PM10"; "co", "carbon monoxide" → "CO"; "aqi", "air quality index" → "AQI Index"; "no2", "nitrogen dioxide" → "NO2"; "so2", "sulphur dioxide", "sulfur dioxide" → "SO2"; "o3", "ozone" → "O3"; "tvoc", "voc", "volatile organic", "volatile organic compounds" → "VOC"; "ch2o", "formaldehyde" → "CH2O"; "temperature", "temp" → "Temperature"; "humidity" → "Humidity"; "noise", "sound" → "Noise".
             IMPORTANT — pollutant groups: if the user asks for "physical" readings/pollutants/parameters, do NOT extract a single parameterName — omit it (the system will filter to physical group: PM2.5, PM10, Temperature, Humidity, Noise). If the user asks for "chemical" readings/pollutants/parameters, omit parameterName as well (system filters to chemical group: CO, CO2, NO2, SO2, O3, CH2O, VOC). Only extract a specific parameterName when the user names ONE specific pollutant.
             For stationName: extract the site or station name the user mentions. CRITICAL — strip ONLY a trailing "in [region]" qualifier that follows the site name. Do NOT strip a region word that is part of the site name itself. Examples:
               - "Al Saad Indian School in Al Ain" → stationName = "Al Saad Indian School"   ← strip trailing "in Al Ain"
@@ -2034,7 +2068,7 @@ public sealed class AzureAIService : IAzureAIService
             If the user says ONLY a region name ("Abu Dhabi", "Al Ain", "Al Dhafra") with no site name, do NOT extract stationName — that is a region query, not a site query.
             Never extract or guess a numeric ID — always use the name.
             For deviceName: extract the device name exactly as stated in the CURRENT question only. Real device name patterns in this system are: "BA 0001", "BA 0005", "BA 0010" (prefix "BA" + space + 4-digit number) and "SEI100M 0014", "SEI100M 0085", "SEI100M 0148" (prefix "SEI100M" + space + 4-digit number). Users may omit the space or use different casing — extract whatever they wrote (e.g. "ba0010", "BA0010", "BA 0010", "sei100m 0014" are all valid). Never guess or invent a device name — only extract what is explicitly stated in the current question.
-            For parameterName (device readings only): if the user asks for a specific parameter, map it — "aqi", "air quality index" → "AQI Index"; "pm2.5", "fine particles", "fine dust" → "PM2.5"; "pm10", "coarse particles" → "PM10"; "co2", "carbon dioxide" → "CO2"; "co", "carbon monoxide" → "CO"; "no2", "nitrogen dioxide" → "NO2"; "so2", "sulphur dioxide", "sulfur dioxide" → "SO2"; "o3", "ozone" → "O3"; "temperature", "temp" → "Temperature"; "humidity" → "Humidity"; "voc", "tvoc", "volatile organic" → "VOC"; "noise", "sound" → "Noise"; "ch2o", "formaldehyde" → "CH2O".
+            For parameterName (device readings only): if the user asks for a specific parameter, map it — "aqi", "air quality index" → "AQI Index"; "pm2.5", "fine particles", "fine dust", "particulate matter" → "PM2.5"; "pm10", "coarse particles", "coarse dust" → "PM10"; "co2", "carbon dioxide" → "CO2"; "co", "carbon monoxide" → "CO"; "no2", "nitrogen dioxide" → "NO2"; "so2", "sulphur dioxide", "sulfur dioxide" → "SO2"; "o3", "ozone" → "O3"; "temperature", "temp" → "Temperature"; "humidity" → "Humidity"; "voc", "tvoc", "volatile organic", "volatile organic compounds" → "VOC"; "noise", "sound" → "Noise"; "ch2o", "formaldehyde" → "CH2O".
             CRITICAL — pollutant group words for device queries: if the user says "physical" (or "physical readings", "physical pollutants", "physical parameters"), omit parameterName — the controller will return PM2.5, PM10, Temperature, Humidity, Noise. If the user says "chemical" (or "chemical readings", "chemical pollutants", "chemical parameters"), omit parameterName — the controller will return CO, CO2, NO2, SO2, O3, CH2O, VOC. Only extract a specific parameterName when the user names a single explicit pollutant.
             If the user asks for "reading", "readings", "all readings", "all parameters", "all data", "physical", or "chemical" — omit parameterName entirely.
             For statusFilter (devices_by_filter AND count_devices_by_filter): extract "Active" if user says "active", "online", "working", "sending", "connected"; extract "Inactive" if user says "inactive", "offline", "not sending", "down", "disconnected"; omit (do NOT set statusFilter) if the question uses ONLY location words like "available", "installed", "at", "under", "in" with no explicit active/inactive/online/offline word. The status word must be present explicitly.
