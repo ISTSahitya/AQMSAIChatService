@@ -617,14 +617,16 @@ public sealed class ExternalApiService : IExternalApiService
                 _log.Information("ExternalApiService: aqi_category_pie — sector='{Sec}' region='{Reg}'",
                     pieSector ?? "(none)", pieRegion ?? "(none)");
 
-                // Reuse BuildAqiCategoryRows without category filter to get all sites
-                var (allSiteRows, dbPieSiteCount) = await BuildAqiCategoryRows(json, null, pieSector, user, ct, pieRegion);
+                // Reuse BuildAqiCategoryRows without category filter to get all sites.
+                // Pass null for user to skip RBAC — schools_aqi_pie has skipSiteFilter=true
+                // so it must show ALL school sites, not just the user's permitted subset.
+                var (allSiteRows, dbPieSiteCount) = await BuildAqiCategoryRows(json, null, pieSector, null, ct, pieRegion);
 
                 // Aggregate by AQI category in display order
                 var categoryOrder = new[]
                 {
                     "Good", "Moderate", "Unhealthy for Sensitive Groups",
-                    "Unhealthy", "Very Unhealthy", "Hazardous"
+                    "Unhealthy", "Very Unhealthy", "Hazardous", "No Data"
                 };
 
                 var grouped = allSiteRows
@@ -2363,16 +2365,20 @@ public sealed class ExternalApiService : IExternalApiService
         }
 
         var allDevices = ParseDevicesFromJson(json);
+        _log.Information("BuildAqiCategoryRows: total devices from API={Total}, sector='{Sec}', region='{Reg}'",
+            allDevices.Count, sectorFilter ?? "(none)", regionFilter ?? "(none)");
 
         // RBAC: restrict to permitted sites
         if (user is not null && !user.HasAllSitesAccess && user.PermittedSiteIds.Count > 0)
             allDevices = allDevices.Where(d => user.PermittedSiteIds.Contains(d.StationId)).ToList();
+        _log.Information("BuildAqiCategoryRows: after RBAC={Count}", allDevices.Count);
 
         // Sector filter: restrict to sites in the requested sector.
         // Primary: use DB-resolved site IDs. Fallback: filter by SectorName from API response directly.
         if (sectorSiteIds is not null)
         {
             allDevices = allDevices.Where(d => sectorSiteIds.Contains(d.StationId)).ToList();
+            _log.Information("BuildAqiCategoryRows: after sector filter (DB IDs)={Count}", allDevices.Count);
         }
         else if (!string.IsNullOrWhiteSpace(sectorFilter))
         {
@@ -2401,10 +2407,14 @@ public sealed class ExternalApiService : IExternalApiService
         if (!string.IsNullOrWhiteSpace(regionFilter))
         {
             normRegion = regionFilter.Replace(" ", "").ToLowerInvariant();
+            var distinctRegions = allDevices.Select(d => d.RegionName ?? "(null)").Distinct().ToList();
+            _log.Information("BuildAqiCategoryRows: regions in devices before filter=[{Regions}], looking for '{NormRegion}'",
+                string.Join(", ", distinctRegions), normRegion);
             allDevices = allDevices.Where(d =>
                 !string.IsNullOrWhiteSpace(d.RegionName) &&
                 d.RegionName.Replace(" ", "").Equals(normRegion, StringComparison.OrdinalIgnoreCase))
                 .ToList();
+            _log.Information("BuildAqiCategoryRows: after region filter={Count}", allDevices.Count);
         }
 
         // Resolve live-status mode:
@@ -2452,8 +2462,9 @@ public sealed class ExternalApiService : IExternalApiService
                                       .Where(t => !string.IsNullOrWhiteSpace(t))
                                       .OrderByDescending(t => t)
                                       .FirstOrDefault() ?? "";
-                // Drop null-AQI sites only when searching Active/All — inactive sites legitimately have no AQI
-                if (!aqi.HasValue && statusMode != "Inactive") return null;
+                // Drop null-AQI sites when actively filtering by category/range.
+                // For pie/listing without a category filter, keep null-AQI sites so they appear as "No Data".
+                if (!aqi.HasValue && statusMode != "Inactive" && (!string.IsNullOrWhiteSpace(aqiCategoryFilter) || minAqi.HasValue || maxAqi.HasValue)) return null;
 
                 // AQI numeric range filter — applied before category classification (skip for null-AQI inactive sites)
                 if (aqi.HasValue && minAqi.HasValue && aqi.Value <= minAqi.Value) return null;
@@ -2464,7 +2475,7 @@ public sealed class ExternalApiService : IExternalApiService
                     ["Station Name"] = first.StationName,
                     ["Region"]       = first.RegionName,
                     ["AQI"]          = aqi,
-                    ["AQI Category"] = ClassifyAqi(aqi.Value),
+                    ["AQI Category"] = aqi.HasValue ? ClassifyAqi(aqi.Value) : "No Data",
                     ["Last Updated"] = lastUpdated
                 };
             })
@@ -3000,6 +3011,7 @@ public sealed class ExternalApiService : IExternalApiService
         var allDevices = ParseDevicesFromJson(indoorJson);
         var query = NormaliseQuery(stationName.Trim().ToLowerInvariant());
 
+        var queryWords = Tokenize(query);
         var matched = allDevices
             .GroupBy(d => d.StationId)
             .Select(g => new { g.First().StationId, g.First().StationName, Devices = g.ToList() })
@@ -3007,12 +3019,37 @@ public sealed class ExternalApiService : IExternalApiService
             .Select(s =>
             {
                 var norm = NormaliseQuery(s.StationName.ToLowerInvariant());
-                var score = norm == query ? 1.0
-                    : norm.Contains(query) || query.Contains(norm) ? 0.9
-                    : 0.0;
+
+                // Exact match
+                if (norm.Equals(query, StringComparison.OrdinalIgnoreCase))
+                    return new { s.StationId, s.StationName, s.Devices, Score = 1000.0 };
+
+                // Substring containment (e.g. "Al Saad School" ↔ "Al Saad Indian School")
+                if (norm.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || query.Contains(norm, StringComparison.OrdinalIgnoreCase))
+                {
+                    var containmentScore = 800.0 - Math.Abs(norm.Length - query.Length);
+                    return new { s.StationId, s.StationName, s.Devices, Score = containmentScore };
+                }
+
+                // Compact containment — strips spaces/hyphens before comparing
+                var compactNorm  = norm.Replace(" ", "").Replace("-", "").Replace("_", "");
+                var compactQuery = query.Replace(" ", "").Replace("-", "").Replace("_", "");
+                if (compactNorm.Contains(compactQuery, StringComparison.OrdinalIgnoreCase)
+                    || compactQuery.Contains(compactNorm, StringComparison.OrdinalIgnoreCase))
+                {
+                    var containmentScore = 750.0 - Math.Abs(norm.Length - query.Length);
+                    return new { s.StationId, s.StationName, s.Devices, Score = containmentScore };
+                }
+
+                // Jaccard word overlap
+                var stationWords  = Tokenize(norm);
+                var intersection  = queryWords.Intersect(stationWords).Count();
+                var union         = queryWords.Union(stationWords).Count();
+                var score         = union > 0 ? (double)intersection / union * 100 : 0;
                 return new { s.StationId, s.StationName, s.Devices, Score = score };
             })
-            .Where(s => s.Score > 0)
+            .Where(s => s.Score >= 40.0)
             .OrderByDescending(s => s.Score)
             .FirstOrDefault();
 
@@ -3047,16 +3084,20 @@ public sealed class ExternalApiService : IExternalApiService
         double? indoorLng = null, indoorLat = null;
         try
         {
-            // DMN_Stations stores CoordinateY = Latitude (~24°N), CoordinateX = Longitude (~54-56°E)
+            // DMN_Stations: CoordinateX = Latitude (~24°N), CoordinateY = Longitude (~54-56°E)
+            // Confirmed from ParametersDAL.cs line 5738: Latitude = CoordinateX, Longitude = CoordinateY
+            // Use matched.StationName (resolved DB name) so the LIKE search hits the correct row
+            // even when the user typed a partial name like "Al Saad School" → "Al Saad Indian School".
+            var resolvedName = matched.StationName.Replace("'", "''");
             var coordSql = $"""
-                SELECT TOP 1 TRY_CAST(CoordinateY AS FLOAT) AS Lat, TRY_CAST(CoordinateX AS FLOAT) AS Lng
+                SELECT TOP 1 TRY_CAST(CoordinateX AS FLOAT) AS Lat, TRY_CAST(CoordinateY AS FLOAT) AS Lng
                 FROM DMN_Stations
-                WHERE StationName LIKE '%{stationName.Replace("'", "''")}%'
+                WHERE StationName LIKE '%{resolvedName}%'
                   AND ISNULL(IsDeleted, 0) = 0
-                  AND TRY_CAST(CoordinateY AS FLOAT) IS NOT NULL
                   AND TRY_CAST(CoordinateX AS FLOAT) IS NOT NULL
-                  AND TRY_CAST(CoordinateY AS FLOAT) <> 0
+                  AND TRY_CAST(CoordinateY AS FLOAT) IS NOT NULL
                   AND TRY_CAST(CoordinateX AS FLOAT) <> 0
+                  AND TRY_CAST(CoordinateY AS FLOAT) <> 0
                 """;
             var coordResult = await _sqlExecutor.ExecuteAsync(coordSql, new Dictionary<string, object>(), ct);
             if (coordResult.Rows.Count > 0)

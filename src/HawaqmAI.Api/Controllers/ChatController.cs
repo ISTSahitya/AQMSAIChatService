@@ -1268,7 +1268,7 @@ public sealed class ChatController : ControllerBase
         // Generic "sites" queries (e.g. "show me the sites AQI categories in pie chart") must NOT route here.
         bool mentionsSchoolExplicitly = lowerMsg.Contains("school") || lowerMsg.Contains("schools");
         bool isSchoolsAqiPie = userAskedForChart
-            && aqiCategoryWords.Any(k => lowerMsg.Contains(k))
+            && (aqiCategoryWords.Any(k => lowerMsg.Contains(k)) || lowerMsg.Contains("aqi") || lowerMsg.Contains("air quality"))
             && schoolSiteWords.Any(k => lowerMsg.Contains(k))
             && mentionsSchoolExplicitly;
         // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
@@ -2015,12 +2015,22 @@ public sealed class ChatController : ControllerBase
         // Exclude indoor vs ambient comparison queries — "compare the current indoor AQI ... with the nearest ambient station"
         // is an indoor_ambient_compare query, not an ambient_station_readings lookup.
         // Also catches "Al Reyada School AQI vs nearest ambient station" (no explicit "indoor" word).
+        // "what is the nearest ambient station to X" / "identify nearest ambient station for X"
+        // are identity queries that use indoor_ambient_compare (not ambient_station_readings).
+        bool isNearestAmbientIdentityQuery =
+            (lowerMsg.Contains("nearest ambient") || lowerMsg.Contains("nearest outdoor station"))
+            && (lowerMsg.Contains("what is") || lowerMsg.Contains("which") || lowerMsg.Contains("identify")
+                || lowerMsg.Contains("find") || lowerMsg.Contains("tell me") || lowerMsg.Contains("show me")
+                || lowerMsg.Contains("nearest ambient station to") || lowerMsg.Contains("nearest ambient station for")
+                || lowerMsg.Contains("nearest ambient station at") || lowerMsg.Contains("nearest ambient station near"));
+
         bool isIndoorAmbientCompareQuery =
-            (lowerMsg.Contains("compare") || lowerMsg.Contains("comparison") || lowerMsg.Contains("vs") || lowerMsg.Contains("versus"))
-            && (lowerMsg.Contains("ambient") || lowerMsg.Contains("outdoor"))
-            && (lowerMsg.Contains("indoor") || lowerMsg.Contains("nearest ambient") || lowerMsg.Contains("nearest outdoor")
-                || lowerMsg.Contains("ambient station") || lowerMsg.Contains("outdoor station")
-                || (hasAtSiteRef && (lowerMsg.Contains("ambient aqi") || lowerMsg.Contains("outdoor aqi"))));
+            isNearestAmbientIdentityQuery
+            || ((lowerMsg.Contains("compare") || lowerMsg.Contains("comparison") || lowerMsg.Contains("vs") || lowerMsg.Contains("versus"))
+                && (lowerMsg.Contains("ambient") || lowerMsg.Contains("outdoor"))
+                && (lowerMsg.Contains("indoor") || lowerMsg.Contains("nearest ambient") || lowerMsg.Contains("nearest outdoor")
+                    || lowerMsg.Contains("ambient station") || lowerMsg.Contains("outdoor station")
+                    || (hasAtSiteRef && (lowerMsg.Contains("ambient aqi") || lowerMsg.Contains("outdoor aqi")))));
         bool isAmbientStationQuery = !isAmbientAllStationsQuery
             && !isIndoorAmbientCompareQuery
             && (lowerMsg.Contains("outdoor station") || lowerMsg.Contains("ambient station"))
@@ -2184,7 +2194,39 @@ public sealed class ChatController : ControllerBase
 
                 var pieBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
                 var pieFillResult = await _azureAI.FillParametersAsync(request.Message, pieTemplate, history, scope, ct);
+
+                // Force region if LLM missed it
+                if (!pieFillResult.Parameters.ContainsKey("regionName") || string.IsNullOrWhiteSpace(pieFillResult.Parameters.GetValueOrDefault("regionName")))
+                {
+                    if (lowerMsg.Contains("al ain") || lowerMsg.Contains("alain"))
+                        pieFillResult.Parameters["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("abu dhabi") || lowerMsg.Contains("abudhabi"))
+                        pieFillResult.Parameters["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                        pieFillResult.Parameters["regionName"] = "Al Dhafra";
+                }
+                // Force sectorName for school queries
+                if (!pieFillResult.Parameters.ContainsKey("sectorName") || string.IsNullOrWhiteSpace(pieFillResult.Parameters.GetValueOrDefault("sectorName")))
+                {
+                    if (lowerMsg.Contains("school") || lowerMsg.Contains("schools"))
+                        pieFillResult.Parameters["sectorName"] = "Public & Govt-School";
+                }
+
+                _log.Information("ChatController: schools_aqi_pie params — sector={S} region={R}",
+                    pieFillResult.Parameters.GetValueOrDefault("sectorName") ?? "(none)",
+                    pieFillResult.Parameters.GetValueOrDefault("regionName") ?? "(none)");
+
                 var pieApiResult = await _externalApi.CallAsync(pieTemplate.ApiCall, pieFillResult.Parameters, scope, pieBearerToken, user, pieTemplate.Id, ct);
+                if (pieApiResult.Success && pieApiResult.Rows.Count == 0)
+                {
+                    // No AQI data available — return a friendly message instead of a blank chart
+                    var regionLabel = pieFillResult.Parameters.GetValueOrDefault("regionName");
+                    var noDataMsg = string.IsNullOrWhiteSpace(regionLabel)
+                        ? "No current AQI data is available for school sites at this time. Sites may not have active devices reporting readings."
+                        : $"No current AQI data is available for school sites in {regionLabel}. The sites in this region may not have active devices reporting readings right now.";
+                    await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
+                    return Ok(_formatter.FormatError(session.SessionId, noDataMsg, "NO_DATA"));
+                }
                 if (pieApiResult.Success)
                 {
                     var pieMsgId = Guid.NewGuid();
@@ -2194,7 +2236,10 @@ public sealed class ChatController : ControllerBase
                         ?? pieApiResult.Rows.Sum(r => r.TryGetValue("Count", out var cv) && cv is int ci ? ci : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
                     var pieSectorLabel = pieFillResult.Parameters.GetValueOrDefault("sectorName")
                                      ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : "MOE (Public & Government)");
-                    var pieSummary = $"There are a total of {pieTotalSites} {pieSectorLabel} school sites across all AQI categories. The table below shows the breakdown.";
+                    var pieRegionLabel = pieFillResult.Parameters.GetValueOrDefault("regionName");
+                    var pieSummary = string.IsNullOrWhiteSpace(pieRegionLabel)
+                        ? $"There are a total of {pieTotalSites} {pieSectorLabel} school sites across all AQI categories. The chart below shows the breakdown."
+                        : $"There are a total of {pieTotalSites} {pieSectorLabel} school sites in {pieRegionLabel} across all AQI categories. The chart below shows the breakdown.";
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
                         userContent: request.Message,
@@ -4574,7 +4619,9 @@ public sealed class ChatController : ControllerBase
                 || System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\bco\b");
             bool hasPollutantReadingWord = lowerMsg.Contains("reading") || lowerMsg.Contains("level")
                 || lowerMsg.Contains("value") || lowerMsg.Contains("current") || lowerMsg.Contains("latest")
-                || lowerMsg.Contains("show me") || lowerMsg.Contains("what is") || lowerMsg.Contains("what are");
+                || lowerMsg.Contains("show me") || lowerMsg.Contains("what is") || lowerMsg.Contains("what are")
+                || lowerMsg.Contains("display") || lowerMsg.Contains("high") || lowerMsg.Contains("list sites where")
+                || lowerMsg.Contains("sites where") || lowerMsg.Contains("where") && lowerMsg.Contains("level");
             // Detect region filter in message
             string? detectedRegion3g = null;
             if (lowerMsg.Contains("al ain") || lowerMsg.Contains("alain"))
@@ -4584,10 +4631,15 @@ public sealed class ChatController : ControllerBase
             else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
                 detectedRegion3g = "Al Dhafra";
 
+            // Also allow when query is a pollutant ranking/listing question (e.g. "list sites where CO2 is high")
+            var pollutantQualityWords3g = new[] { "high", "elevated", "above", "exceeding", "bad", "poor", "low", "below" };
+            bool isPollutantRankingQ = pollutantQualityWords3g.Any(w => lowerMsg.Contains(w))
+                && (lowerMsg.Contains("where") || lowerMsg.Contains("list sites") || lowerMsg.Contains("display"));
+
             // Trigger when pollutant + reading word AND:
             //   • no device code, AND
-            //   • no specific site ref OR it's actually a region reference (e.g. "Al Ain sites")
-            bool noSpecificSite = !msgHasSpecificDeviceCode && (!hasAtSiteRef || detectedRegion3g != null);
+            //   • no specific site ref OR it's a region reference (e.g. "Al Ain sites") OR it's a ranking query
+            bool noSpecificSite = !msgHasSpecificDeviceCode && (!hasAtSiteRef || detectedRegion3g != null || isPollutantRankingQ);
             if (hasPollutantToken && hasPollutantReadingWord && noSpecificSite
                 && routeResult.Template?.Id is not "all_sites_latest_pollutant")
             {

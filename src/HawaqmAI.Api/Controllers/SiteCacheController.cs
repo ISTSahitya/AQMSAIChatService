@@ -84,15 +84,15 @@ public sealed class SiteCacheController : ControllerBase
         var coordSql = $"""
             SELECT TOP 1
                 s.StationName,
-                TRY_CAST(s.CoordinateY AS FLOAT) AS Lat,
-                TRY_CAST(s.CoordinateX AS FLOAT) AS Lng
+                TRY_CAST(s.CoordinateX AS FLOAT) AS Lat,
+                TRY_CAST(s.CoordinateY AS FLOAT) AS Lng
             FROM DMN_Stations s
             WHERE s.StationName LIKE '%{siteName.Replace("'", "''")}%'
               AND ISNULL(s.IsDeleted, 0) = 0
-              AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL
               AND TRY_CAST(s.CoordinateX AS FLOAT) IS NOT NULL
-              AND TRY_CAST(s.CoordinateY AS FLOAT) <> 0
+              AND TRY_CAST(s.CoordinateY AS FLOAT) IS NOT NULL
               AND TRY_CAST(s.CoordinateX AS FLOAT) <> 0
+              AND TRY_CAST(s.CoordinateY AS FLOAT) <> 0
             ORDER BY s.StationName
             """;
 

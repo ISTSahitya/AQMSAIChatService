@@ -629,8 +629,15 @@ public sealed class QueryRouterService : IQueryRouterService
             return template.Id == "site_count" ? 1.15 : 0.0;
 
         // ── HARD OVERRIDE: "list/show" site intent → sites_by_filter (table) ─
+        // Guard: "list sites where CO2 is high" is a pollutant-ranking question (highest_readings),
+        // not a plain site list — skip the override when a pollutant token + a quality adjective
+        // ("high", "elevated", "above", "exceeding", "where") is present.
+        var qualityAdjectives = new[] { "high", "elevated", "above", "exceeding", "where", "bad", "poor" };
+        bool isPollutantRankingPhrase = PollutantTokens.Any(t => lowerQuestion.Contains(t))
+            && qualityAdjectives.Any(a => lowerQuestion.Contains(a));
         bool isSiteListingIntent = siteListingPhrases.Any(p => lowerQuestion.Contains(p))
-            && !QuestionHasDeviceName(lowerQuestion);
+            && !QuestionHasDeviceName(lowerQuestion)
+            && !isPollutantRankingPhrase;
         if (isSiteListingIntent)
             return template.Id == "sites_by_filter" ? 1.15 : 0.0;
 
@@ -1442,6 +1449,14 @@ public sealed class QueryRouterService : IQueryRouterService
             && questionTokens.Contains("aqi"))
         {
             maxScore *= 0.1;
+        }
+
+        // Boost highest_readings when the question is a pollutant-ranking phrase —
+        // "list sites where CO2 is high", "sites with elevated PM2.5", etc.
+        // These bypass the site-listing hard override and must route here, not to sites_by_filter.
+        if (template.Id == "highest_readings" && isPollutantRankingPhrase && !questionTokens.Contains("aqi"))
+        {
+            maxScore = Math.Max(maxScore, 0.95);
         }
 
         // Penalise current_all_stations when the question asks for "AQI" without specifying
