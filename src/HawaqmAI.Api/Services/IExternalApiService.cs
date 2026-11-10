@@ -60,4 +60,10 @@ public sealed class ApiCallResult
     public string? Error { get; init; }
     public List<Dictionary<string, object?>> Rows { get; init; } = [];
     public long ExecutionTimeMs { get; init; }
+    /// <summary>
+    /// Total number of sites from the DB for the applied sector/region filters,
+    /// regardless of whether they have live AQI readings. Used for pie chart totals.
+    /// Null when not applicable.
+    /// </summary>
+    public int? TotalSiteCount { get; init; }
 }

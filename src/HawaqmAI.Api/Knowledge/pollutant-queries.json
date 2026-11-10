@@ -713,7 +713,17 @@
         "sandstorm indoor impact",
         "sand event indoor",
         "indoor air quality respond",
-        "indoor quality during dust"
+        "indoor quality during dust",
+        "did indoor air quality deteriorate during",
+        "deteriorate during the dust event",
+        "did indoor pm10 rise during",
+        "did indoor pm25 rise during",
+        "pm10 concentrations rise during",
+        "pm25 concentrations rise during",
+        "indoor concentrations during dust",
+        "indoor levels during dust event",
+        "levels change during dust event",
+        "change during the dust event"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",

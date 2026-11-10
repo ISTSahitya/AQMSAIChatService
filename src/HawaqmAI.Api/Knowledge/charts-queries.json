@@ -254,7 +254,7 @@
     },
     {
       "id": "sites_aqi_level_chart",
-      "description": "Show a pie or bar chart of sites grouped by their current AQI level/category (Good, Moderate, Unhealthy, etc.). Use when user asks for sites based on AQI levels, AQI level distribution chart, or breakdown of sites by AQI category.",
+      "description": "Show a pie or bar chart of active sites grouped by their current AQI level/category (Good, Moderate, Unhealthy, etc.). Only active sites (with at least one online device) are included. Use when user asks for sites based on AQI levels, AQI level distribution chart, or breakdown of sites by AQI category.",
       "patterns": [
         "sites based on aqi levels",
         "sites by aqi level chart",
@@ -269,7 +269,12 @@
         "sites based on aqi category",
         "aqi levels chart",
         "aqi level pie chart",
-        "aqi level bar chart"
+        "aqi level bar chart",
+        "sites aqi categories pie chart",
+        "show sites aqi categories",
+        "active sites aqi categories",
+        "aqi categories of active sites",
+        "sites aqi category breakdown"
       ],
       "category": "air_quality",
       "requiredRole": "viewer",

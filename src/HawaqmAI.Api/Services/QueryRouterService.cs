@@ -372,7 +372,7 @@ public sealed class QueryRouterService : IQueryRouterService
         "wahda", "rowdah", "muroor", "electra", "hameem", "liwa", "gayathi",
         "reyada", "reayada", "kaltham", "obeidli", "gems", "british",
         "shawamekh", "al shawamekh",
-        "areej"
+        "areej", "rayana"
     ];
 
     // Sector name words — "residential", "commercial", "institutional" appear in both sector filters
@@ -395,7 +395,7 @@ public sealed class QueryRouterService : IQueryRouterService
     private static readonly string[] NamedSchoolIndicators =
     [
         "reyada", "reayada", "saad", "naeem", "naim", "bateen", "gems", "kaltham",
-        "shawamekh", "shahama", "baniyas", "mushrif", "khalifa",
+        "shawamekh", "shahama", "baniyas", "mushrif", "khalifa", "rayana",
         "indian school", "british school", "american school", "international school",
         "al ain school", "abu dhabi school", "al dhafra school"
     ];
@@ -531,6 +531,57 @@ public sealed class QueryRouterService : IQueryRouterService
         bool isBadAirQ = BadAirPhrases.Any(p => lowerQuestion.Contains(p));
         if (isBadAirQ)
             return template.Id == "site_aqi_by_category" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: pie/bar chart of school/site AQI categories → schools_aqi_pie ─
+        // User intent: visualise AQI distribution (by category) for schools/sites as a chart.
+        // Word order is unpredictable — "pie chart" can appear at the start or end of the question.
+        // Examples: "pie chart of schools in Al Ain", "school sites AQI Al Dhafra in pie chart",
+        //           "bar chart of al ain schools aqi", "schools aqi abu dhabi pie chart".
+        // Guard: only fire when the question involves schools/sites + AQI (not "sites by region",
+        //        "site status", "devices by model" etc., which have their own chart templates).
+        bool hasPieBarChartWord = lowerQuestion.Contains("pie chart") || lowerQuestion.Contains("bar chart")
+            || lowerQuestion.Contains("donut chart") || lowerQuestion.Contains("pie graph")
+            || lowerQuestion.Contains("bar graph");
+        // School/site with AQI explicit, OR school/site alone (implicit AQI intent —
+        // "pie chart of schools in Al Ain" has no other charting meaning).
+        bool hasSchoolOrSiteAqi =
+            lowerQuestion.Contains("school") || lowerQuestion.Contains("site")
+            || lowerQuestion.Contains("aqi");
+        // Exclude questions that are specifically about region counts, sector counts, site status,
+        // device models, or subsectors — those belong to their own chart templates.
+        bool isOtherChartIntent =
+            lowerQuestion.Contains("by region") || lowerQuestion.Contains("per region")
+            || lowerQuestion.Contains("by sector") || lowerQuestion.Contains("per sector")
+            || lowerQuestion.Contains("site status")
+            || lowerQuestion.Contains("device") || lowerQuestion.Contains("subsector") || lowerQuestion.Contains("sub-sector")
+            || lowerQuestion.Contains("model");
+        if (hasPieBarChartWord && hasSchoolOrSiteAqi && !isOtherChartIntent)
+            return template.Id == "schools_aqi_pie" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: DSR above/below threshold → sites_dsr_above/below_threshold ─
+        // "List school sites with Data Success Rate above 75%" must NEVER route to device templates.
+        // Detect any "data success rate above/below X%" or "dsr above/below X%" phrasing.
+        var dsrAboveEarlyKeywords = new[] {
+            "data success rate above", "dsr above", "success rate above", "data availability above",
+            "dsr greater than", "data success rate greater than", "dsr over", "data success rate over",
+            "dsr at least", "data success rate at least", "success rate of at least"
+        };
+        var dsrBelowEarlyKeywords = new[] {
+            "data success rate below", "dsr below", "success rate below", "data availability below",
+            "dsr less than", "data success rate less than"
+        };
+        bool hasDsrContext = lowerQuestion.Contains("data success rate") || lowerQuestion.Contains("dsr")
+            || lowerQuestion.Contains("success rate") || lowerQuestion.Contains("data availability");
+        bool isDsrAboveEarly = dsrAboveEarlyKeywords.Any(s => lowerQuestion.Contains(s))
+            || (hasDsrContext && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"above\s+\d+(\.\d+)?\s*%"))
+            || (hasDsrContext && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"at\s+least\s+\d+(\.\d+)?\s*%"));
+        bool isDsrBelowEarly = dsrBelowEarlyKeywords.Any(s => lowerQuestion.Contains(s))
+            || (hasDsrContext && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"below\s+\d+(\.\d+)?\s*%"))
+            || (hasDsrContext && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"less\s+than\s+\d+(\.\d+)?\s*%"));
+        if (isDsrAboveEarly)
+            return template.Id == "sites_dsr_above_threshold" ? 1.15 : 0.0;
+        if (isDsrBelowEarly)
+            return template.Id == "sites_dsr_below_threshold" ? 1.15 : 0.0;
 
         // ── HARD OVERRIDE: active/inactive status filter questions → sites_filtered ─
         // "list of active abu dhabi schools", "active schools in al ain" etc. must route
@@ -979,6 +1030,36 @@ public sealed class QueryRouterService : IQueryRouterService
         // Boost devices_by_filter for device status questions mentioning schools/sector
         if (template.Id == "devices_by_filter" && isDeviceStatusQuestion && isGenericSchoolQuestion)
             maxScore = Math.Max(maxScore, 0.97);
+
+        // Hard override: DSR above/below threshold questions must bypass the LLM entirely.
+        // The LLM repeatedly picks device/school templates for these queries.
+        var dsrAboveKeywords = new[] {
+            "data success rate above", "dsr above", "success rate above", "data availability above",
+            "dsr greater than", "data success rate greater than",
+            "dsr over", "data success rate over", "dsr at least", "data success rate at least",
+            "success rate of at least"
+        };
+        var dsrBelowKeywords = new[] {
+            "data success rate below", "dsr below", "success rate below", "data availability below",
+            "dsr less than", "data success rate less than"
+        };
+        // Also match "above X%" / "below X%" / "at least X%" / "less than X%" for any number
+        bool isDsrAbove = dsrAboveKeywords.Any(s => lowerQuestion.Contains(s))
+            || (isDsrOrExceedanceQuestion && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"above\s+\d+(\.\d+)?\s*%"))
+            || (isDsrOrExceedanceQuestion && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"at\s+least\s+\d+(\.\d+)?\s*%"));
+        bool isDsrBelow = dsrBelowKeywords.Any(s => lowerQuestion.Contains(s))
+            || (isDsrOrExceedanceQuestion && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"below\s+\d+(\.\d+)?\s*%"))
+            || (isDsrOrExceedanceQuestion && System.Text.RegularExpressions.Regex.IsMatch(lowerQuestion, @"less\s+than\s+\d+(\.\d+)?\s*%"));
+
+        if (template.Id == "sites_dsr_above_threshold" && isDsrAbove)
+            return 1.15;
+        if (template.Id == "sites_dsr_below_threshold" && isDsrBelow)
+            return 1.15;
+        // Zero out competing templates when a hard DSR above/below is detected
+        if (isDsrAbove && template.Id != "sites_dsr_above_threshold")
+            maxScore *= 0.02;
+        if (isDsrBelow && template.Id != "sites_dsr_below_threshold")
+            maxScore *= 0.02;
 
         // Boost DSR/exceedance templates when the question contains DSR or exceedance signals
         if ((template.Id == "sites_repeated_aqi_exceedance_with_dsr"
@@ -1618,10 +1699,12 @@ public sealed class QueryRouterService : IQueryRouterService
                 || lowerQuestion.Contains("where aqi") || lowerQuestion.Contains("aqi is"));
 
         // Boost schools_aqi_pie when the question explicitly asks for a pie/donut/distribution chart —
-        // takes priority over site_aqi_by_category even when AQI category words are present.
+        // Use 1.15 to exceed HighConfidenceThreshold (1.10) and bypass the LLM entirely —
+        // the LLM has been observed picking schools_latest_pollutant for these questions, causing
+        // inconsistent responses (sometimes pie chart, sometimes a list).
         if (template.Id == "schools_aqi_pie" && isPieChartQuestion)
         {
-            maxScore = Math.Max(maxScore, 0.97);
+            maxScore = Math.Max(maxScore, 1.15);
         }
 
         // Penalise site_aqi_by_category when the user explicitly asks for a pie/donut chart —
@@ -2059,7 +2142,10 @@ public sealed class QueryRouterService : IQueryRouterService
         var dustEventPhrases = new[] {
             "dust event", "dust storm", "sandstorm", "sand storm",
             "respond during", "responded during", "response during",
-            "during the dust", "during a dust"
+            "during the dust", "during a dust",
+            "deteriorate during", "deteriorated during",
+            "rise during", "risen during", "increased during",
+            "change during", "changed during", "levels during"
         };
         bool isDustEventResponse = dustEventPhrases.Any(p => lowerQuestion.Contains(p))
             && isNamedSiteQuestion;

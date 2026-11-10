@@ -309,7 +309,8 @@ public sealed class ExternalApiService : IExternalApiService
                         row["Value"]        = p.Key == "AQI Index"
                             ? Math.Round(p.Value.Value, 0, MidpointRounding.AwayFromZero)
                             : Math.Round(p.Value.Value, 2);
-                        row["Unit"]         = p.Value.Unit;
+                        if (p.Key != "AQI Index")
+                            row["Unit"] = p.Value.Unit;
                         row["Last Updated"] = d.LastUpdated;
                         row["_IsActive"]    = d.IsOnline; // internal flag, stripped before return
                         return row;
@@ -598,7 +599,7 @@ public sealed class ExternalApiService : IExternalApiService
                 _log.Information("ExternalApiService: aqi_category_filter — aqiCategory='{Cat}' sector='{Sec}' region='{Reg}' liveStatus='{Status}' min={Min} max={Max}",
                     aqiCategory ?? "(none)", sectorFilter ?? "(none)", regionFilter2 ?? "(none)", liveStatusFilter ?? "Active", minAqi, maxAqi);
 
-                var rows2 = await BuildAqiCategoryRows(json, aqiCategory, sectorFilter, user, ct, regionFilter2, minAqi, maxAqi, liveStatusFilter);
+                var (rows2, _) = await BuildAqiCategoryRows(json, aqiCategory, sectorFilter, user, ct, regionFilter2, minAqi, maxAqi, liveStatusFilter);
                 _log.Information("ExternalApiService: aqi_category_filter → {Count} rows returned", rows2.Count);
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
@@ -617,7 +618,7 @@ public sealed class ExternalApiService : IExternalApiService
                     pieSector ?? "(none)", pieRegion ?? "(none)");
 
                 // Reuse BuildAqiCategoryRows without category filter to get all sites
-                var allSiteRows = await BuildAqiCategoryRows(json, null, pieSector, user, ct, pieRegion);
+                var (allSiteRows, dbPieSiteCount) = await BuildAqiCategoryRows(json, null, pieSector, user, ct, pieRegion);
 
                 // Aggregate by AQI category in display order
                 var categoryOrder = new[]
@@ -645,8 +646,8 @@ public sealed class ExternalApiService : IExternalApiService
                     pieRows.Add(new Dictionary<string, object?> { ["Category"] = cat, ["Count"] = grouped[cat] });
                 }
 
-                _log.Information("ExternalApiService: aqi_category_pie → {Count} category slices", pieRows.Count);
-                return new ApiCallResult { Success = true, Rows = pieRows, ExecutionTimeMs = sw.ElapsedMilliseconds };
+                _log.Information("ExternalApiService: aqi_category_pie → {Count} category slices, dbTotal={DbTotal}", pieRows.Count, dbPieSiteCount?.ToString() ?? "(none)");
+                return new ApiCallResult { Success = true, Rows = pieRows, TotalSiteCount = dbPieSiteCount, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
 
             // sites_by_region_chart: count sites per region → {Region, Count} rows for pie/bar chart.
@@ -849,7 +850,8 @@ public sealed class ExternalApiService : IExternalApiService
 
                 var aqiLvlRows = allDevicesAqiLvl
                     .GroupBy(d => d.StationId)
-                    .Select(g => g.First().Params.TryGetValue("AQI Index", out var v) ? v.Value : (double?)null)
+                    .Where(g => g.Any(d => d.IsOnline))   // active sites only (at least one online device)
+                    .Select(g => g.First(d => d.IsOnline).Params.TryGetValue("AQI Index", out var v) ? v.Value : (double?)null)
                     .Where(aqi => aqi.HasValue)
                     .GroupBy(aqi => GetAqiCategory(aqi!.Value))
                     .OrderBy(g => g.Key)
@@ -1766,15 +1768,17 @@ public sealed class ExternalApiService : IExternalApiService
             if (minValue.HasValue && value.Value <= minValue.Value) continue;
             if (maxValue.HasValue && value.Value > maxValue.Value) continue;
 
-            results.Add(new Dictionary<string, object?>
+            var row = new Dictionary<string, object?>
             {
                 ["Site Name"]    = siteInfo.Name,
                 ["Region"]       = siteInfo.Region,
                 ["Parameter"]    = parameterName,
                 ["Value"]        = value,
-                ["Unit"]         = parameterName.Equals("AQI Index", StringComparison.OrdinalIgnoreCase) ? "" : unit,
-                ["Last Updated"] = lastUpdated
-            });
+            };
+            if (!parameterName.Equals("AQI Index", StringComparison.OrdinalIgnoreCase))
+                row["Unit"] = unit;
+            row["Last Updated"] = lastUpdated;
+            results.Add(row);
         }
 
         // Sort and apply topN limit
@@ -2132,7 +2136,7 @@ public sealed class ExternalApiService : IExternalApiService
     /// "Critical"/"hotspot" maps to AQI &gt; 150 (Executive Dashboard definition).
     /// Returns one row per site: SiteName, RegionName, AQI, AQICategory, LastUpdated.
     /// </summary>
-    private async Task<List<Dictionary<string, object?>>> BuildAqiCategoryRows(
+    private async Task<(List<Dictionary<string, object?>> Rows, int? DbSectorSiteCount)> BuildAqiCategoryRows(
         string json,
         string? aqiCategoryFilter,
         string? sectorFilter,
@@ -2147,6 +2151,7 @@ public sealed class ExternalApiService : IExternalApiService
         // Try exact match first; if that returns nothing, fall back to LIKE match
         // so "Public & Govt-School" / "Public & Gov-School" / partial names all resolve.
         HashSet<int>? sectorSiteIds = null;
+        int? dbSectorSiteCount = null;
         if (!string.IsNullOrWhiteSpace(sectorFilter))
         {
             // Normalise "school" variants → canonical DB value used in BuildSchoolPollutantRows
@@ -2163,6 +2168,7 @@ public sealed class ExternalApiService : IExternalApiService
                 WHERE (sec.SectorName = @sectorName
                     OR sec.SectorName LIKE '%' + @sectorLike + '%')
                   AND ISNULL(s.IsDeleted, 0) = 0
+                  AND s.Status = 1
                 """;
             // sectorLike: use a distinctive fragment to avoid over-matching
             // For schools: "School", for Commercial: "Commercial", for Residential: "Residential"
@@ -2178,6 +2184,7 @@ public sealed class ExternalApiService : IExternalApiService
                     .Where(r => r["ID"] is not null)
                     .Select(r => Convert.ToInt32(r["ID"]))
                     .ToHashSet();
+                dbSectorSiteCount = sectorSiteIds.Count;
                 _log.Debug("ExternalApiService: aqi_category_filter sector '{Sector}' → {Count} site IDs", normSector, sectorSiteIds.Count);
             }
             else
@@ -2305,12 +2312,12 @@ public sealed class ExternalApiService : IExternalApiService
 
         // If no category/range filters, return region-filtered rows as-is
         if (string.IsNullOrWhiteSpace(aqiCategoryFilter) && !minAqi.HasValue && !maxAqi.HasValue)
-            return siteRows;
+            return (siteRows, dbSectorSiteCount);
 
         // If only numeric range was requested (no category filter), siteRows already has range
         // applied during construction — just return as-is (no category filtering needed)
         if (string.IsNullOrWhiteSpace(aqiCategoryFilter))
-            return siteRows;
+            return (siteRows, dbSectorSiteCount);
 
         // Map AQI category keywords to canonical DB labels.
         // Covers both pipe-separated LLM output ("Moderate|Very Unhealthy")
@@ -2361,13 +2368,13 @@ public sealed class ExternalApiService : IExternalApiService
         _log.Information("ExternalApiService: resolved categories = [{Cats}]", string.Join(", ", resolvedCategories));
 
         if (resolvedCategories.Count == 0)
-            return siteRows; // unknown filter — return all rather than empty
+            return (siteRows, dbSectorSiteCount); // unknown filter — return all rather than empty
 
-        return siteRows.Where(r =>
+        return (siteRows.Where(r =>
         {
             var cat = r["AQI Category"]?.ToString() ?? "";
             return resolvedCategories.Contains(cat);
-        }).ToList();
+        }).ToList(), dbSectorSiteCount);
     }
 
     // Reference to the parameter alias map from RbacEngine logic (duplicated here for API-path use)

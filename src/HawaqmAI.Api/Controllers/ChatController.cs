@@ -1092,7 +1092,7 @@ public sealed class ChatController : ControllerBase
         // a region name but are asking about sites within a sector — must NOT route to region AQI.
         bool msgHasSectorWord = lowerMsg.Contains("residential") || lowerMsg.Contains("commercial")
             || lowerMsg.Contains("institutional") || lowerMsg.Contains("school") || lowerMsg.Contains("sector");
-        if (isRegionQuestion && (lowerMsg.Contains("aqi") || lowerMsg.Contains("air quality")) && !msgHasSiteNameIndicator && !msgHasSectorWord)
+        if (isRegionQuestion && (lowerMsg.Contains("aqi") || lowerMsg.Contains("iaq") || lowerMsg.Contains("air quality")) && !msgHasSiteNameIndicator && !msgHasSectorWord)
         {
             _log.Debug("ChatController: region-AQI pre-check fired → forcing region_aqi_geographical");
             var regionAqiTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "region_aqi_geographical");
@@ -1261,9 +1261,13 @@ public sealed class ChatController : ControllerBase
         var schoolSiteWords  = new[] { "school", "schools", "sites", "site" };
         var explicitChartWords = new[] { "pie chart", "pie graph", "bar chart", "bar graph", "plot a pie", "plot pie", "donut chart", "doughnut chart", "chart of schools", "chart of sites" };
         bool userAskedForChart = explicitChartWords.Any(k => lowerMsg.Contains(k));
+        // Only treat as a schools-specific AQI pie when the user explicitly mentioned "school" or "schools".
+        // Generic "sites" queries (e.g. "show me the sites AQI categories in pie chart") must NOT route here.
+        bool mentionsSchoolExplicitly = lowerMsg.Contains("school") || lowerMsg.Contains("schools");
         bool isSchoolsAqiPie = userAskedForChart
             && aqiCategoryWords.Any(k => lowerMsg.Contains(k))
-            && schoolSiteWords.Any(k => lowerMsg.Contains(k));
+            && schoolSiteWords.Any(k => lowerMsg.Contains(k))
+            && mentionsSchoolExplicitly;
         // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
         var deviceCountKeywords = new[] { "devices per site", "device per site", "devices at each site", "number of devices", "device count", "total devices", "devices in the application", "devices in the system" };
         bool isDeviceCountQuestion = deviceCountKeywords.Any(k => lowerMsg.Contains(k));
@@ -2181,8 +2185,10 @@ public sealed class ChatController : ControllerBase
                 if (pieApiResult.Success)
                 {
                     var pieMsgId = Guid.NewGuid();
-                    var pieTotalSites = pieApiResult.Rows
-                        .Sum(r => r.TryGetValue("Count", out var cv) && cv is int ci ? ci : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
+                    // Prefer DB total (all sector sites) over pie-row sum (only sites with live AQI readings)
+                    // so the count matches the actual application site count.
+                    var pieTotalSites = pieApiResult.TotalSiteCount
+                        ?? pieApiResult.Rows.Sum(r => r.TryGetValue("Count", out var cv) && cv is int ci ? ci : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
                     var pieSectorLabel = pieFillResult.Parameters.GetValueOrDefault("sectorName")
                                      ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : "MOE (Public & Government)");
                     var pieSummary = $"There are a total of {pieTotalSites} {pieSectorLabel} school sites across all AQI categories. The table below shows the breakdown.";
@@ -2730,9 +2736,14 @@ public sealed class ChatController : ControllerBase
         var aqiLevelChartKeywords = new[] {
             "sites based on aqi level", "aqi level distribution", "sites by aqi level",
             "aqi level chart", "aqi level pie", "aqi level bar", "sites aqi level",
-            "aqi levels chart", "based on aqi level", "sites based on aqi"
+            "aqi levels chart", "based on aqi level", "sites based on aqi",
+            "sites aqi categories", "aqi categories", "sites aqi category",
+            "aqi category pie", "aqi category chart", "aqi category breakdown",
+            "show me the sites aqi", "sites aqi",
+            "aqi distribution", "sites aqi distribution", "aqi category distribution",
+            "sites by aqi", "aqi breakdown"
         };
-        bool isAqiLevelChart = isChartDistribution && aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k));
+        bool isAqiLevelChart = aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k));
 
         if (isAqiLevelChart)
         {
@@ -2743,11 +2754,35 @@ public sealed class ChatController : ControllerBase
                 var effectiveAqiLvlType = userWantsBar ? "bar" : "pie";
                 aqiLvlTemplate.ChartType = effectiveAqiLvlType;
                 var aqiLvlBearer = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
-                var aqiLvlResult = await _externalApi.CallAsync(aqiLvlTemplate.ApiCall, new Dictionary<string, string>(), scope, aqiLvlBearer, user, aqiLvlTemplate.Id, ct);
+                // Extract sector/region mentioned inline in the message (e.g. "residential sites AQI distribution")
+                // so the ExternalApiService filter picks them up even when scope bar is not set.
+                var aqiLvlInlineParams = new Dictionary<string, string>();
+                string[] aqiLvlSectors = ["Residential", "Industrial", "Commercial", "Public & Govt-School"];
+                string[] aqiLvlRegions = ["Abu Dhabi", "Al Ain", "Al Dhafra"];
+                var aqiLvlInlineSector = aqiLvlSectors.FirstOrDefault(s => lowerMsg.Contains(s.ToLowerInvariant()));
+                // "school" / "schools" in the message → Public & Govt-School sector
+                if (aqiLvlInlineSector is null && (lowerMsg.Contains("school") || lowerMsg.Contains("schools")))
+                    aqiLvlInlineSector = "Public & Govt-School";
+                var aqiLvlInlineRegion = aqiLvlRegions.FirstOrDefault(r => lowerMsg.Contains(r.ToLowerInvariant()));
+                if (aqiLvlInlineSector is not null) aqiLvlInlineParams["sectorName"] = aqiLvlInlineSector;
+                if (aqiLvlInlineRegion is not null) aqiLvlInlineParams["regionName"] = aqiLvlInlineRegion;
+                var aqiLvlResult = await _externalApi.CallAsync(aqiLvlTemplate.ApiCall, aqiLvlInlineParams, scope, aqiLvlBearer, user, aqiLvlTemplate.Id, ct);
                 if (aqiLvlResult.Success)
                 {
                     var aqiLvlMsgId = Guid.NewGuid();
-                    var aqiLvlSummary = await _azureAI.SummarizeResultsAsync(request.Message, aqiLvlTemplate, aqiLvlResult.Rows, scope, ct);
+                    string aqiLvlSummary;
+                    if (aqiLvlResult.Rows.Count == 0)
+                    {
+                        var noDataSector = aqiLvlInlineParams.GetValueOrDefault("sectorName") ?? scope.Sector;
+                        var noDataRegion = aqiLvlInlineParams.GetValueOrDefault("regionName") ?? scope.Region;
+                        var noDataParts = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(noDataSector)) noDataParts.Add(noDataSector);
+                        if (!string.IsNullOrWhiteSpace(noDataRegion)) noDataParts.Add(noDataRegion);
+                        var noDataContext = noDataParts.Count > 0 ? $" for {string.Join(", ", noDataParts)}" : "";
+                        aqiLvlSummary = $"There are no active sites{noDataContext} with AQI data available at this time.";
+                    }
+                    else
+                        aqiLvlSummary = await _azureAI.SummarizeResultsAsync(request.Message, aqiLvlTemplate, aqiLvlResult.Rows, scope, ct);
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId, userContent: request.Message,
                         assistantMessageId: aqiLvlMsgId, assistantContent: aqiLvlSummary,
@@ -6454,6 +6489,21 @@ public sealed class ChatController : ControllerBase
 
             "dust_event_response" or "indoor_source_analysis" =>
                 "I couldn't find any results for that site and date. This can happen if: (1) the site name doesn't exactly match a registered site, (2) the site has no GPS coordinates configured (required for nearest ambient station lookup), or (3) no daily average data exists for that date. Please verify the site name and date, then try again. Example: \"How did indoor air quality at Al Reyada School respond during the dust event on 2026-03-15?\"",
+
+            "sites_dsr_above_threshold" =>
+                "No sites were found with a Data Success Rate above that threshold. This means all monitored sites currently have a DSR below the specified percentage. Try lowering the threshold (e.g. above 50%) to see more results.",
+
+            "sites_dsr_below_threshold" =>
+                "No sites were found with a Data Success Rate below that threshold. This is a positive sign — all monitored sites are currently meeting or exceeding the specified data availability percentage.",
+
+            "schools_aqi_pie" or "sites_aqi_level_chart" =>
+                sector != null && region != null
+                    ? $"No {sector} sites with active devices were found in {region}. The pie chart cannot be generated without data — please check that devices are online in that region."
+                    : sector != null
+                        ? $"No {sector} sites with active devices were found. The pie chart cannot be generated without data."
+                        : region != null
+                            ? $"No school or site data was found for {region}. The pie chart cannot be generated — devices in that region may be offline or not yet reporting."
+                            : "No site data is available to generate the pie chart. Devices may be offline or still syncing. Please try again shortly.",
 
             _ =>
                 "I couldn't find any results for that query. Try widening the date range, choosing a different site, or rephrasing your question."

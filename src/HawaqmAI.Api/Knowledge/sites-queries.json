@@ -2560,7 +2560,7 @@
           "source": "question",
           "optional": true,
           "default": null,
-          "note": "Filter by sector. Extract from question: 'school' or 'education' maps to 'Education', 'health' or 'healthcare' maps to 'Healthcare', 'residential' maps to 'Residential', etc. Leave null for all sectors."
+          "note": "Filter by sector using exact DB values. 'school', 'schools', 'school sites' maps to 'Public & Govt-School'. 'health' or 'healthcare' maps to 'Healthcare'. 'residential' maps to 'Residential'. 'commercial' maps to 'Commercial'. Leave null when question asks about all sectors or does not specify a sector."
         },
         {
           "name": "regionName",
@@ -2639,7 +2639,7 @@
           "source": "question",
           "optional": true,
           "default": null,
-          "note": "Filter by sector. Extract from question: 'school' or 'education' maps to 'Education', 'health' or 'healthcare' maps to 'Healthcare', 'residential' maps to 'Residential', etc. Leave null for all sectors."
+          "note": "Filter by sector using exact DB values. 'school', 'schools', 'school sites' maps to 'Public & Govt-School'. 'health' or 'healthcare' maps to 'Healthcare'. 'residential' maps to 'Residential'. 'commercial' maps to 'Commercial'. Leave null when question asks about all sectors or does not specify a sector."
         },
         {
           "name": "regionName",
