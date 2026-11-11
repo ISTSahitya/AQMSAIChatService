@@ -3084,20 +3084,20 @@ public sealed class ExternalApiService : IExternalApiService
         double? indoorLng = null, indoorLat = null;
         try
         {
-            // DMN_Stations: CoordinateX = Latitude (~24°N), CoordinateY = Longitude (~54-56°E)
-            // Confirmed from ParametersDAL.cs line 5738: Latitude = CoordinateX, Longitude = CoordinateY
+            // DMN_Stations: CoordinateY = Latitude (~24°N), CoordinateX = Longitude (~54-56°E)
+            // Verified via Google Maps: CoordinateY values ~24 = Latitude, CoordinateX values ~54-56 = Longitude
             // Use matched.StationName (resolved DB name) so the LIKE search hits the correct row
             // even when the user typed a partial name like "Al Saad School" → "Al Saad Indian School".
             var resolvedName = matched.StationName.Replace("'", "''");
             var coordSql = $"""
-                SELECT TOP 1 TRY_CAST(CoordinateX AS FLOAT) AS Lat, TRY_CAST(CoordinateY AS FLOAT) AS Lng
+                SELECT TOP 1 TRY_CAST(CoordinateY AS FLOAT) AS Lat, TRY_CAST(CoordinateX AS FLOAT) AS Lng
                 FROM DMN_Stations
                 WHERE StationName LIKE '%{resolvedName}%'
                   AND ISNULL(IsDeleted, 0) = 0
-                  AND TRY_CAST(CoordinateX AS FLOAT) IS NOT NULL
                   AND TRY_CAST(CoordinateY AS FLOAT) IS NOT NULL
-                  AND TRY_CAST(CoordinateX AS FLOAT) <> 0
+                  AND TRY_CAST(CoordinateX AS FLOAT) IS NOT NULL
                   AND TRY_CAST(CoordinateY AS FLOAT) <> 0
+                  AND TRY_CAST(CoordinateX AS FLOAT) <> 0
                 """;
             var coordResult = await _sqlExecutor.ExecuteAsync(coordSql, new Dictionary<string, object>(), ct);
             if (coordResult.Rows.Count > 0)
