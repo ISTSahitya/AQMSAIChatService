@@ -4562,9 +4562,10 @@ public sealed class ChatController : ControllerBase
             "respond during the dust event", "how did indoor air quality"
         };
         var dustKeywords = new[] { "dust event", "dust storm", "sandstorm" };
+        bool hasDustKeyword = dustKeywords.Any(k => lowerMsg.Contains(k));
         bool isIndoorAmbientHistorical = hasAtSiteRef
-            && indoorHistoricalKeywords.Any(k => lowerMsg.Contains(k))
-            && (msgHasPastDate || dustKeywords.Any(k => lowerMsg.Contains(k)));
+            && (indoorHistoricalKeywords.Any(k => lowerMsg.Contains(k)) || hasDustKeyword)
+            && (msgHasPastDate || hasDustKeyword);
 
         if (msgHasPastDate && msgHasSiteRef && !msgHasDeviceCode && !isIndoorAmbientHistorical && !isAmbientStationQuery
             && routeResult.Template?.Id is "site_aqi_single" or "site_readings_all" or "main_pollutant_at_station"
