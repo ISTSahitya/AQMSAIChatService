@@ -117,11 +117,14 @@ public sealed class ChatController : ControllerBase
             "above site", "above school", "above device", "above station",
             "that site", "that school", "that device", "that station",
             "this site", "this school", "this device", "this station",
-            "the site", "the school", "the device", "the station",
             "previous site", "previous school", "previous device",
             "same site", "same school", "same device",
-            "above", "that one", "this one", "it ", " it?", "the same"
+            "that one", "this one", " it?", "the same"
         };
+        // Excluded from above: "the site", "the school", "the device", "the station", "above", "it "
+        // These single-word/short phrases match far too many normal queries ("show me the school
+        // sites AQI", "sites above 75%") and corrupt enrichedMessage with the previous turn's
+        // content, causing mis-routing. Only compound referential phrases are safe triggers.
         var msgLower = enrichedMessage.ToLowerInvariant();
         bool isReferentialFollowUp = followUpReferenceWords.Any(w => msgLower.Contains(w))
             && history.Count > 0;
@@ -1367,6 +1370,78 @@ public sealed class ChatController : ControllerBase
                 lowerMsg.Contains("at least") || lowerMsg.Contains("at most") || lowerMsg.Contains("poor") ||
                 lowerMsg.Contains("low") || lowerMsg.Contains("high") || lowerMsg.Contains("good") ||
                 lowerMsg.Contains("bad") || lowerMsg.Contains("failing") || lowerMsg.Contains("failed"));
+
+        // ── 2d-pre-dsr-list. Hard pre-check: DSR site-list query → force sites_dsr_above/below_threshold ──
+        // "List out all school sites with a Data Success Rate Above 75%" must route here before the LLM
+        // can mis-select a site listing template (e.g. site_aqi_by_category). Fires when hasDsrSiteListSignal
+        // is true so the same logic used in the post-routing override is applied up-front.
+        // Skip DSR pre-check when user explicitly asked for a pie/bar chart — the chart pre-check
+        // (isSchoolsAqiPie / isAqiLevelChart) handles those and must take priority.
+        if (hasDsrSiteListSignal && !hasDsrExceedanceSignal && !userAskedForChart)
+        {
+            bool isAboveDsrPre = lowerMsg.Contains("above") || lowerMsg.Contains("at least") || lowerMsg.Contains("more than")
+                || lowerMsg.Contains("greater than") || lowerMsg.Contains("higher than") || lowerMsg.Contains("over")
+                || lowerMsg.Contains("good dsr") || lowerMsg.Contains("high dsr");
+            var dsrPreTemplateId = isAboveDsrPre ? "sites_dsr_above_threshold" : "sites_dsr_below_threshold";
+            _log.Debug("ChatController: DSR site-list pre-check fired → forcing {Template}", dsrPreTemplateId);
+            var dsrPreTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == dsrPreTemplateId);
+            if (dsrPreTemplate is not null)
+            {
+                var dsrPreFill = await _azureAI.FillParametersAsync(enrichedMessage, dsrPreTemplate, history, scope, ct);
+                if (!dsrPreFill.Parameters.ContainsKey("dsrThreshold")) dsrPreFill.Parameters["dsrThreshold"] = "75";
+                if (!dsrPreFill.Parameters.ContainsKey("sectorName") && (lowerMsg.Contains("school") || lowerMsg.Contains("schools")))
+                    dsrPreFill.Parameters["sectorName"] = "Public & Govt-School";
+                else if (!dsrPreFill.Parameters.ContainsKey("sectorName") && lowerMsg.Contains("commercial"))
+                    dsrPreFill.Parameters["sectorName"] = "Commercial";
+                else if (!dsrPreFill.Parameters.ContainsKey("sectorName") && (lowerMsg.Contains("residential") || lowerMsg.Contains("residence")))
+                    dsrPreFill.Parameters["sectorName"] = "Residential";
+                if (!dsrPreFill.Parameters.ContainsKey("regionName"))
+                {
+                    if (lowerMsg.Contains("abu dhabi")) dsrPreFill.Parameters["regionName"] = "Abu Dhabi";
+                    else if (lowerMsg.Contains("al ain")) dsrPreFill.Parameters["regionName"] = "Al Ain";
+                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra")) dsrPreFill.Parameters["regionName"] = "Al Dhafra";
+                }
+                var (dsrPreSafeSql, dsrPreSqlParams) = _rbac.BuildSafeQuery(dsrPreTemplate, dsrPreFill.Parameters, user, scope);
+                var (dsrPreSqlValid, _) = SqlValidator.Validate(dsrPreSafeSql);
+                if (dsrPreSqlValid)
+                {
+                    var dsrPreResult = await _sqlExecutor.ExecuteAsync(dsrPreSafeSql, dsrPreSqlParams, ct);
+                    if (dsrPreResult.Success)
+                    {
+                        var dsrPreMsgId = Guid.NewGuid();
+                        var dsrPreRows = dsrPreResult.Rows;
+                        string dsrPreSummary;
+                        if (dsrPreRows.Count == 0)
+                        {
+                            dsrPreSummary = isAboveDsrPre
+                                ? "No sites were found with a Data Success Rate above that threshold. This means all monitored sites currently have a DSR below the specified percentage. Try lowering the threshold (e.g. above 50%) to see more results."
+                                : "No sites were found with a Data Success Rate below that threshold. This is a positive sign — all monitored sites are currently meeting or exceeding the specified data availability percentage.";
+                        }
+                        else
+                        {
+                            var dsrPreSummaryRows = await _azureAI.SummarizeResultsAsync(request.Message, dsrPreTemplate, dsrPreRows, scope, ct);
+                            dsrPreSummary = dsrPreSummaryRows;
+                        }
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId, userContent: request.Message,
+                            assistantMessageId: dsrPreMsgId, assistantContent: dsrPreSummary,
+                            sql: null, responseType: dsrPreRows.Count == 0 ? "text" : dsrPreTemplate.ResponseType,
+                            chartType: null, chartDataJson: SerializeRowsForHistory(dsrPreTemplate.ResponseType, dsrPreRows),
+                            dataSource: dsrPreTemplate.TableUsed, dateRange: null,
+                            modelUsed: dsrPreFill.ModelUsed, executionTimeMs: (int)dsrPreResult.ExecutionTimeMs,
+                            tokenCount: dsrPreFill.TokensUsed, ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(session.SessionId, dsrPreMsgId, dsrPreTemplate,
+                            dsrPreSummary, dsrPreRows, dsrPreRows.Count,
+                            (int)dsrPreResult.ExecutionTimeMs, scope, dsrPreFill.ModelUsed, dsrPreFill.TokensUsed));
+                    }
+                    _log.Warning("ChatController: DSR site-list pre-check SQL failed — falling through to routing");
+                }
+                else
+                    _log.Warning("ChatController: DSR site-list pre-check SQL invalid — falling through to routing");
+            }
+        }
 
         // ── 2d-pre0. Hard pre-check: numeric AQI threshold query → force site_aqi_by_category ──
         // Fires for questions like:
@@ -2794,7 +2869,8 @@ public sealed class ChatController : ControllerBase
         };
         // Also catch "pie chart aqi ..." and "... aqi in pie chart" patterns (must have explicit chart word to avoid grabbing plain AQI queries)
         bool hasPieOrBarWord = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph") || lowerMsg.Contains("in pie") || lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph");
-        bool isAqiLevelChart = aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k))
+        // Exclude school queries from both conditions — school AQI pie is handled by isSchoolsAqiPie above.
+        bool isAqiLevelChart = (aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k)) && !lowerMsg.Contains("school") && !lowerMsg.Contains("moe"))
             || (hasPieOrBarWord && lowerMsg.Contains("aqi") && !lowerMsg.Contains("school") && !lowerMsg.Contains("moe"));
 
         if (isAqiLevelChart)
@@ -2834,7 +2910,20 @@ public sealed class ChatController : ControllerBase
                         aqiLvlSummary = $"There are no active sites{noDataContext} with AQI data available at this time.";
                     }
                     else
-                        aqiLvlSummary = await _azureAI.SummarizeResultsAsync(request.Message, aqiLvlTemplate, aqiLvlResult.Rows, scope, ct);
+                    {
+                        var aqiLvlTotal = aqiLvlResult.Rows.Sum(r =>
+                            r.TryGetValue("Count", out var cv) && cv is int ci ? ci
+                            : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
+                        var aqiLvlSector = aqiLvlInlineParams.GetValueOrDefault("sectorName") ?? scope.Sector;
+                        var aqiLvlRegion = aqiLvlInlineParams.GetValueOrDefault("regionName") ?? scope.Region;
+                        var aqiLvlContextParts = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(aqiLvlSector)) aqiLvlContextParts.Add(aqiLvlSector);
+                        if (!string.IsNullOrWhiteSpace(aqiLvlRegion)) aqiLvlContextParts.Add(aqiLvlRegion);
+                        var aqiLvlContext = aqiLvlContextParts.Count > 0
+                            ? $" in {string.Join(", ", aqiLvlContextParts)}"
+                            : "";
+                        aqiLvlSummary = $"There are a total of {aqiLvlTotal} active sites{aqiLvlContext} across all AQI categories. The chart below shows the breakdown.";
+                    }
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId, userContent: request.Message,
                         assistantMessageId: aqiLvlMsgId, assistantContent: aqiLvlSummary,
