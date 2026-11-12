@@ -580,6 +580,10 @@ public sealed class ExternalApiService : IExternalApiService
             if (apiCall.ResponseShape == "compliance_stats")
             {
                 var rows2 = ParseComplianceStatsRows(json);
+                // Inject the year used in the API call so the LLM formatter can reference it accurately
+                var yearUsed = llmParams.GetValueOrDefault("year") ?? DateTime.UtcNow.Year.ToString();
+                foreach (var row in rows2)
+                    row["Year"] = yearUsed;
                 _log.Debug("ExternalApiService: compliance_stats → {Count} rows", rows2.Count);
                 return new ApiCallResult { Success = true, Rows = rows2, ExecutionTimeMs = sw.ElapsedMilliseconds };
             }
@@ -617,10 +621,12 @@ public sealed class ExternalApiService : IExternalApiService
                 _log.Information("ExternalApiService: aqi_category_pie — sector='{Sec}' region='{Reg}'",
                     pieSector ?? "(none)", pieRegion ?? "(none)");
 
-                // Reuse BuildAqiCategoryRows without category filter to get all sites.
+                // Reuse BuildAqiCategoryRows without category filter to get all active sites.
                 // Pass null for user to skip RBAC — schools_aqi_pie has skipSiteFilter=true
                 // so it must show ALL school sites, not just the user's permitted subset.
-                var (allSiteRows, dbPieSiteCount) = await BuildAqiCategoryRows(json, null, pieSector, null, ct, pieRegion);
+                // liveStatusFilter="Active": pie chart must count only active sites, matching
+                // the Live Status table which defaults to Active-only filtering.
+                var (allSiteRows, dbPieSiteCount) = await BuildAqiCategoryRows(json, null, pieSector, null, ct, pieRegion, liveStatusFilter: "Active");
 
                 // Aggregate by AQI category in display order
                 var categoryOrder = new[]
@@ -1132,30 +1138,8 @@ public sealed class ExternalApiService : IExternalApiService
                 rows = Flatten(json, apiCall.ResponseShape, regionFilter);
             }
 
-            // For region_aqi: override ActiveStationsCount with the live-cache count (24h recency)
-            // because the GetRegionGeographicalDataAQI API counts Status==1 sites (a static DB flag),
-            // while the site cache applies the same 24h communication cutoff as the web UI.
-            if (apiCall.ResponseShape == "region_aqi")
-            {
-                var cacheJson = _siteDataCache.GetRawJson();
-                if (!string.IsNullOrEmpty(cacheJson))
-                {
-                    var liveRows = BuildRegionAqiLiveRows(cacheJson, null); // all regions, no filter
-                    var liveCountsByRegion = liveRows
-                        .Where(r => r.TryGetValue("RegionName", out var rn) && rn is string)
-                        .ToDictionary(
-                            r => r["RegionName"]!.ToString()!,
-                            r => r.TryGetValue("ActiveStationsCount", out var c) ? c : null,
-                            StringComparer.OrdinalIgnoreCase);
-
-                    foreach (var row in rows)
-                    {
-                        if (row.TryGetValue("RegionName", out var rn) && rn is string regionName
-                            && liveCountsByRegion.TryGetValue(regionName, out var liveCount))
-                            row["ActiveStationsCount"] = liveCount;
-                    }
-                }
-            }
+            // ActiveStationsCount comes directly from GetRegionGeographicalDataAQI (Status==1 sites),
+            // which matches the site count displayed on the Executive Dashboard map.
 
             // For device_latest: filter to requested parameter if user asked for a specific one
             if (apiCall.ResponseShape == "device_latest")

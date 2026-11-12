@@ -527,6 +527,42 @@ public sealed class QueryRouterService : IQueryRouterService
         if (isDeviceStatusQ)
             return template.Id == "device_status" ? 1.15 : 0.0;
 
+        // ── HARD OVERRIDE: specific device name + "reading" (no status/date) → device_live_reading ─
+        // "what is the device reading of BA 001?", "reading for BA 0010", "device reading SEI100M 0014"
+        // must ALWAYS route to device_live_reading — the LLM sometimes picks site templates instead.
+        // Guard: skip if status keywords are present (those go to device_status above) or
+        // if historical time references are present (those should go to device_reading_history).
+        var deviceReadingKeywords = new[] { "reading", "readings", "read" };
+        var historicalTimeWords = new[] {
+            "yesterday", "last hour", "last day", "last week", "last month", "last year",
+            "this morning", "this week", "this month", "last 24", "last 48",
+            "hourly", "daily", "monthly", "yearly", "annual", "5 min", "5min",
+            "history", "historical", "interval", "average", "avg"
+        };
+        bool isDeviceLiveReadingQ = QuestionHasDeviceName(lowerQuestion)
+            && deviceReadingKeywords.Any(k => lowerQuestion.Contains(k))
+            && !DeviceStatusKeywords.Any(k => lowerQuestion.Contains(k))
+            && !historicalTimeWords.Any(k => lowerQuestion.Contains(k))
+            && !_specificDateRegex.IsMatch(lowerQuestion);
+        if (isDeviceLiveReadingQ)
+            return template.Id == "device_live_reading" ? 1.15 : 0.0;
+
+        // ── HARD OVERRIDE: "longest without data/silent/offline" → device_longest_silent ─
+        // "which device has gone the longest without sending data in Al Ain?" must ALWAYS
+        // route to device_longest_silent — even when a region or sector is mentioned.
+        // The LLM sometimes confuses region keywords (Al Ain, Abu Dhabi) with region queries.
+        var longestSilentPhrases = new[] {
+            "longest without", "longest without data", "longest without sending",
+            "gone the longest", "been silent the longest", "offline the longest",
+            "inactive the longest", "without data the longest", "without data longest",
+            "sent data the longest", "sending data the longest",
+            "longest time without", "longest gap", "been without data",
+            "device silent", "most silent", "went offline first", "stopped sending"
+        };
+        bool isLongestSilentQ = longestSilentPhrases.Any(p => lowerQuestion.Contains(p));
+        if (isLongestSilentQ)
+            return template.Id == "device_longest_silent" ? 1.15 : 0.0;
+
         // ── HARD OVERRIDE: bad air / poor air quality → site_aqi_by_category ─
         // "bad air right now", "schools with bad air" etc. must never route to
         // sector_stations (lists ALL stations) — force the AQI category filter instead.

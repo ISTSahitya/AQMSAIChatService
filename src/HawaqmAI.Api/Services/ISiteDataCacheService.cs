@@ -2,9 +2,8 @@ namespace HawaqmAI.Api.Services;
 
 /// <summary>
 /// Singleton cache for GetAllSiteData API responses.
-/// Populated on the first real user request and kept warm every 5 minutes
-/// if AqmsApi:ServiceToken is configured, otherwise refreshed opportunistically
-/// from user requests via UpdateCache().
+/// Populated at app startup by the background service (no token needed — endpoint is public)
+/// and refreshed every 5 minutes continuously.
 /// </summary>
 public interface ISiteDataCacheService
 {
@@ -26,7 +25,7 @@ public interface ISiteDataCacheService
     SiteDataCacheInfo GetCacheInfo();
 
     /// <summary>
-    /// Forces an immediate cache refresh (requires AqmsApi:ServiceToken to be set).
+    /// Forces an immediate cache refresh.
     /// Returns true if the refresh succeeded.
     /// </summary>
     Task<bool> ForceRefreshAsync(CancellationToken ct = default);

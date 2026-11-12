@@ -2230,16 +2230,17 @@ public sealed class ChatController : ControllerBase
                 if (pieApiResult.Success)
                 {
                     var pieMsgId = Guid.NewGuid();
-                    // Prefer DB total (all sector sites) over pie-row sum (only sites with live AQI readings)
-                    // so the count matches the actual application site count.
-                    var pieTotalSites = pieApiResult.TotalSiteCount
-                        ?? pieApiResult.Rows.Sum(r => r.TryGetValue("Count", out var cv) && cv is int ci ? ci : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
-                    var pieSectorLabel = pieFillResult.Parameters.GetValueOrDefault("sectorName")
-                                     ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : "MOE (Public & Government)");
+                    // Sum the pie rows (active sites only) — DB total includes all sites regardless of live status.
+                    var pieTotalSites = pieApiResult.Rows.Sum(r => r.TryGetValue("Count", out var cv) && cv is int ci ? ci : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
+                    var pieSectorParam = pieFillResult.Parameters.GetValueOrDefault("sectorName")
+                                      ?? (!string.IsNullOrWhiteSpace(scope.Sector) ? scope.Sector : null);
                     var pieRegionLabel = pieFillResult.Parameters.GetValueOrDefault("regionName");
+                    bool isSchoolPie = pieSectorParam != null &&
+                        pieSectorParam.Contains("School", StringComparison.OrdinalIgnoreCase);
+                    string siteLabel = isSchoolPie ? "Public & Govt-School school" : "active";
                     var pieSummary = string.IsNullOrWhiteSpace(pieRegionLabel)
-                        ? $"There are a total of {pieTotalSites} {pieSectorLabel} school sites across all AQI categories. The chart below shows the breakdown."
-                        : $"There are a total of {pieTotalSites} {pieSectorLabel} school sites in {pieRegionLabel} across all AQI categories. The chart below shows the breakdown.";
+                        ? $"There are a total of {pieTotalSites} {siteLabel} sites across all AQI categories. The chart below shows the breakdown."
+                        : $"There are a total of {pieTotalSites} {siteLabel} sites in {pieRegionLabel} across all AQI categories. The chart below shows the breakdown.";
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
                         userContent: request.Message,

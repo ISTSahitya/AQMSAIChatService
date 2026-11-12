@@ -10,11 +10,12 @@ namespace HawaqmAI.Api.Services;
 /// Background singleton that caches the GetAllSiteData API response.
 ///
 /// Refresh strategy:
-///   1. On each real user request ExternalApiService calls UpdateCache() with the live JSON —
-///      so the cache is seeded from the first successful user call (no ServiceToken needed).
-///   2. If AqmsApi:ServiceToken is configured the background loop also refreshes every 5 min
-///      independently of user traffic, keeping the cache warm overnight or during idle periods.
-///   3. If no ServiceToken the background loop is a no-op — the cache stays warm from user traffic.
+///   1. On startup the background loop immediately calls GetAllSiteData — no ServiceToken required
+///      because the AQMS endpoint is unauthenticated. This eliminates cold-cache on first morning query.
+///   2. The loop then refreshes every CacheRefreshIntervalMinutes (default 5 min) continuously.
+///   3. On each real user request ExternalApiService also calls UpdateCache() with the live JSON
+///      as an additional keep-warm mechanism.
+///   4. If AqmsApi:ServiceToken is configured it is sent as Bearer on background calls (optional).
 /// </summary>
 public sealed class SiteDataCacheService : BackgroundService, ISiteDataCacheService
 {
@@ -90,15 +91,14 @@ public sealed class SiteDataCacheService : BackgroundService, ISiteDataCacheServ
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // GetAllSiteData requires no authentication — always warm the cache on startup
+        // regardless of whether ServiceToken is configured.
         if (string.IsNullOrWhiteSpace(_options.ServiceToken))
-        {
-            _log.Information("SiteDataCache: no ServiceToken configured — background refresh disabled. Cache will be seeded from user requests.");
-            return;
-        }
+            _log.Information("SiteDataCache: no ServiceToken configured — running unauthenticated background refresh (GetAllSiteData is public).");
 
         _log.Information("SiteDataCache: background refresh started (interval={Min} min)", _options.CacheRefreshIntervalMinutes);
 
-        // Initial populate
+        // Initial populate on startup — fixes cold-cache on first morning query
         await RefreshAsync(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
