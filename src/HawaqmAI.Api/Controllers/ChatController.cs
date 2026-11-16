@@ -351,7 +351,7 @@ public sealed class ChatController : ControllerBase
             "what aqi value is hazardous", "what aqi value is very unhealthy",
             // calculation / general — only definition questions, NOT "show sites by aqi category"
             "how is aqi calculated", "how is site aqi calculated",
-            "aqi classification", "aqi category breakdown",
+            "aqi classification",
             "what are the aqi categories", "what are the aqi levels", "what are aqi categories", "what are aqi levels",
             "aqi scale", "aqi meaning", "what does aqi mean",
             "explain aqi", "explain the aqi", "aqi explained",
@@ -861,7 +861,10 @@ public sealed class ChatController : ControllerBase
             "schools in very unhealthy", "schools in sensitive"
         };
         bool isSiteListAqiQuestion = siteListIndicators.Any(k => lowerMsg.Contains(k));
-        if (!isSiteSafetyQuestion && !isSiteListAqiQuestion && aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k)))
+        // Never send chart/pie/breakdown questions to FAQ — they need data, not definitions.
+        bool isFaqChartBypass = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph")
+            || lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph") || lowerMsg.Contains("in pie");
+        if (!isSiteSafetyQuestion && !isSiteListAqiQuestion && !isFaqChartBypass && aqiRangeDefinitionKeywords.Any(k => lowerMsg.Contains(k)))
         {
             _log.Debug("ChatController: AQI range-definition pre-check fired → forcing faq_answer");
             var faqTemplatePre = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "faq_answer");
@@ -1076,7 +1079,9 @@ public sealed class ChatController : ControllerBase
         var hasSiteWord = new[] { "school", "site", "station", "building", "facility", "reyada", "saad", "naeem", "bateen", "kaltham", "gems", "residential", "commercial" }.Any(s => lowerMsg.Contains(s));
         var hasSectorWord = new[] { "sector", "commercial", "residential", "public", "govt", "government" }.Any(s => lowerMsg.Contains(s));
         bool hasDeviceName = hasDeviceNameInMsg;
-        bool isGenericAqiRequest = genericAqiTriggers.Any(t => lowerMsg.Contains(t)) && !hasRegionWord && !hasSiteWord && !hasSectorWord && !hasDeviceName && !hasAtSitePattern;
+        // Exclude chart/category/breakdown questions — these are always answerable without clarification
+        bool isChartOrCategoryQuestion = lowerMsg.Contains("pie") || lowerMsg.Contains("chart") || lowerMsg.Contains("categor") || lowerMsg.Contains("breakdown") || lowerMsg.Contains("distribution");
+        bool isGenericAqiRequest = genericAqiTriggers.Any(t => lowerMsg.Contains(t)) && !hasRegionWord && !hasSiteWord && !hasSectorWord && !hasDeviceName && !hasAtSitePattern && !isChartOrCategoryQuestion;
 
         if (isGenericAqiRequest)
         {
@@ -1106,14 +1111,26 @@ public sealed class ChatController : ControllerBase
                 var regionAqiBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
                 var regionAqiFill = await _azureAI.FillParametersAsync(request.Message, regionAqiTemplate, history, scope, ct);
 
-                // Ensure regionName is injected if LLM missed it
-                if (!regionAqiFill.Parameters.ContainsKey("regionName") || string.IsNullOrWhiteSpace(regionAqiFill.Parameters.GetValueOrDefault("regionName")))
+                // Ensure regionName is set correctly.
+                // If the question mentions more than one region, clear regionName so the API returns all regions.
+                // If only one region is mentioned, inject it if the LLM missed it.
+                bool aqiMsgHasAbuDhabi  = lowerMsg.Contains("abu dhabi")  || lowerMsg.Contains("abudhabi");
+                bool aqiMsgHasAlAin     = lowerMsg.Contains("al ain")     || lowerMsg.Contains("alain");
+                bool aqiMsgHasAlDhafra  = lowerMsg.Contains("al dhafra")  || lowerMsg.Contains("aldhafra") || lowerMsg.Contains("dhafra");
+                int  aqiRegionCount     = (aqiMsgHasAbuDhabi ? 1 : 0) + (aqiMsgHasAlAin ? 1 : 0) + (aqiMsgHasAlDhafra ? 1 : 0);
+
+                if (aqiRegionCount > 1)
                 {
-                    if (lowerMsg.Contains("abu dhabi") || lowerMsg.Contains("abudhabi"))
+                    // Multiple regions mentioned — clear regionName so all regions are returned
+                    regionAqiFill.Parameters.Remove("regionName");
+                }
+                else if (!regionAqiFill.Parameters.ContainsKey("regionName") || string.IsNullOrWhiteSpace(regionAqiFill.Parameters.GetValueOrDefault("regionName")))
+                {
+                    if (aqiMsgHasAbuDhabi)
                         regionAqiFill.Parameters["regionName"] = "Abu Dhabi";
-                    else if (lowerMsg.Contains("al ain") || lowerMsg.Contains("alain"))
+                    else if (aqiMsgHasAlAin)
                         regionAqiFill.Parameters["regionName"] = "Al Ain";
-                    else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("aldhafra") || lowerMsg.Contains("dhafra"))
+                    else if (aqiMsgHasAlDhafra)
                         regionAqiFill.Parameters["regionName"] = "Al Dhafra";
                 }
 
@@ -1267,13 +1284,19 @@ public sealed class ChatController : ControllerBase
         var schoolSiteWords  = new[] { "school", "schools", "sites", "site" };
         var explicitChartWords = new[] { "pie chart", "pie graph", "bar chart", "bar graph", "plot a pie", "plot pie", "donut chart", "doughnut chart", "chart of schools", "chart of sites" };
         bool userAskedForChart = explicitChartWords.Any(k => lowerMsg.Contains(k));
-        // Only treat as a schools-specific AQI pie when the user explicitly mentioned "school" or "schools".
-        // Generic "sites" queries (e.g. "show me the sites AQI categories in pie chart") must NOT route here.
         bool mentionsSchoolExplicitly = lowerMsg.Contains("school") || lowerMsg.Contains("schools");
-        bool isSchoolsAqiPie = userAskedForChart
+        // Case 1: User mentions school/site + AQI + chart word → schools_aqi_pie
+        bool isSchoolsAqiPieCase1 = userAskedForChart
             && (aqiCategoryWords.Any(k => lowerMsg.Contains(k)) || lowerMsg.Contains("aqi") || lowerMsg.Contains("air quality"))
             && schoolSiteWords.Any(k => lowerMsg.Contains(k))
             && mentionsSchoolExplicitly;
+        // Case 2: User asks for AQI categories/distribution/breakdown in a pie chart (without specifying school/site) —
+        // e.g. "Show me the AQI categories in pie chart", "AQI category breakdown for Al Ain in pie chart".
+        // These should show AQI distribution across all active sites → schools_aqi_pie (no sectorName filter).
+        bool isAqiCategoryPieChart = userAskedForChart
+            && (aqiCategoryWords.Any(k => lowerMsg.Contains(k))
+                || (lowerMsg.Contains("aqi") && (lowerMsg.Contains("breakdown") || lowerMsg.Contains("distribution") || lowerMsg.Contains("categor"))));
+        bool isSchoolsAqiPie = isSchoolsAqiPieCase1 || isAqiCategoryPieChart;
         // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
         var deviceCountKeywords = new[] { "devices per site", "device per site", "devices at each site", "number of devices", "device count", "total devices", "devices in the application", "devices in the system" };
         bool isDeviceCountQuestion = deviceCountKeywords.Any(k => lowerMsg.Contains(k));
@@ -2250,11 +2273,12 @@ public sealed class ChatController : ControllerBase
             }
         }
 
-        // ── 2e-pre. Hard pre-check: schools-by-AQI-category pie → force schools_aqi_pie ──
-        // "Create a pie chart of schools by AQI category" scores 1.0 on schools_latest_pollutant
-        // because of the word "schools". Only intercept when BOTH a school/site word AND an AQI
-        // category word are present — generic pie charts (by region, sector, count) fall through
-        // to normal routing so the LLM can pick the right template.
+        // ── 2e-pre. Hard pre-check: AQI-category pie → force schools_aqi_pie ──
+        // Covers two cases:
+        //   Case 1: "Create a pie chart of schools by AQI category" (school word + AQI + chart word)
+        //   Case 2: "Show me the AQI categories in pie chart", "AQI category breakdown for Al Ain in pie chart"
+        //           (AQI category/breakdown/distribution word + pie/bar chart word, no school required)
+        // Generic pie charts by region/sector/count fall through to normal routing.
         if (isSchoolsAqiPie)
         {
             _log.Debug("ChatController: chart-distribution pre-check fired → forcing schools_aqi_pie");
@@ -2296,9 +2320,12 @@ public sealed class ChatController : ControllerBase
                 {
                     // No AQI data available — return a friendly message instead of a blank chart
                     var regionLabel = pieFillResult.Parameters.GetValueOrDefault("regionName");
+                    var sectorLabel2 = pieFillResult.Parameters.GetValueOrDefault("sectorName");
+                    bool isSchoolNoData = !string.IsNullOrWhiteSpace(sectorLabel2) && sectorLabel2.Contains("School", StringComparison.OrdinalIgnoreCase);
+                    string siteTypeLabel = isSchoolNoData ? "school sites" : "sites";
                     var noDataMsg = string.IsNullOrWhiteSpace(regionLabel)
-                        ? "No current AQI data is available for school sites at this time. Sites may not have active devices reporting readings."
-                        : $"No current AQI data is available for school sites in {regionLabel}. The sites in this region may not have active devices reporting readings right now.";
+                        ? $"No current AQI data is available for {siteTypeLabel} at this time. Sites may not have active devices reporting readings."
+                        : $"No current AQI data is available for {siteTypeLabel} in {regionLabel}. The sites in this region may not have active devices reporting readings right now.";
                     await _sessionService.SaveUserMessageAsync(session.SessionId, request.Message, ct);
                     return Ok(_formatter.FormatError(session.SessionId, noDataMsg, "NO_DATA"));
                 }
@@ -2869,9 +2896,22 @@ public sealed class ChatController : ControllerBase
         };
         // Also catch "pie chart aqi ..." and "... aqi in pie chart" patterns (must have explicit chart word to avoid grabbing plain AQI queries)
         bool hasPieOrBarWord = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph") || lowerMsg.Contains("in pie") || lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph");
+        // Sector/region site chart: "residential sites in Al Ain in bar chart", "commercial sites abu dhabi pie chart"
+        // These have no AQI word but want a chart of sites filtered by sector and/or region.
+        string[] aqiLvlChartSectors = ["residential", "residental", "residantial", "residencial",
+                                         "commercial", "comercial", "commerical", "commercail",
+                                         "industrial", "public & govt-school", "school", "schools"];
+        string[] aqiLvlChartRegions = ["abu dhabi", "abudhabi", "al ain", "alain", "al dhafra", "aldhafra"];
+        bool aqiChartHasSector = aqiLvlChartSectors.Any(s => lowerMsg.Contains(s));
+        bool aqiChartHasRegion = aqiLvlChartRegions.Any(r => lowerMsg.Contains(r));
+        bool isSectorOrRegionSiteChart = hasPieOrBarWord
+            && (lowerMsg.Contains("site") || lowerMsg.Contains("sites") || lowerMsg.Contains("station") || lowerMsg.Contains("stations"))
+            && (aqiChartHasSector || aqiChartHasRegion)
+            && !lowerMsg.Contains("list") && !lowerMsg.Contains("show me sites") && !lowerMsg.Contains("which sites");
         // Exclude school queries from both conditions — school AQI pie is handled by isSchoolsAqiPie above.
         bool isAqiLevelChart = (aqiLevelChartKeywords.Any(k => lowerMsg.Contains(k)) && !lowerMsg.Contains("school") && !lowerMsg.Contains("moe"))
-            || (hasPieOrBarWord && lowerMsg.Contains("aqi") && !lowerMsg.Contains("school") && !lowerMsg.Contains("moe"));
+            || (hasPieOrBarWord && lowerMsg.Contains("aqi") && !lowerMsg.Contains("school") && !lowerMsg.Contains("moe"))
+            || (isSectorOrRegionSiteChart && !lowerMsg.Contains("moe"));
 
         if (isAqiLevelChart)
         {
@@ -2888,10 +2928,17 @@ public sealed class ChatController : ControllerBase
                 string[] aqiLvlSectors = ["Residential", "Industrial", "Commercial", "Public & Govt-School"];
                 string[] aqiLvlRegions = ["Abu Dhabi", "Al Ain", "Al Dhafra"];
                 var aqiLvlInlineSector = aqiLvlSectors.FirstOrDefault(s => lowerMsg.Contains(s.ToLowerInvariant()));
+                // Misspelling / alias fallbacks for sector names
+                if (aqiLvlInlineSector is null && (lowerMsg.Contains("comercial") || lowerMsg.Contains("commerical") || lowerMsg.Contains("commercail")))
+                    aqiLvlInlineSector = "Commercial";
+                if (aqiLvlInlineSector is null && (lowerMsg.Contains("residental") || lowerMsg.Contains("residantial") || lowerMsg.Contains("residencial")))
+                    aqiLvlInlineSector = "Residential";
                 // "school" / "schools" in the message → Public & Govt-School sector
                 if (aqiLvlInlineSector is null && (lowerMsg.Contains("school") || lowerMsg.Contains("schools")))
                     aqiLvlInlineSector = "Public & Govt-School";
-                var aqiLvlInlineRegion = aqiLvlRegions.FirstOrDefault(r => lowerMsg.Contains(r.ToLowerInvariant()));
+                var aqiLvlInlineRegion = aqiLvlRegions.FirstOrDefault(r =>
+                    lowerMsg.Contains(r.ToLowerInvariant()) ||
+                    lowerMsg.Contains(r.Replace(" ", "").ToLowerInvariant()));
                 if (aqiLvlInlineSector is not null) aqiLvlInlineParams["sectorName"] = aqiLvlInlineSector;
                 if (aqiLvlInlineRegion is not null) aqiLvlInlineParams["regionName"] = aqiLvlInlineRegion;
                 var aqiLvlResult = await _externalApi.CallAsync(aqiLvlTemplate.ApiCall, aqiLvlInlineParams, scope, aqiLvlBearer, user, aqiLvlTemplate.Id, ct);
@@ -5395,7 +5442,7 @@ public sealed class ChatController : ControllerBase
             // run one query per region and merge the results.
             var multiRegionTemplates = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "sites_by_filter", "count_sites_in_region",
+                "sites_by_filter", "count_sites_in_region", "site_count",
                 "devices_by_filter", "schools_latest_pollutant", "sector_latest_pollutant"
             };
 
@@ -5404,7 +5451,7 @@ public sealed class ChatController : ControllerBase
                 && !string.IsNullOrWhiteSpace(multiRegionName))
             {
                 var regionNames = multiRegionName
-                    .Split(new[] { " and ", " or ", " & ", ", " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Split(new[] { "|", " and ", " or ", " & ", ", " }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     .Where(r => !string.IsNullOrWhiteSpace(r))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -5437,8 +5484,19 @@ public sealed class ChatController : ControllerBase
                         {
                             foreach (var row in perResult.Rows)
                             {
-                                // Deduplicate by StationName — same site can't appear in two regions
-                                var key = row.GetValueOrDefault("StationName")?.ToString() ?? Guid.NewGuid().ToString();
+                                // For site_count: dedup by RegionName+SectorName (each row is a region+sector aggregate).
+                                // For other templates: dedup by StationName (same site can't appear in two regions).
+                                string key;
+                                if (template.Id == "site_count")
+                                {
+                                    var rn = row.GetValueOrDefault("RegionName")?.ToString() ?? "";
+                                    var sn = row.GetValueOrDefault("SectorName")?.ToString() ?? "";
+                                    key = $"{rn}|{sn}";
+                                }
+                                else
+                                {
+                                    key = row.GetValueOrDefault("StationName")?.ToString() ?? Guid.NewGuid().ToString();
+                                }
                                 if (seenKeys.Add(key))
                                     mergedRows.Add(row);
                             }
@@ -6499,15 +6557,23 @@ public sealed class ChatController : ControllerBase
             var regionParam = llmParams.GetValueOrDefault("regionName") ?? "";
             var sectorParam = llmParams.GetValueOrDefault("sectorName") ?? "";
             var groupByParam = llmParams.GetValueOrDefault("groupBy") ?? "region";
-            bool isRegionBreakdown = string.IsNullOrWhiteSpace(regionParam)
+
+            // Multi-region: regionParam contains pipe-separated region names (e.g. "Abu Dhabi|Al Ain|Al Dhafra")
+            bool isMultiRegionParam = regionParam.Contains('|');
+
+            bool isRegionBreakdown = (string.IsNullOrWhiteSpace(regionParam) || isMultiRegionParam)
                 && string.IsNullOrWhiteSpace(sectorParam)
                 && groupByParam != "sector"
                 && resultRows.Count > 1
                 && resultRows.All(r => r.ContainsKey("RegionName"));
 
             // Detect when the user wants a plain total count with no breakdown
+            // Never treat as total-only when the user named specific regions
+            bool mentionsAnyRegion = lowerMsg.Contains("abu dhabi") || lowerMsg.Contains("al ain")
+                || lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra");
             bool isTotalOnlyQuestion = string.IsNullOrWhiteSpace(regionParam)
                 && string.IsNullOrWhiteSpace(sectorParam)
+                && !mentionsAnyRegion
                 && (lowerMsg.Contains("total number") || lowerMsg.Contains("how many sites") || lowerMsg.Contains("total sites")
                     || lowerMsg.Contains("number of sites") || lowerMsg.Contains("sites registered") || lowerMsg.Contains("registered sites")
                     || lowerMsg.Contains("sites so far") || lowerMsg.Contains("total") && lowerMsg.Contains("sites"))
@@ -6539,23 +6605,29 @@ public sealed class ChatController : ControllerBase
             }
             else if (isRegionBreakdown)
             {
-                // Format: "HAWAQM has 3 regions — Abu Dhabi (133 sites, 87 active), Al Ain (54 sites, 37 active), and Al Dhafra (13 sites, 7 active)."
-                int scTotal = resultRows.Sum(r => int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(), out var n) ? n : 0);
-                var scParts = resultRows.Select(r =>
-                {
-                    var region = r.GetValueOrDefault("RegionName")?.ToString() ?? "";
-                    int sites  = int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(),  out var ts) ? ts : 0;
-                    int active = int.TryParse(r.GetValueOrDefault("ActiveSites")?.ToString(), out var ac) ? ac : 0;
-                    return (region, sites, active);
-                }).ToList();
+                // Group by RegionName and sum — each SQL row is a region+sector combination
+                var byRegion = resultRows
+                    .GroupBy(r => r.GetValueOrDefault("RegionName")?.ToString() ?? "")
+                    .Where(g => !string.IsNullOrWhiteSpace(g.Key))
+                    .Select(g => (
+                        region: g.Key,
+                        sites:  g.Sum(r => int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(),  out var ts) ? ts : 0),
+                        active: g.Sum(r => int.TryParse(r.GetValueOrDefault("ActiveSites")?.ToString(), out var ac) ? ac : 0)
+                    ))
+                    .OrderBy(p => p.region)
+                    .ToList();
 
-                var scCount = scParts.Count;
-                var scLabels = scParts.Select(p => $"{p.region} ({p.sites} sites, {p.active} active)").ToList();
+                int scTotal = byRegion.Sum(p => p.sites);
+                var scCount = byRegion.Count;
+                var scLabels = byRegion.Select(p => $"{p.region}: {p.sites} ({p.active} active)").ToList();
                 string regionList = scLabels.Count == 1 ? scLabels[0]
-                    : scLabels.Count == 2 ? $"{scLabels[0]} and {scLabels[1]}"
+                    : scLabels.Count == 2 ? $"{scLabels[0]}, and {scLabels[1]}"
                     : $"{string.Join(", ", scLabels.Take(scLabels.Count - 1))}, and {scLabels.Last()}";
 
-                summary = $"HAWAQM has {scCount} regions — {regionList}. There are {scTotal} sites in total.";
+                string regionWord = scCount == 3 ? "three regions" : scCount == 2 ? "two regions" : "one region";
+                summary = scCount == 3
+                    ? $"HAWAQM covers three regions. Based on your account access, the current site distribution is: {regionList}, for a total of {scTotal} sites."
+                    : $"Based on your account access, the site distribution across the requested regions is: {regionList}, for a total of {scTotal} sites.";
             }
             else if (!string.IsNullOrWhiteSpace(regionParam) && resultRows.Count == 1)
             {

@@ -104,36 +104,6 @@ public sealed class AzureAIService : IAzureAIService
             NEVER output placeholder text — always use the actual values from the data.
             """,
 
-        // Site count — aggregate rows with TotalSites, ActiveSites, InactiveSites per region/sector
-        ["site_count"] = """
-            Data columns: "RegionName", "SectorName", "TotalSites", "ActiveSites", "InactiveSites".
-            Each row is a region/sector group. ADD UP the relevant column across ALL rows to get the grand total.
-
-            STEP 1 — Identify what the user asked for:
-              • "total sites" / "how many sites" / "registered sites"  → sum TotalSites
-              • "active sites" / "total active" / "how many active"    → sum ActiveSites
-              • "inactive sites" / "offline sites" / "how many inactive" / "count of inactive" → sum InactiveSites
-
-            STEP 2 — Output ONE sentence using the summed value:
-              • TOTAL:    "There are {X} sites registered in HAWAQM."
-              • ACTIVE:   "There are currently {X} active sites."   (X = sum ActiveSites)
-              • INACTIVE: "There are currently {X} inactive sites." (X = sum InactiveSites)
-
-            EXAMPLE — if data has 3 rows with ActiveSites = 2, 1, 0 and user asked "total active sites":
-              Sum = 2+1+0 = 3. Output: "There are currently 3 active sites."
-
-            If user asked for count in a specific REGION (single row):
-            FORMAT: "There are {TotalSites} sites in {RegionName} ({ActiveSites} active, {InactiveSites} inactive)."
-
-            If user asked for count by REGION (all regions):
-            FORMAT: "Site count by region — {RegionName1}: {TotalSites1} ({ActiveSites1} active), {RegionName2}: {TotalSites2} ({ActiveSites2} active), {RegionName3}: {TotalSites3} ({ActiveSites3} active). Total: {grand total} sites."
-
-            If user asked for count by SECTOR:
-            FORMAT: "Site count by sector — {SectorName1}: {TotalSites1}, {SectorName2}: {TotalSites2}, {SectorName3}: {TotalSites3}. Total: {grand total} sites."
-
-            CRITICAL: NEVER output placeholder text. ALWAYS compute the sum from the actual data rows above.
-            CRITICAL: "total active sites" means sum the ActiveSites column — NOT the TotalSites column.
-            """,
 
         // Data Success Rate from Compliancestatas API
         ["data_success_rate"] = """
@@ -643,18 +613,14 @@ public sealed class AzureAIService : IAzureAIService
 
             STATUS BREAKDOWN RULE: Only include Active/Inactive/NoDevice columns when the user explicitly asks about status (active, inactive, offline, online, no device). If the user only asks "how many sites" or count per region/sector — report ONLY the total count column.
 
-            CASE 0 — User asked ONLY for the total number/count of registered sites (no region breakdown, no status breakdown). Triggers on: "total number of sites registered", "how many sites registered so far", "total registered sites", "total number of registered sites", "how many sites are registered", "how many sites do we have", "how many sites in hawaqm", "total sites so far", "number of registered sites":
+            PRIORITY RULE — Check CASE 3 FIRST if the question mentions ANY region name (Abu Dhabi, Al Ain, Al Dhafra) or the words "per region", "each region", "by region", "all regions". Only fall through to CASE 0 if NO region name appears in the question.
+
+            CASE 0 — User asked ONLY for the total number/count of registered sites with NO mention of any region and NO status breakdown. Triggers on: "total number of sites registered", "how many sites registered so far", "total registered sites", "total number of registered sites", "how many sites are registered", "how many sites do we have", "how many sites in hawaqm", "total sites so far", "number of registered sites". NEVER use CASE 0 if the question contains "Abu Dhabi", "Al Ain", "Al Dhafra", "per region", "each region", "by region", or "all regions":
             Sum ALL TotalSites values across all rows to get the grand total.
             FORMAT: "HAWAQM currently has {SUM(TotalSites)} registered sites."
             Example: "HAWAQM currently has 45 registered sites."
             NEVER output placeholder text — always use the actual summed number from the data.
             NEVER output region breakdown for this case.
-
-            CASE 1 — User asked for total count with regional context ("how many sites", "total sites", "how many sites are available", "how many sites are in hawaqm"):
-            Group rows by RegionName, sum TotalSites and ActiveSites per region. Compute overall total as SUM of all TotalSites.
-            FORMAT: "HAWAQM covers three regions. Based on your account access, the current site distribution is: Abu Dhabi: {AbuDhabiTotal} ({AbuDhabiActive} active), Al Ain: {AlAinTotal} ({AlAinActive} active), and Al Dhafra: {AlDhafraTotal} ({AlDhafraActive} active), for a total of {SUM(TotalSites)} sites."
-            Example: "HAWAQM covers three regions. Based on your account access, the current site distribution is: Abu Dhabi: 28 (24 active), Al Ain: 12 (10 active), and Al Dhafra: 5 (4 active), for a total of 45 sites."
-            NEVER output placeholder text — always use actual summed values from the data.
 
             CASE 2 — User asked for total WITH status breakdown ("how many active/inactive sites", "site status"):
             Sum all rows. FORMAT: "HAWAQM currently has {SUM(TotalSites)} registered sites — {SUM(ActiveSites)} active, {SUM(InactiveSites)} inactive, {SUM(NoDeviceSites)} with no devices attached."
@@ -662,10 +628,14 @@ public sealed class AzureAIService : IAzureAIService
             If user asked only about inactive: "There are currently {SUM(InactiveSites)} inactive site(s)."
             If user asked only about no-device: "There are currently {SUM(NoDeviceSites)} site(s) with no devices attached."
 
-            CASE 3 — User asked for breakdown by region, count only ("how many sites per region", "sites in each region", "site count by region", "how many sites in Abu Dhabi Al Ain Al Dhafra", "sites in Abu Dhabi Al Ain Al Dhafra", "how many sites are there in Abu Dhabi Al Ain and Al Dhafra", "show me site count by region", "how many sites per region", "how many sites are in each region"):
+            CASE 3 — User asked for a count across multiple or all regions, OR mentioned two or more region names, OR asked per-region/each-region breakdown. This includes: "how many sites per region", "sites in each region", "site count by region", "how many sites in Abu Dhabi Al Ain Al Dhafra", "how many sites are there in Abu Dhabi, Al Ain and Al Dhafra", "how many sites are located in Abu Dhabi, Al Ain and Al Dhafra", "can you provide the number of sites in Abu Dhabi, Al Ain and Al Dhafra", "how many sites in all regions", "how many sites across all regions", "show me site count by region", "how many sites are in each region", "total sites in Abu Dhabi Al Ain and Al Dhafra", "site count for all regions":
             Group rows by RegionName, sum TotalSites and ActiveSites per region. Compute overall total as SUM of all TotalSites.
-            FORMAT: "HAWAQM covers three regions. Based on your account access, the current site distribution is: Abu Dhabi: {AbuDhabiTotal} ({AbuDhabiActive} active), Al Ain: {AlAinTotal} ({AlAinActive} active), and Al Dhafra: {AlDhafraTotal} ({AlDhafraActive} active), for a total of {SUM(TotalSites)} sites."
-            Example: "HAWAQM covers three regions. Based on your account access, the current site distribution is: Abu Dhabi: 28 (24 active), Al Ain: 12 (10 active), and Al Dhafra: 5 (4 active), for a total of 45 sites."
+            List ONLY the regions that appear in the data — do NOT mention regions not present in the data.
+            FORMAT (3 regions in data): "HAWAQM covers three regions.The current site distribution is: Abu Dhabi: {AbuDhabiTotal} ({AbuDhabiActive} active), Al Ain: {AlAinTotal} ({AlAinActive} active), and Al Dhafra: {AlDhafraTotal} ({AlDhafraActive} active), for a total of {SUM(TotalSites)} sites."
+            FORMAT (2 regions in data): "The site distribution across the requested regions is: {Region1}: {Total1} ({Active1} active), and {Region2}: {Total2} ({Active2} active), for a total of {SUM(TotalSites)} sites."
+            FORMAT (1 region in data): Use CASE 7 single-region format instead.
+            Example (3 regions): "HAWAQM covers three regions. The current site distribution is: Abu Dhabi: 28 (24 active), Al Ain: 12 (10 active), and Al Dhafra: 5 (4 active), for a total of 45 sites."
+            Example (2 regions): "The site distribution across the requested regions is: Abu Dhabi: 28 (24 active), and Al Ain: 12 (10 active), for a total of 40 sites."
             NEVER output a markdown table for this case — always use the sentence format above.
             NEVER output placeholder text — always use actual summed values from the data.
 
@@ -880,20 +850,27 @@ public sealed class AzureAIService : IAzureAIService
             """,
 
         ["region_aqi_geographical"] = """
-            Data columns: "RegionName", "AQI", "AQICategory".
-            These are live AQI values averaged from online sites in each region.
+            Data columns: "RegionName", "AQI", "AQICategory", "Year".
+            These are AQI values averaged per region for the given year.
             AQI categories: 0–50 Good, 51–100 Moderate, 101–150 Unhealthy for Sensitive Groups, 151–200 Unhealthy, 201–300 Very Unhealthy, 301+ Hazardous.
 
+            Use {Year} from the data in the response. If Year is null, omit year from the response.
+
             If one row (single region asked):
-            FORMAT: "The current AQI for the {RegionName} region is {AQI} ({AQICategory})."
-            Example: "The current AQI for the Abu Dhabi region is 48 (Good)."
+            FORMAT (with year): "The {Year} average AQI for the {RegionName} region is {AQI} ({AQICategory})."
+            FORMAT (no year): "The current AQI for the {RegionName} region is {AQI} ({AQICategory})."
+            Example: "The 2024 average AQI for the Abu Dhabi region is 48 (Good)."
 
             If multiple rows (all regions — user asked for region-wise or all regions):
-            FORMAT: "As of the latest available data, the current regional AQI values are: Abu Dhabi: {AbuDhabiAQI} ({AbuDhabiAQICategory}), Al Ain: {AlAinAQI} ({AlAinAQICategory}), and Al Dhafra: {AlDhafraAQI} ({AlDhafraAQICategory})."
+            FORMAT (with year): "Based on {Year} data, the regional AQI averages are: Abu Dhabi: {AbuDhabiAQI} ({AbuDhabiAQICategory}), Al Ain: {AlAinAQI} ({AlAinAQICategory}), and Al Dhafra: {AlDhafraAQI} ({AlDhafraAQICategory})."
+            FORMAT (no year): "As of the latest available data, the current regional AQI values are: Abu Dhabi: {AbuDhabiAQI} ({AbuDhabiAQICategory}), Al Ain: {AlAinAQI} ({AlAinAQICategory}), and Al Dhafra: {AlDhafraAQI} ({AlDhafraAQICategory})."
             Map each row to its region: row where RegionName = "Abu Dhabi" → AbuDhabiAQI, row where RegionName = "Al Ain" → AlAinAQI, row where RegionName = "Al Dhafra" → AlDhafraAQI.
-            Example: "As of the latest available data, the current regional AQI values are: Abu Dhabi: 48 (Good), Al Ain: 55 (Moderate), and Al Dhafra: 42 (Good)."
-            If a region row is missing or AQI is null, replace with "N/A (No data)".
-            If all rows are empty: "No AQI data is available for the requested region(s)."
+            Example (with year): "Based on 2024 data, the regional AQI averages are: Abu Dhabi: 48 (Good), Al Ain: 55 (Moderate), and Al Dhafra: 42 (Good)."
+            Example (no year): "As of the latest available data, the current regional AQI values are: Abu Dhabi: 48 (Good), Al Ain: 55 (Moderate), and Al Dhafra: 42 (Good)."
+            If a region's AQI value is null or missing, replace that region's entry with "No data available" (e.g. "Al Ain: No data available"). Do NOT write "N/A".
+            If ALL regions have null/missing AQI (every entry would be "No data available"), do NOT list them individually. Instead output a single friendly message:
+            FORMAT: "No AQI data is available for {Year} yet. Data may not have been recorded or processed for that period. Please try a different year."
+            If Year is null in that case: "No AQI data is currently available for the requested region(s). Please try again later."
             NEVER output placeholder text — always use actual values from the data.
             NEVER output a bullet list — always use the sentence format above.
             NEVER mention site count in the response.
@@ -1911,6 +1888,11 @@ public sealed class AzureAIService : IAzureAIService
               - "how many sites per region", "site count by region", "how many sites in each region" → no params (LLM groups by RegionName, reports totals only)
               - "how many sites per sector", "site count by sector", "how many sites in each sector" → no params (LLM groups by SectorName, reports totals only)
               - "how many sites in Abu Dhabi" (specific region) → regionName="Abu Dhabi"
+              - "how many sites in Abu Dhabi and Al Ain" (two regions) → regionName="Abu Dhabi|Al Ain"
+              - "how many sites in Abu Dhabi and Al Dhafra" → regionName="Abu Dhabi|Al Dhafra"
+              - "how many sites in Al Ain and Al Dhafra" → regionName="Al Ain|Al Dhafra"
+              - "how many sites are there in Abu Dhabi, Al Ain and Al Dhafra" (all three named) → regionName="Abu Dhabi|Al Ain|Al Dhafra"
+              - "how many sites in all three regions", "how many sites in all regions" → no regionName (LLM groups all)
               - "how many active sites" → liveStatus="Active"
               - "how many inactive sites" → liveStatus="Inactive"
               - "how many sites have no devices", "sites without devices", "sites with no device attached" → liveStatus="NoDevice"
@@ -1933,10 +1915,14 @@ public sealed class AzureAIService : IAzureAIService
             CRITICAL — "sites_filtered" must NEVER be selected when the user mentions a sector name ("residential", "commercial", "school", "government school"). "sites_filtered" has no sectorName parameter and will ignore the sector filter entirely. Always use "sites_by_filter" for any question that includes a sector word.
             11a. If the user asks how many SECTORS exist, what sectors are in HAWAQM, or list of sectors (with NO specific sector name) → select "list_sectors". NEVER select site_count (that shows sites per sector, not the sector list).
             11b. If the user asks how many SUB-SECTORS exist, what sub-sectors are in HAWAQM, or list of sub-sectors → select "list_subsectors". NEVER select sites_by_filter or list_sectors for sub-sector questions.
-            11c. If the user asks for a PIE CHART or DONUT CHART or DISTRIBUTION CHART of sites or schools by AQI category (e.g. "create a pie chart of schools by their current AQI category", "show me a pie chart of AQI distribution", "AQI category breakdown as a pie chart") → select "schools_aqi_pie". If the user mentions "schools" or "school sites", extract sectorName="Public & Govt-School". If a region is mentioned, extract regionName. NEVER select site_aqi_by_category or site_aqi_all for pie/donut/distribution chart questions.
+            11c. If the user asks for a PIE CHART or DONUT CHART or DISTRIBUTION CHART of sites or schools by AQI category (e.g. "create a pie chart of schools by their current AQI category", "show me a pie chart of AQI distribution", "AQI category breakdown as a pie chart", "show me the AQI categories in pie chart", "AQI pie chart", "pie chart of AQI", "show AQI distribution", "AQI category breakdown for Al Ain in pie chart", "AQI category breakdown for Al Ain region in pie chart", "give the AQI category breakdown for Al Ain region in pie chart") → select "schools_aqi_pie". If the user mentions "schools" or "school sites", extract sectorName="Public & Govt-School". If a region is mentioned (Abu Dhabi / Al Ain / Al Dhafra), extract regionName. If NO sector or region is mentioned, select "schools_aqi_pie" with NO parameters — this returns the AQI category distribution for ALL sites. NEVER ask for clarification — always pick this template. NEVER select faq_answer for any question containing "pie chart" and "AQI" together. NEVER select site_aqi_by_category or site_aqi_all for pie/donut/distribution chart questions.
             11c-ii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each REGION (e.g. "pie chart of sites by region", "how many sites per region as a chart", "show number of sites in each region") → select "sites_by_filter_chart". No parameters needed.
             11c-iii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each SECTOR (e.g. "pie chart of sites by sector", "how many sites per sector as a chart", "show number of sites in each sector") → select "sites_by_filter_chart". No parameters needed.
             11c-iv. If the user asks for a chart of AVERAGE AQI by REGION (e.g. "bar chart of AQI by region", "average AQI per region chart", "AQI comparison across regions") → select "aqi_by_region_chart". No parameters needed.
+            CRITICAL disambiguation — "AQI category breakdown" vs "AQI by region":
+              - "AQI category breakdown for Al Ain in pie chart", "AQI category breakdown for Al Ain region", "give the AQI category breakdown for Al Ain region in pie chart", "pie chart of AQI categories in Al Ain" → these ask HOW MANY SITES fall into each AQI category (Good/Moderate/Unhealthy etc.) within a region → select "schools_aqi_pie" with regionName="Al Ain". NEVER select aqi_by_region_chart for these.
+              - "bar chart of AQI by region", "average AQI per region" → these ask for the AQI VALUE averaged per region → select "aqi_by_region_chart".
+              The key signal: "category breakdown", "categories", "distribution" → schools_aqi_pie. "average", "value", "comparison across regions" → aqi_by_region_chart.
             11c-v. If the user asks for a chart of SITE STATUS (Active vs Offline/Inactive) (e.g. "pie chart of site status", "active vs offline sites chart", "site availability breakdown") → select "sites_by_status_chart". No parameters needed.
             11c-vi. If the user asks for a chart of a POLLUTANT or AQI by SECTOR (e.g. "bar chart of PM2.5 by sector", "average AQI by sector", "pollutant levels per sector") → select "pollutant_by_sector_chart". Extract parameterName (e.g. "PM2.5", "PM10", "AQI Index"). Default to "AQI Index" if not specified.
             11c-vii. If the user asks for a pie or bar chart of devices grouped by model/type (e.g. "show me the distribution of devices by model", "pie chart of device models", "how many devices of each model") → select "devices_by_model_chart". No parameters needed. NEVER select site_device_summary or list_devices for this.
@@ -2054,7 +2040,7 @@ public sealed class AzureAIService : IAzureAIService
               Always compute using the "Today's date" provided in the user message.
             For columns: use lowercase snake_case (e.g. pm25, not PM2.5).
             For year: extract a 4-digit year if the user mentions one (e.g. "2025", "last year"). If no year is mentioned, omit it — the system will default to the current year automatically.
-            For regionName: extract the region(s) the user mentions (words like "in", "under", "for", "within", "at", "and" between region names all indicate regions). Map to: "Abu Dhabi" (also: abudhabi, abu-dhabi, abudabi), "Al Ain" (also: alain, al-ain), "Al Dhafra" (also: aldhafra, al-dhafra, dhafra). If the user mentions MORE THAN ONE region (e.g. "Abu Dhabi and Al Dhafra", "Al Ain or Abu Dhabi"), output ALL matched regions joined by "|" (pipe). Examples: "Abu Dhabi and Al Dhafra" → "Abu Dhabi|Al Dhafra"; "Al Ain and Al Dhafra" → "Al Ain|Al Dhafra"; "all three regions" → omit. If the user asks about all regions or does not mention a specific region, omit regionName.
+            For regionName: extract the region(s) the user mentions (words like "in", "under", "for", "within", "at", "and" between region names all indicate regions). Map to: "Abu Dhabi" (also: abudhabi, abu-dhabi, abudabi), "Al Ain" (also: alain, al-ain), "Al Dhafra" (also: aldhafra, al-dhafra, dhafra). If the user mentions MORE THAN ONE region (e.g. "Abu Dhabi and Al Dhafra", "Al Ain or Abu Dhabi"), output ALL matched regions joined by "|" (pipe). Examples: "Abu Dhabi and Al Dhafra" → "Abu Dhabi|Al Dhafra"; "Al Ain and Al Dhafra" → "Al Ain|Al Dhafra"; "Abu Dhabi, Al Ain and Al Dhafra" → "Abu Dhabi|Al Ain|Al Dhafra". Only omit regionName when the user says "all regions", "each region", "per region", or does not name any specific region. NEVER omit regionName when the user explicitly names specific regions, even if they name all three.
             For sectorName: there are exactly 3 sectors in HAWAQM — Commercial, Residential, Public & Govt-School. There is NO Industrial sector. If the user says "industrial", set sectorName="industrial" literally (do NOT map to another sector — the system will return a "no such sector" message). Map ALL other user variations to one of these three canonical values only:
               → "Commercial": "commercial", "commercial sector", "commercial sites", "commercial sites in"
               → "Public & Govt-School": ANY phrase containing "school", "schools", "govt", "gov", "government", "public & govt", "public & gov", "public and gov", "public and govt", "public and government", "govt-school", "gov-school", "government school", "govt school", "gov school", "educational", "private and gov-school", "private and govt school", "public and government schools", "government schools", "which public and government schools", "show me public and government schools", "list government schools", "moe", "moe school", "moe schools", "MOE", "MOE school", "MOE schools", "ministry of education school", "ministry of education schools"

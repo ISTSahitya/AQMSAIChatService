@@ -1135,7 +1135,8 @@ public sealed class ExternalApiService : IExternalApiService
             }
             else
             {
-                rows = Flatten(json, apiCall.ResponseShape, regionFilter);
+                var yearForFlatten = llmParams.GetValueOrDefault("year");
+                rows = Flatten(json, apiCall.ResponseShape, regionFilter, yearForFlatten);
             }
 
             // ActiveStationsCount comes directly from GetRegionGeographicalDataAQI (Status==1 sites),
@@ -1258,10 +1259,10 @@ public sealed class ExternalApiService : IExternalApiService
         return doc.RootElement.EnumerateArray().Select(ParseDevice).ToList();
     }
 
-    private static List<Dictionary<string, object?>> Flatten(string json, string responseShape, string? regionFilter = null)
+    private static List<Dictionary<string, object?>> Flatten(string json, string responseShape, string? regionFilter = null, string? year = null)
     {
         if (responseShape == "region_aqi")
-            return ParseRegionAqiRows(json, regionFilter);
+            return ParseRegionAqiRows(json, regionFilter, year);
 
         if (responseShape == "device_latest")
             return ParseDeviceLatestRows(json);
@@ -1357,7 +1358,7 @@ public sealed class ExternalApiService : IExternalApiService
     }
 
     /// <summary>Parses the GetRegionGeographicalDataAQI response into summary rows, optionally filtered to one region.</summary>
-    private static List<Dictionary<string, object?>> ParseRegionAqiRows(string json, string? regionFilter = null)
+    private static List<Dictionary<string, object?>> ParseRegionAqiRows(string json, string? regionFilter = null, string? year = null)
     {
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array)
@@ -1394,7 +1395,8 @@ public sealed class ExternalApiService : IExternalApiService
                     ["AQI"]                   = aqi,
                     ["AQICategory"]           = aqi is double d ? ClassifyAqi(d) : "Unknown",
                     ["ActiveStationsCount"]   = active,
-                    ["ActiveStationsPercent"] = pct
+                    ["ActiveStationsPercent"] = pct,
+                    ["Year"]                  = year
                 };
             })
             .ToList();
@@ -2123,7 +2125,15 @@ public sealed class ExternalApiService : IExternalApiService
             .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
 
         // Step 2: per region — average AQI from online stations, total site count for display.
-        var regionRows = totalSiteCountByRegion.Keys
+        // Always emit all known regions so the formatter can show "No data" explicitly for each,
+        // rather than the LLM guessing which regions are missing.
+        var knownRegions = new[] { "Abu Dhabi", "Al Ain", "Al Dhafra" };
+        var allRegionKeys = knownRegions
+            .Concat(totalSiteCountByRegion.Keys.Except(knownRegions, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var regionRows = allRegionKeys
             .Select(regionName =>
             {
                 var aqiStations = stationAqiValues.Where(s => s.RegionName == regionName).ToList();
@@ -2137,11 +2147,10 @@ public sealed class ExternalApiService : IExternalApiService
                     ["AQI"]                 = aqiStations.Count > 0
                         ? (object?)Math.Round(aqiStations.Average(s => s.AQI!.Value), 0, MidpointRounding.AwayFromZero)
                         : null,
-                    ["ActiveStationsCount"] = totalSiteCountByRegion[regionName],
+                    ["ActiveStationsCount"] = totalSiteCountByRegion.TryGetValue(regionName, out var cnt) ? cnt : 0,
                     ["LastUpdated"]         = lastUpdated
                 };
             })
-            .Where(r => r["AQI"] != null)   // only emit regions that have live AQI data
             .OrderBy(r => r["RegionName"]?.ToString())
             .ToList();
 
