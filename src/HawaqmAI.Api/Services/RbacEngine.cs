@@ -525,12 +525,14 @@ public sealed class RbacEngine : IRbacEngine
             else
                 siteColumn = "StationID";
 
-            // Use the LAST WHERE clause — queries with subqueries have an inner WHERE inside
-            // the subquery and an outer WHERE after it. We must inject into the outer WHERE.
-            var lastWhereIdx = upperSql.LastIndexOf("WHERE");
-            if (lastWhereIdx >= 0)
+            // Find the WHERE clause at parenthesis depth 0 (the outer/main query WHERE).
+            // Using LastIndexOf was wrong for queries like sites_by_region_chart which have an
+            // inner WHERE inside an EXISTS(...) subquery that comes AFTER the outer WHERE —
+            // LastIndexOf would inject into the subquery, leaving the outer query unfiltered.
+            var outerWhereIdx = FindOuterWhereIndex(upperSql);
+            if (outerWhereIdx >= 0)
             {
-                var insertPos = lastWhereIdx + 5; // skip past "WHERE"
+                var insertPos = outerWhereIdx + 5; // skip past "WHERE"
                 sql = sql[..insertPos] + $" {siteColumn} IN @siteIds AND " + sql[insertPos..];
             }
             else
@@ -578,11 +580,11 @@ public sealed class RbacEngine : IRbacEngine
         var condition = $"{sectorColumn} LIKE @sectorName";
         parameters["sectorName"] = $"%{sector}%";
 
-        // Use the LAST WHERE — subqueries have inner WHEREs before the outer one
-        var lastWhereIdx = upperSql.LastIndexOf("WHERE");
-        if (lastWhereIdx >= 0)
+        // Use the outer WHERE (depth 0) — same logic as InjectSiteIdFilter
+        var outerWhereIdx = FindOuterWhereIndex(upperSql);
+        if (outerWhereIdx >= 0)
         {
-            var insertPos = lastWhereIdx + 5;
+            var insertPos = outerWhereIdx + 5;
             sql = sql[..insertPos] + $" {condition} AND " + sql[insertPos..];
         }
         else
@@ -597,5 +599,30 @@ public sealed class RbacEngine : IRbacEngine
         }
 
         return sql;
+    }
+
+    /// <summary>
+    /// Finds the index of the WHERE keyword that belongs to the outermost query (parenthesis depth 0).
+    /// This avoids injecting into WHERE clauses inside subqueries or EXISTS(...) expressions.
+    /// Returns -1 if no outer WHERE is found.
+    /// </summary>
+    private static int FindOuterWhereIndex(string upperSql)
+    {
+        int depth = 0;
+        for (int i = 0; i < upperSql.Length; i++)
+        {
+            char c = upperSql[i];
+            if (c == '(') { depth++; continue; }
+            if (c == ')') { depth--; continue; }
+            if (depth == 0 && i + 5 <= upperSql.Length
+                && upperSql[i] == 'W' && upperSql[i + 1] == 'H' && upperSql[i + 2] == 'E'
+                && upperSql[i + 3] == 'R' && upperSql[i + 4] == 'E'
+                && (i == 0 || !char.IsLetterOrDigit(upperSql[i - 1]))
+                && (i + 5 >= upperSql.Length || !char.IsLetterOrDigit(upperSql[i + 5])))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 }
