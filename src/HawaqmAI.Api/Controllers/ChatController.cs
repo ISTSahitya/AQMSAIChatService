@@ -2318,7 +2318,7 @@ public sealed class ChatController : ControllerBase
 
         if (isSiteReadingsQuestion)
         {
-            _log.Debug("ChatController: site-readings pre-check fired → forcing site_readings_all");
+            _log.Information("ChatController: site-readings pre-check fired → forcing site_readings_all");
             var readingsTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_readings_all");
             if (readingsTemplate is not null && readingsTemplate.ApiCall is not null)
             {
@@ -2331,7 +2331,16 @@ public sealed class ChatController : ControllerBase
                 {
                     var readingsRows = FilterSiteReadingsRows(readingsApiResult.Rows, readingsFillResult.Parameters.GetValueOrDefault("parameterNames"));
                     var readingsMsgId = Guid.NewGuid();
-                    var readingsSummary = await _azureAI.SummarizeResultsAsync(request.Message, readingsTemplate, readingsRows, scope, ct);
+                    // Site name: prefer LLM-extracted param, fall back to row data, then regex from message
+                    var readingsSiteName = readingsFillResult.Parameters.GetValueOrDefault("stationName")
+                        ?? readingsFillResult.Parameters.GetValueOrDefault("siteName")
+                        ?? readingsRows.Select(r => r.GetValueOrDefault("StationName")?.ToString()).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
+                        ?? ExtractSiteNameFromMessage(request.Message)
+                        ?? "";
+                    _log.Information("ChatController: site-readings pre-check siteName='{SiteName}' rows={Rows} llmParams={Params}",
+                        readingsSiteName, readingsRows.Count,
+                        string.Join(",", readingsFillResult.Parameters.Select(kv => $"{kv.Key}={kv.Value}")));
+                    var readingsSummary = BuildSiteReadingsSummary(readingsRows, readingsSiteName);
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
                         userContent: request.Message,
@@ -4060,9 +4069,13 @@ public sealed class ChatController : ControllerBase
                     sensorReadTemplate.ApiCall, sensorFill.Parameters, scope, sensorBearer, user, sensorReadTemplate.Id, ct);
                 if (sensorResult.Success)
                 {
-                    var sensorSummary = await _azureAI.SummarizeResultsAsync(
-                        request.Message, sensorReadTemplate, sensorResult.Rows, scope, ct);
                     var sensorMsgId = Guid.NewGuid();
+                    var sensorSiteName = sensorFill.Parameters.GetValueOrDefault("stationName")
+                        ?? sensorFill.Parameters.GetValueOrDefault("siteName")
+                        ?? sensorResult.Rows.Select(r => r.GetValueOrDefault("StationName")?.ToString()).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
+                        ?? ExtractSiteNameFromMessage(request.Message)
+                        ?? "";
+                    var sensorSummary = BuildSiteReadingsSummary(sensorResult.Rows, sensorSiteName);
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
                         userContent: request.Message,
@@ -7314,6 +7327,18 @@ public sealed class ChatController : ControllerBase
                 resultRows = GroupAqiCategoryRows(resultRows, wantsByRegion2);
                 summary = BuildAqiCategorySummary(resultRows, request.Message, lowerMsg, true);
             }
+            else if (template.Id == "site_readings_all" && resultRows.Count > 0)
+            {
+                var siteName = llmParams.GetValueOrDefault("stationName")
+                    ?? llmParams.GetValueOrDefault("siteName")
+                    ?? resultRows.Select(r => r.GetValueOrDefault("StationName")?.ToString()).FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
+                    ?? ExtractSiteNameFromMessage(request.Message)
+                    ?? "";
+                _log.Information("ChatController: site_readings_all main path siteName='{SiteName}' rows={Rows} llmParams={Params}",
+                    siteName, resultRows.Count,
+                    string.Join(",", llmParams.Select(kv => $"{kv.Key}={kv.Value}")));
+                summary = BuildSiteReadingsSummary(resultRows, siteName);
+            }
             else if (template.Id is "schools_latest_pollutant" or "sector_latest_pollutant")
             {
                 summary = BuildSchoolPollutantSummary(resultRows, llmParams);
@@ -8066,5 +8091,46 @@ public sealed class ChatController : ControllerBase
         }
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Builds a deterministic natural-language summary for site_readings_all results,
+    /// e.g. "At Khalifa City School (as of 2026-11-17 14:01:14): NO2 is 83.9 µg/m³, O3 is 85.2 µg/m³, and CO is 0 mg/m³."
+    /// </summary>
+    /// <summary>
+    /// Extracts the site/school name from a natural-language message as a last-resort fallback.
+    /// Looks for patterns like "at Al Saad Indian School", "for Khalifa City School", etc.
+    /// </summary>
+    private static string? ExtractSiteNameFromMessage(string message)
+    {
+        // Match: at/for/of <ProperNoun phrase> — capture up to 6 words after the preposition
+        var m = System.Text.RegularExpressions.Regex.Match(
+            message,
+            @"\b(?:at|for|of|in)\s+((?:[A-Z][a-zA-Z]*(?:\s+[A-Za-z]+){0,5}?)(?=\s*[?.,!]|$|\s+(?:in\b|for\b|and\b|is\b|are\b|has\b|have\b|the\b|please\b|can\b|could\b|would\b)))",
+            System.Text.RegularExpressions.RegexOptions.None);
+        if (m.Success)
+            return m.Groups[1].Value.Trim();
+
+        // Simpler fallback: grab everything after "at " until end or punctuation
+        var m2 = System.Text.RegularExpressions.Regex.Match(message, @"\bat\s+([A-Z][^?.,!]{3,50}?)(?:\s*[?.,!]|$)");
+        if (m2.Success)
+            return m2.Groups[1].Value.Trim();
+
+        return null;
+    }
+
+    private static string BuildSiteReadingsSummary(
+        List<Dictionary<string, object?>> rows,
+        string siteName)
+    {
+        if (rows.Count == 0)
+            return string.IsNullOrWhiteSpace(siteName)
+                ? "No readings found."
+                : $"No readings found for {siteName}.";
+
+        if (string.IsNullOrWhiteSpace(siteName))
+            return rows.Count == 1 ? "1 result found." : $"{rows.Count} results found.";
+
+        return $"Here are the latest readings at {siteName}:";
     }
 }
