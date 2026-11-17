@@ -2603,15 +2603,20 @@ public sealed class ChatController : ControllerBase
             || lowerMsg.Contains("table of sites") || lowerMsg.Contains("table of stations");
 
         // "region" anywhere + chart keyword = region chart, as long as "sector" is not also present
+        // and the question is not asking about a pollutant/AQI value.
         // Covers: "by region", "Abudhabi region", "region bar chart", "bar chart of sites Abudhabi region"
         bool msgHasByRegionWithChart = isChartDistribution && lowerMsg.Contains("region")
-            && !lowerMsg.Contains("sector");
+            && !lowerMsg.Contains("sector") && !hasParameterKeyword;
         // When a SPECIFIC region is named (e.g. "sites of Abudhabi region"), route to SECTOR chart
         // filtered by that region — showing how that region's sites break down by sector is more useful
         // than showing a single-slice "region" chart.
+        // Guard: do NOT apply this redirect for AQI/pollutant questions — "residential sites AQI for
+        // Abu Dhabi region" asks for pollutant data, not a site count chart.
         bool msgHasSpecificRegionChart = isChartDistribution && msgNamedRegion != null
-            && lowerMsg.Contains("region") && !lowerMsg.Contains("sector");
+            && lowerMsg.Contains("region") && !lowerMsg.Contains("sector")
+            && !hasParameterKeyword;
         bool isSitesByRegionChart = !msgWantsListing && !msgHasBothSectorAndRegion && !msgHasSpecificRegionChart
+            && !hasParameterKeyword
             && ((isChartDistribution && chartByRegionKeywords.Any(k => lowerMsg.Contains(k)))
                 || regionChartStrongKeywords.Any(k => lowerMsg.Contains(k))
                 || msgHasByRegionWithChart);
@@ -2899,7 +2904,7 @@ public sealed class ChatController : ControllerBase
         // Covers: "by sector", "sector pie chart", "bar chart of sites by sector", "Abu Dhabi sector chart"
         bool msgHasBySectorWithChart = isChartDistribution && lowerMsg.Contains("sector")
             && !lowerMsg.Contains("region");
-        bool isSitesBySectorChart = !msgWantsListing
+        bool isSitesBySectorChart = !msgWantsListing && !hasParameterKeyword
             && (msgHasBothSectorAndRegion  // "sector and region" → always show sector chart
             || msgHasSpecificRegionChart        // "sites of Abudhabi region" → sector chart filtered by region
             || msgHasBySectorWithChart
