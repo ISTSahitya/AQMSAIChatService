@@ -53,6 +53,11 @@ public sealed class ExternalApiService : IExternalApiService
         var sw = Stopwatch.StartNew();
         try
         {
+            _log.Information("ExternalApiService: CallAsync templateId={Template} parameterNames='{Params}' allKeys=[{Keys}]",
+                templateId,
+                llmParams.GetValueOrDefault("parameterNames") ?? "(null)",
+                string.Join(",", llmParams.Keys));
+
             // ── Single-site lookup via GetAllSiteData (name-only, no IDs) ────────
             // Site queries always resolve by station name — numeric IDs are never
             // accepted from users or injected from scope. This ensures users always
@@ -371,7 +376,71 @@ public sealed class ExternalApiService : IExternalApiService
                 // Strip the internal flag from single-device rows
                 foreach (var row in allParamRows) row.Remove("_IsActive");
 
-                _log.Debug("ExternalApiService: site_aqi_single → {Count} parameter rows for '{Site}'", allParamRows.Count, matched.Name);
+                // If the user requested specific parameters, filter to only those rows.
+                // parameterNames is a comma-separated list extracted by the LLM (e.g. "NO2,O3,CO").
+                var parameterNamesRaw = llmParams.GetValueOrDefault("parameterNames") ?? llmParams.GetValueOrDefault("parameterName");
+                if (!string.IsNullOrWhiteSpace(parameterNamesRaw))
+                {
+                    // Build a canonical lookup map so "no2" matches "NO2", "O3", "AQI Index" etc.
+                    var canonicalNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["no2"] = "NO2", ["nitrogen dioxide"] = "NO2",
+                        ["o3"] = "O3", ["ozone"] = "O3",
+                        ["co"] = "CO", ["carbon monoxide"] = "CO",
+                        ["co2"] = "CO2", ["carbon dioxide"] = "CO2",
+                        ["pm2.5"] = "PM2.5", ["pm25"] = "PM2.5", ["fine particles"] = "PM2.5",
+                        ["pm10"] = "PM10", ["coarse particles"] = "PM10",
+                        ["so2"] = "SO2", ["sulfur dioxide"] = "SO2", ["sulphur dioxide"] = "SO2",
+                        ["tvoc"] = "TVOC", ["voc"] = "TVOC",
+                        ["ch2o"] = "CH2O", ["formaldehyde"] = "CH2O",
+                        ["temperature"] = "Temperature", ["temp"] = "Temperature",
+                        ["humidity"] = "Humidity",
+                        ["noise"] = "Noise",
+                        ["aqi"] = "AQI Index", ["aqi index"] = "AQI Index", ["iaq-i"] = "AQI Index", ["iaqi"] = "AQI Index"
+                    };
+
+                    var requestedParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var raw in parameterNamesRaw.Split([',', ';', '|'], StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var p = raw.Trim();
+                        var canonical = canonicalNames.TryGetValue(p, out var c) ? c : p;
+                        requestedParams.Add(canonical);
+                        // Also add the subscript DB variant (e.g. "NO2" → "NO₂") so the filter
+                        // matches the actual Parameter column value returned by the API.
+                        if (_parameterAliases.TryGetValue(canonical, out var subscript))
+                            requestedParams.Add(subscript);
+                    }
+
+                    var actualParamNames = allParamRows.Select(r => r["Parameter"]?.ToString() ?? "").ToList();
+                    _log.Information("ExternalApiService: site_readings_all actual param keys = [{Keys}]", string.Join(", ", actualParamNames));
+                    _log.Information("ExternalApiService: requestedParams = [{Req}]", string.Join(", ", requestedParams));
+
+                    // Match by exact set membership first (covers subscript variants added above).
+                    // Fall back to strip-digits comparison so "NO2" matches "NO₂", "O3" matches "O₃" etc.
+                    var filtered = allParamRows
+                        .Where(r =>
+                        {
+                            var paramVal = r["Parameter"]?.ToString() ?? "";
+                            if (requestedParams.Contains(paramVal)) return true;
+                            // Strip non-ASCII suffix digits/subscripts and compare base name
+                            var baseParam = System.Text.RegularExpressions.Regex.Replace(paramVal, @"[\d₀-₉\u2080-\u2089]+$", "");
+                            return requestedParams.Any(req =>
+                            {
+                                var baseReq = System.Text.RegularExpressions.Regex.Replace(req, @"[\d₀-₉\u2080-\u2089]+$", "");
+                                return string.Equals(baseParam, baseReq, StringComparison.OrdinalIgnoreCase);
+                            });
+                        })
+                        .ToList();
+
+                    // Only apply filter when it matches at least one row — otherwise return all
+                    if (filtered.Count > 0)
+                        allParamRows = filtered;
+
+                    _log.Debug("ExternalApiService: parameterNames filter '{Filter}' → {Count}/{Total} rows for '{Site}'",
+                        parameterNamesRaw, allParamRows.Count, allParamRows.Count + (allParamRows.Count - filtered.Count), matched.Name);
+                }
+
+                _log.Debug("ExternalApiService: site_readings_all → {Count} parameter rows for '{Site}'", allParamRows.Count, matched.Name);
 
                 return new ApiCallResult
                 {
@@ -3150,13 +3219,13 @@ public sealed class ExternalApiService : IExternalApiService
             LatestAQI AS (
                 SELECT TOP 1
                     ad.ParameterValue AS AmbientAQI,
-                    ad.ObservedAt     AS AmbientTimestamp
+                    ad.RecordedDate   AS AmbientTimestamp
                 FROM AmbientData ad
                 JOIN AmbientParameters ap ON ad.ParameterId = ap.Id
                 JOIN NearestStation ns    ON ad.StationId   = ns.AmbientStationID
-                WHERE ap.ParameterName = 'AQI'
+                WHERE ap.ParameterName = 'AQI Index'
                   AND TRY_CAST(ad.ParameterValue AS FLOAT) IS NOT NULL
-                ORDER BY ad.ObservedAt DESC
+                ORDER BY ad.RecordedDate DESC
             )
             SELECT
                 ns.AmbientStationName,

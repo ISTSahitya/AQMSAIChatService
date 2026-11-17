@@ -168,7 +168,8 @@ public sealed class RbacEngine : IRbacEngine
         var skipSectorInjection = template.SkipSiteFilter
             || template.Id is "sites_count_by_sector" or "sites_count_by_region"
                 or "sector_latest_pollutant"
-                or "count_sites_in_region" or "sites_by_filter";
+                or "count_sites_in_region" or "sites_by_filter"
+                or "sites_by_sector_chart" or "sites_by_region_chart";
         if (!skipSectorInjection && !string.IsNullOrWhiteSpace(scope.Sector))
         {
             if (sql.Contains("@sectorName", StringComparison.OrdinalIgnoreCase) && !parameters.ContainsKey("sectorName"))

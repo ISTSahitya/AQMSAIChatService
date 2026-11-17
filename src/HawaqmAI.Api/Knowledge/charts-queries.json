@@ -28,17 +28,20 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "",
-      "params": [],
+      "sql": "SELECT r.RegionName AS Region, COUNT(*) AS Count FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@sectorName IS NULL OR EXISTS (SELECT 1 FROM Sectors sec WHERE sec.Id = s.SectorID AND LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%')) GROUP BY r.RegionName ORDER BY Count DESC",
+      "params": [
+        {
+          "name": "sectorName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": ["Commercial", "Residential", "Public & Govt-School"]
+        }
+      ],
       "responseType": "chart",
       "chartType": "pie",
-      "tableUsed": "AirQuality API",
-      "skipSiteFilter": true,
-      "apiCall": {
-        "method": "GET",
-        "path": "/api/AirQuality/GetAllSiteData",
-        "responseShape": "sites_by_region_chart"
-      }
+      "tableUsed": "DMN_Stations",
+      "skipSiteFilter": false
     },
     {
       "id": "sites_by_sector_chart",
@@ -63,17 +66,20 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "",
-      "params": [],
+      "sql": "SELECT sec.SectorName AS Sector, COUNT(*) AS Count FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id WHERE ISNULL(s.IsDeleted, 0) = 0 AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) GROUP BY sec.SectorName ORDER BY Count DESC",
+      "params": [
+        {
+          "name": "regionName",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "allowed": ["Abu Dhabi", "Al Ain", "Al Dhafra"]
+        }
+      ],
       "responseType": "chart",
       "chartType": "pie",
-      "tableUsed": "AirQuality API",
-      "skipSiteFilter": true,
-      "apiCall": {
-        "method": "GET",
-        "path": "/api/AirQuality/GetAllSiteData",
-        "responseShape": "sites_by_sector_chart"
-      }
+      "tableUsed": "DMN_Stations",
+      "skipSiteFilter": false
     },
     {
       "id": "aqi_by_region_chart",

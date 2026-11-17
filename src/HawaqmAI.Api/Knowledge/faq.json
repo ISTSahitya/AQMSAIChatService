@@ -10,16 +10,76 @@
       "answer": "Every HAWAQM device records a reading every 5 minutes, all day. This is what keeps the dashboard close to real time, and the daily and monthly averages are built from these readings."
     },
     {
+      "question": "How frequently is data recorded by HAWAQM devices?",
+      "answer": "Every HAWAQM device records a reading every 5 minutes, all day. This is what keeps the dashboard close to real time, and the daily and monthly averages are built from these readings."
+    },
+    {
+      "question": "What is the data recording frequency of HAWAQM devices?",
+      "answer": "Every HAWAQM device records a reading every 5 minutes, all day. This is what keeps the dashboard close to real time, and the daily and monthly averages are built from these readings."
+    },
+    {
+      "question": "How often is data recorded by HAWAQM devices?",
+      "answer": "Every HAWAQM device records a reading every 5 minutes, all day. This is what keeps the dashboard close to real time, and the daily and monthly averages are built from these readings."
+    },
+    {
+      "question": "At what interval do HAWAQM devices capture data?",
+      "answer": "Every HAWAQM device records a reading every 5 minutes, all day. This is what keeps the dashboard close to real time, and the daily and monthly averages are built from these readings."
+    },
+    {
       "question": "When is a device considered offline or inactive?",
-      "answer": "A device is considered offline or inactive when it has not sent any measured data during the last 24 hours. It becomes active again as soon as it sends new measured data."
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
     },
     {
       "question": "When is a site shown as inactive?",
-      "answer": "A site is shown as inactive only when all devices at that site have stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device is still active, the site remains active."
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
+    },
+    {
+      "question": "Under what conditions is a device marked as offline or inactive?",
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
+    },
+    {
+      "question": "What criteria determine whether a device is offline or inactive?",
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
+    },
+    {
+      "question": "How long with no data before a device is offline?",
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
+    },
+    {
+      "question": "How long without data does it take for a device to be classified as offline or inactive?",
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
+    },
+    {
+      "question": "When does the system classify a site as inactive?",
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
+    },
+    {
+      "question": "Why would a site be inactive?",
+      "answer": "A device is marked offline or inactive when it has not sent any measured data during the last 24 hours. It returns to active as soon as new measured data is received. A site is marked inactive only when every device at that site has stopped communicating — meaning none of them has sent data within the last 24 hours. As long as at least one device at the site is still active, the site itself remains active."
     },
     {
       "question": "How is the site AQI calculated when a site has more than one device? / How can one device have a high reading while the overall site AQI is still acceptable?",
-      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
+    },
+    {
+      "question": "How is the site AQI calculated when a site has more than one device?",
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
+    },
+    {
+      "question": "How is the AQI determined for a site with multiple devices?",
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
+    },
+    {
+      "question": "What method is used to calculate site-level AQI when several devices are present?",
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
+    },
+    {
+      "question": "How does the system calculate the overall AQI for a site with more than one device?",
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
+    },
+    {
+      "question": "How is AQI calculated if a site has two devices?",
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
     },
     {
       "question": "Which air-quality parameters are monitored by HAWAQM?",
@@ -59,7 +119,31 @@
     },
     {
       "question": "What is AQI?",
-      "answer": "In HAWAQM, AQI refers to the Indoor Air Quality Index (IAQ-I) — a single number that summarises how clean or polluted the indoor air is and what health effects you might expect. HAWAQM calculates an IAQ-I for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the IAQ-I, the greater the concern for occupants' health."
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What is the AQI?",
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+    },
+    {
+      "question": "Definition of AQI",
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What does AQI mean?",
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What is the meaning of AQI?",
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What is air quality?",
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
+    },
+    {
+      "question": "What is air quality index?",
+      "answer": "AQI stands for Air Quality Index. It is a single number that summarises how clean or polluted the air is and what health effects you might expect. HAWAQM calculates an AQI for each indoor monitoring site by combining readings from its sensors. The scale runs from 0 (cleanest) upward: 0–50 is Good, 51–100 is Moderate, 101–150 is Unhealthy for Sensitive Groups, 151–200 is Unhealthy, 201–300 is Very Unhealthy, and above 300 is Hazardous. The higher the AQI, the greater the concern for occupants' health."
     },
     {
       "question": "What is IAQ-I?",
@@ -163,7 +247,7 @@
     },
     {
       "question": "How is the site AQI calculated?",
-      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
     },
     {
       "question": "Can you confirm a school is safe for children to attend today?",
@@ -219,7 +303,7 @@
     },
     {
       "question": "What is the pollen count at a site?",
-      "answer": "Pollen monitoring is not part of the HAWAQM parameter set. HAWAQM monitors CO2, PM2.5, PM10, CO, NO2, O3, SO2, TVOC, CH2O, temperature, humidity and noise only."
+      "answer": "HAWAQM doesn't measure pollen. It does measure CO2, PM10, PM2.5, formaldehyde, CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If there is an air-quality concern at {{SCHOOL_NAME}}, I can show you what these parameters were doing over the same period — shall I?"
     },
     {
       "question": "Can you show me radon levels?",
@@ -231,7 +315,15 @@
     },
     {
       "question": "What is the pollen count at a school or site?",
-      "answer": "HAWAQM does not measure pollen. It does measure CO2, PM10, PM2.5, formaldehyde (CH2O), CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If you share a site name, I can show you the current readings for all monitored parameters at that site."
+      "answer": "HAWAQM doesn't measure pollen. It does measure CO2, PM10, PM2.5, formaldehyde, CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If there is an air-quality concern at {{SCHOOL_NAME}}, I can show you what these parameters were doing over the same period — shall I?"
+    },
+    {
+      "question": "Can you tell me the pollen level at a site?",
+      "answer": "HAWAQM doesn't measure pollen. It does measure CO2, PM10, PM2.5, formaldehyde, CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If there is an air-quality concern at {{SCHOOL_NAME}}, I can show you what these parameters were doing over the same period — shall I?"
+    },
+    {
+      "question": "What is the pollen level at a site?",
+      "answer": "HAWAQM doesn't measure pollen. It does measure CO2, PM10, PM2.5, formaldehyde, CO, O3, TVOC, NO2 and benzene, plus temperature, humidity and noise. If there is an air-quality concern at {{SCHOOL_NAME}}, I can show you what these parameters were doing over the same period — shall I?"
     },
     {
       "question": "The site is marked inactive but one device is still sending data. Is that an error?",
@@ -275,11 +367,19 @@
     },
     {
       "question": "Can I get the last 24 hours of readings for a device?",
-      "answer": "Yes. I can show the last 24 hours for {DEVICE_NAME} as 5-minute records, from {FROM_TIME} to {TO_TIME}, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint."
+      "answer": "Yes. The 5-minute interval data for {{DEVICE_NAME}} is available for the last 24 hours. This level of detail is most useful when you are investigating an alert or a complaint."
     },
     {
       "question": "Can I see the readings from the last 24 hours for a device?",
-      "answer": "Yes. I can show the last 24 hours for {DEVICE_NAME} as 5-minute records, from {FROM_TIME} to {TO_TIME}, with AQI and the parameters you choose. This level of detail is most useful when you are investigating an alert or a complaint."
+      "answer": "Yes. The 5-minute interval data for {{DEVICE_NAME}} is available for the last 24 hours. This level of detail is most useful when you are investigating an alert or a complaint."
+    },
+    {
+      "question": "What readings were recorded by a device over the past 24 hours?",
+      "answer": "Yes. The 5-minute interval data for {{DEVICE_NAME}} is available for the last 24 hours. This level of detail is most useful when you are investigating an alert or a complaint."
+    },
+    {
+      "question": "Show me the readings recorded by a device over the past 24 hours.",
+      "answer": "Yes. The 5-minute interval data for {{DEVICE_NAME}} is available for the last 24 hours. This level of detail is most useful when you are investigating an alert or a complaint."
     },
     {
       "question": "Can I use a 1-hour threshold for PM10 because I want a faster alert?",
@@ -295,6 +395,26 @@
     },
     {
       "question": "Can you explain why a site disappeared from dashboards after it was deleted?",
+      "answer": "Once a site or device is deleted by an authorised user, it is removed from all lists, dashboards, maps and filters. Its historical data is handled according to the retention policy set by the administrators."
+    },
+    {
+      "question": "Will deleting a site remove it from the dashboards?",
+      "answer": "Once a site or device is deleted by an authorised user, it is removed from all lists, dashboards, maps and filters. Its historical data is handled according to the retention policy set by the administrators."
+    },
+    {
+      "question": "If I delete a site, will it disappear from the dashboards?",
+      "answer": "Once a site or device is deleted by an authorised user, it is removed from all lists, dashboards, maps and filters. Its historical data is handled according to the retention policy set by the administrators."
+    },
+    {
+      "question": "What happens when a site is deleted?",
+      "answer": "Once a site or device is deleted by an authorised user, it is removed from all lists, dashboards, maps and filters. Its historical data is handled according to the retention policy set by the administrators."
+    },
+    {
+      "question": "What happens to a deleted site?",
+      "answer": "Once a site or device is deleted by an authorised user, it is removed from all lists, dashboards, maps and filters. Its historical data is handled according to the retention policy set by the administrators."
+    },
+    {
+      "question": "Does deleting a site remove it from maps and filters?",
       "answer": "Once a site or device is deleted by an authorised user, it is removed from all lists, dashboards, maps and filters. Its historical data is handled according to the retention policy set by the administrators."
     },
     {
@@ -315,7 +435,19 @@
     },
     {
       "question": "Can you tell me which weather condition caused a pollutant spike?",
-      "answer": "HAWAQM records what the sensors measured, but cannot prove the physical cause of a spike. To investigate, ask me for the AQI timeline or the pollutant readings at that site for the period in question — the data will show which parameters peaked and when, which helps narrow down the source."
+      "answer": "Not with certainty. I can show the temperature, humidity and nearby outdoor readings recorded at the same time, which often suggests a likely cause — but the data cannot prove it."
+    },
+    {
+      "question": "Which weather condition caused the pollutant spike?",
+      "answer": "Not with certainty. I can show the temperature, humidity and nearby outdoor readings recorded at the same time, which often suggests a likely cause — but the data cannot prove it."
+    },
+    {
+      "question": "Can you tell me what weather led to the rise in pollution?",
+      "answer": "Not with certainty. I can show the temperature, humidity and nearby outdoor readings recorded at the same time, which often suggests a likely cause — but the data cannot prove it."
+    },
+    {
+      "question": "Weather linked to pollutant spike",
+      "answer": "Not with certainty. I can show the temperature, humidity and nearby outdoor readings recorded at the same time, which often suggests a likely cause — but the data cannot prove it."
     },
     {
       "question": "Yesterday's AQI spike and ventilation at a school",
@@ -326,16 +458,44 @@
       "answer": "Only with care. Align both to the closest matching timestamps or to the same averaging interval first — comparing readings taken at different times can be misleading."
     },
     {
+      "question": "Can I compare an indoor site with the nearest ambient station if their update times are different?",
+      "answer": "Only with care. Align both to the closest matching timestamps or to the same averaging interval first — comparing readings taken at different times can be misleading."
+    },
+    {
+      "question": "Is it okay to compare readings when the two sites have different update times?",
+      "answer": "Only with care. Align both to the closest matching timestamps or to the same averaging interval first — comparing readings taken at different times can be misleading."
+    },
+    {
+      "question": "Different update times — indoor vs ambient",
+      "answer": "Only with care. Align both to the closest matching timestamps or to the same averaging interval first — comparing readings taken at different times can be misleading."
+    },
+    {
       "question": "Can you prepare a one-year raw-data export for a school?",
       "answer": "Yes. A one-year raw-data export is large, so it is generated in the background. Once the file is ready, a download link will be emailed to you. Please allow some time for the export to complete."
     },
     {
       "question": "Can I use the Statistical Report to analyse the whole previous month?",
-      "answer": "Not in one request — the Statistical Report covers up to 7 days at a time. For a full month, use the Data Analysis Report instead, or export the raw data for the month."
+      "answer": "The Statistical Report supports up to 7 days per request, so a full month would fall outside a single report. For a complete month, the Data Analysis Report is the suitable option, or the raw data for the month can be exported instead."
     },
     {
       "question": "Can I use the Exceedance Report for the last six months in one request?",
-      "answer": "No — the Exceedance Report covers up to 90 days per request. Split six months into two 90-day requests, or export the raw data for the full period in one file."
+      "answer": "Please note that the Exceedance Report is limited to 90 days per request, so a six-month span cannot be covered in one report. The full period can be obtained either as two 90-day requests, or by exporting the raw data for the entire six months in a single file."
+    },
+    {
+      "question": "Give me the exceedance report for the last six months.",
+      "answer": "Please note that the Exceedance Report is limited to 90 days per request, so a six-month span cannot be covered in one report. The full period can be obtained either as two 90-day requests, or by exporting the raw data for the entire six months in a single file."
+    },
+    {
+      "question": "Can you give me the exceedance report for the past six months?",
+      "answer": "Please note that the Exceedance Report is limited to 90 days per request, so a six-month span cannot be covered in one report. The full period can be obtained either as two 90-day requests, or by exporting the raw data for the entire six months in a single file."
+    },
+    {
+      "question": "I need an exceedance report covering the last six months.",
+      "answer": "Please note that the Exceedance Report is limited to 90 days per request, so a six-month span cannot be covered in one report. The full period can be obtained either as two 90-day requests, or by exporting the raw data for the entire six months in a single file."
+    },
+    {
+      "question": "Exceedance report — last 6 months",
+      "answer": "Please note that the Exceedance Report is limited to 90 days per request, so a six-month span cannot be covered in one report. The full period can be obtained either as two 90-day requests, or by exporting the raw data for the entire six months in a single file."
     },
     {
       "question": "Which averaging intervals should be used for NO2, O3, CO, PM10, and PM2.5 exceedance checks?",
@@ -343,11 +503,11 @@
     },
     {
       "question": "I need six months of exceedance analysis. How should the assistant handle it?",
-      "answer": "Split it into 90-day windows (the report limit), run each window the same way, and combine the results. If that is too much work, export the raw data for the full six months in one file instead."
+      "answer": "Please note that the Exceedance Report is limited to 90 days per request, so a six-month span cannot be covered in one report. The full period can be obtained either as two 90-day requests, or by exporting the raw data for the entire six months in a single file."
     },
     {
       "question": "Why can the site AQI look acceptable while one device shows a much higher reading?",
-      "answer": "Because the site AQI is the average of its devices, one high reading can be softened by a lower one. The site figure is correct, but always check the device-level view when investigating."
+      "answer": "The site AQI is the average of all devices installed at that site. Averaging can soften one high reading, so if a site's figure looks different from what you expect, check the device-level view."
     },
     {
       "question": "Could the site average be hiding a problem on one device? / Could one device have poor readings even if the overall site AQI looks okay?",
@@ -384,6 +544,14 @@
     {
       "question": "Compare two sites",
       "answer": "Sure — which two sites, and over what period? For example: 'compare {{SCHOOL_A}} and {{SCHOOL_B}} for last month'."
+    },
+    {
+      "question": "Can you show me the differences between the two sites?",
+      "answer": "Sure — please name the two sites you'd like to compare. For example: 'Show me the differences between Al Reyada School and Al Saad Indian School'. I can compare their current AQI, pollutant readings, or historical data."
+    },
+    {
+      "question": "Show me the differences between the two sites",
+      "answer": "Sure — please name the two sites you'd like to compare. For example: 'Show me the differences between Al Reyada School and Al Saad Indian School'. I can compare their current AQI, pollutant readings, or historical data."
     },
     {
       "question": "Why can't I see all the sites?",

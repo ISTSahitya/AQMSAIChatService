@@ -208,20 +208,28 @@ public sealed class AzureAIService : IAzureAIService
             """,
 
         // Sites by region pie/bar — columns: Region, Count
-        ["sites_by_filter_chart"] = """
+        ["sites_by_region_chart"] = """
             Data columns: "Region" (region name), "Count" (number of sites in that region).
             The chart below will visualise the distribution — write ONE short summary sentence only.
-            FORMAT: "Here is the breakdown of {TotalCount} site(s) across {N} region(s). The chart below shows the count per region."
+            If the user asked for active sites: FORMAT "Here is the breakdown of {TotalCount} active site(s) across {N} region(s). The chart below shows the count per region."
+            If the user asked for inactive sites: FORMAT "Here is the breakdown of {TotalCount} inactive site(s) across {N} region(s). The chart below shows the count per region."
+            Otherwise: FORMAT "Here is the breakdown of {TotalCount} site(s) across {N} region(s). The chart below shows the count per region."
             {TotalCount} = sum of all Count values. {N} = number of rows.
             NEVER list individual sites or regions in text — the chart handles that.
             NEVER output placeholder text — always use actual totals from the data.
             """,
 
         // Sites by sector pie/bar — columns: Sector, Count
-        ["sites_by_filter_chart"] = """
+        ["sites_by_sector_chart"] = """
             Data columns: "Sector" (sector name), "Count" (number of sites in that sector).
             The chart below will visualise the distribution — write ONE short summary sentence only.
-            FORMAT: "Here is the breakdown of {TotalCount} site(s) across {N} sector(s). The chart below shows the count per sector."
+            Extract region from the user question if mentioned (Abu Dhabi / Al Ain / Al Dhafra) → use as {Region}.
+            If region is mentioned and user asked for active sites: FORMAT "Here is the breakdown of {TotalCount} active site(s) in {Region} across {N} sector(s). The chart below shows the count per sector."
+            If region is mentioned and user asked for inactive sites: FORMAT "Here is the breakdown of {TotalCount} inactive site(s) in {Region} across {N} sector(s). The chart below shows the count per sector."
+            If region is mentioned: FORMAT "Here is the breakdown of {TotalCount} site(s) in {Region} across {N} sector(s). The chart below shows the count per sector."
+            If the user asked for active sites (no region): FORMAT "Here is the breakdown of {TotalCount} active site(s) across {N} sector(s). The chart below shows the count per sector."
+            If the user asked for inactive sites (no region): FORMAT "Here is the breakdown of {TotalCount} inactive site(s) across {N} sector(s). The chart below shows the count per sector."
+            Otherwise: FORMAT "Here is the breakdown of {TotalCount} site(s) across {N} sector(s). The chart below shows the count per sector."
             {TotalCount} = sum of all Count values. {N} = number of rows.
             NEVER list individual sites or sectors in text — the chart handles that.
             NEVER output placeholder text — always use actual totals from the data.
@@ -1437,7 +1445,22 @@ public sealed class AzureAIService : IAzureAIService
                     entries.Add((q, a));
             }
 
-            // Score each entry by how many meaningful words from the question appear in the FAQ question
+            // Score each entry using bidirectional word overlap to avoid ties where a broader
+            // FAQ entry (e.g. "Unhealthy for Sensitive Groups") wins over the correct specific one
+            // ("Unhealthy") just because they share the same forward-match count.
+            //
+            // Combined score = forward_overlap + reverse_precision:
+            //   forward_overlap  = how many user-question words appear in the FAQ question
+            //   reverse_precision = forward_overlap / FAQ-question-word-count  (penalises FAQ
+            //                       questions that have many extra words the user didn't mention)
+            //
+            // Example — user: "What range of AQI is considered Unhealthy air quality?"
+            //   meaningful user words: {range, aqi, considered, unhealthy, air, quality}
+            //   "What AQI range is Unhealthy?"              faq words={range,aqi,unhealthy}  forward=3, ratio=3/3=1.0 → combined=4.0
+            //   "What AQI range is Unhealthy for Sensitive Groups?" faq words={range,aqi,unhealthy,sensitive,groups} forward=3, ratio=3/5=0.6 → combined=3.6
+            //   "What AQI range is Very Unhealthy?"         faq words={range,aqi,very,unhealthy} forward=3, ratio=3/4=0.75 → combined=3.75
+            // Correct winner: "What AQI range is Unhealthy?" (combined 4.0)
+
             var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "what", "is", "the", "a", "an", "for", "of", "in", "at", "to", "and", "or", "are", "does", "do", "can", "i", "me", "my", "how", "why", "which", "when" };
 
@@ -1445,17 +1468,26 @@ public sealed class AzureAIService : IAzureAIService
                 .Where(w => !stopWords.Contains(w) && w.Length > 2)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            (string Question, string Answer, int Score) best = ("", "", 0);
+            (string Question, string Answer, double Score) best = ("", "", 0);
             foreach (var (q, a) in entries)
             {
                 var qLower = q.ToLowerInvariant();
-                var score = queryWords.Count(w => qLower.Contains(w));
-                if (score > best.Score)
-                    best = (q, a, score);
+                var faqWords = qLower.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(w => !stopWords.Contains(w) && w.Length > 2)
+                    .ToList();
+
+                int forwardOverlap = queryWords.Count(w => qLower.Contains(w));
+                double reversePrecision = faqWords.Count > 0
+                    ? (double)forwardOverlap / faqWords.Count
+                    : 0;
+                double combined = forwardOverlap + reversePrecision;
+
+                if (combined > best.Score)
+                    best = (q, a, combined);
             }
 
-            // Require at least 2 matching words and that the best match isn't ambiguous
-            if (best.Score >= 2)
+            // Require at least 2 meaningful words matched
+            if (best.Score >= 2.0)
                 return best.Answer;
 
             return null;
@@ -1628,6 +1660,9 @@ public sealed class AzureAIService : IAzureAIService
             - "what is the Site AQI at Al Reyada School?" → NO device name → site_aqi_single, stationName="Al Reyada School"
             - "AQI at Al Saad Indian School" → NO device name → site_aqi_single, stationName="Al Saad Indian School"
             - "CO2 at Kaltham Hasan Al Obeidli" → NO device name → site_aqi_single, stationName="Kaltham Hasan Al Obeidli"
+            - "latest readings for NO2, O3, and CO at Al Saad Indian School" → NO device name → site_readings_all, stationName="Al Saad Indian School", parameterNames="NO2,O3,CO"
+            - "NO2 and PM2.5 at Al Reyada School" → NO device name → site_readings_all, stationName="Al Reyada School", parameterNames="NO2,PM2.5"
+            - "what is the PM2.5 and temperature at Al Naeem School" → NO device name → site_readings_all, stationName="Al Naeem School", parameterNames="PM2.5,Temperature"
             Examples — device_reading_history (historical/averaged/timestamped readings):
             - "1H averages of SEI100M 0008" → device_reading_history, deviceName="SEI100M 0008", interval="1hour"
             - "1H reading of SEI100M 0008" → device_reading_history, deviceName="SEI100M 0008", interval="1hour"
@@ -1729,9 +1764,12 @@ public sealed class AzureAIService : IAzureAIService
             1. If the user mentions a SPECIFIC site or station name AND asks for ONE value (AQI, AQI category, or a specific single pollutant like CO2, PM2.5, NO2, temperature, humidity) OR asks a safety/health/attendance question about that site — AND the question does NOT contain a past date reference — → select "site_aqi_single". Returns a single sentence — NOT a table.
                CRITICAL: If the user says "site reading", "site readings", "reading of the site", "pollutant readings", "parameter readings", "complete readings", or "all readings" — do NOT select site_aqi_single — select site_readings_all (rule 2) instead. site_aqi_single is ONLY for single-value AQI questions.
                When extracting stationName: use ONLY the site name itself — strip any trailing region qualifier like "in Al Ain", "in Abu Dhabi", "in Al Dhafra". Strip trailing words like "site", "station", "location". Example: "Kaltham Hasan AL Obeidli site" → stationName = "Kaltham Hasan AL Obeidli".
-            2. If the user mentions a SPECIFIC site or station name AND asks for ALL readings, ALL parameters, ALL current data, "site reading", "site readings", "reading of the site", "pollutant readings", "parameter readings", "complete readings", or the last 24 hours of readings → select "site_readings_all". Returns a full pollutant table.
-               Examples: "what is the site reading of Shireen Qaitouqa" → site_readings_all; "site readings at Al Reyada School" → site_readings_all; "all readings at Al Naeem School" → site_readings_all.
+            2. If the user mentions a SPECIFIC site or station name AND asks for readings (even specific pollutants like NO2, O3, CO, PM2.5), ALL readings, ALL parameters, ALL current data, "site reading", "site readings", "reading of the site", "pollutant readings", "parameter readings", "complete readings", or the last 24 hours of readings → select "site_readings_all". Returns a full pollutant table.
+               CRITICAL: When the user asks for specific pollutants (NO2, O3, CO, PM2.5, etc.) AT a named site/school — this is ALWAYS site_readings_all, NOT device_live_reading. Device templates are only for DEVICE names (e.g. "HAWAQM-001", "Device-17"), NOT site/school names.
+               Examples: "what is the site reading of Shireen Qaitouqa" → site_readings_all; "site readings at Al Reyada School" → site_readings_all; "all readings at Al Naeem School" → site_readings_all; "latest readings for NO2, O3, and CO at Al Saad Indian School" → site_readings_all; "NO2 and PM2.5 at Al Reyada School" → site_readings_all.
                Same stationName rule: strip region qualifier and trailing generic words from the extracted name.
+               PARAMETER FILTER: If the user names SPECIFIC parameters (e.g. "NO2, O3 and CO", "PM2.5 and temperature", "CO2 readings"), extract them as a comma-separated string in parameterNames (e.g. "NO2,O3,CO"). If the user asks for all readings or does not specify particular parameters, omit parameterNames entirely.
+               Examples with parameterNames: "latest readings for NO2, O3, and CO at Al Saad Indian School" → stationName="Al Saad Indian School", parameterNames="NO2,O3,CO"; "PM2.5 and temperature at Al Reyada School" → stationName="Al Reyada School", parameterNames="PM2.5,Temperature"; "all readings at Al Naeem School" → stationName="Al Naeem School", no parameterNames.
             2b. If the user asks which schools or sites repeatedly exceeded a given AQI threshold AND had a Data Success Rate (DSR) above a minimum (e.g. "schools that repeatedly exceeded AQI 100 but still had Data Success Rate of at least 75%", "sites that crossed AQI 100 more than once with good data", "exceeded AQI threshold with acceptable DSR") → select "sites_repeated_aqi_exceedance_with_dsr". Extract aqiThreshold (default 100) and dsrThreshold (default 75). NEVER select schools_latest_pollutant for this case — schools_latest_pollutant only shows current/live readings, not historical exceedance counts combined with DSR.
             3. Only select "schools_latest_pollutant" when the user says "schools" generically with a GENERIC plural reference (e.g. "all schools", "schools in Al Ain", "what is the AQI at schools") with NO specific school name mentioned AND is asking for a specific POLLUTANT reading (CO2, PM2.5, AQI value, etc.) WITHOUT an AQI quality level filter AND WITHOUT any historical exceedance or DSR condition. NEVER select schools_latest_pollutant when: (a) a specific school or site name is mentioned, (b) the user is asking about AQI category/quality level (good, moderate, unhealthy, etc.) — use site_aqi_by_category with sectorName="Public & Govt-School" instead, or (c) the user asks about "repeatedly exceeded", "exceedance", "Data Success Rate", or "DSR" combined with AQI — use sites_repeated_aqi_exceedance_with_dsr instead.
             4. If the user asks an AQI question that mentions ONLY a region name (Abu Dhabi, Abudhabi, Al Ain, Alain, Al Dhafra, Aldhafra) with NO specific site name, OR asks for "all regions", "by region", "region wise" → select "region_aqi_geographical". Extract regionName ONLY if exactly ONE specific region is mentioned and the user is asking about that region alone. OMIT regionName (return all regions) when: the user names TWO OR MORE regions (e.g. "Abu Dhabi, Al Ain, and Al Dhafra"), says "each region", "all regions", "every region", "each of the regions", "all three regions", "region wise", or any phrasing that implies the complete set. NEVER extract regionName when the question implies all three. NEVER select region_aqi_geographical when a specific site name is also present — rule 1 takes priority.
@@ -1916,8 +1954,8 @@ public sealed class AzureAIService : IAzureAIService
             11a. If the user asks how many SECTORS exist, what sectors are in HAWAQM, or list of sectors (with NO specific sector name) → select "list_sectors". NEVER select site_count (that shows sites per sector, not the sector list).
             11b. If the user asks how many SUB-SECTORS exist, what sub-sectors are in HAWAQM, or list of sub-sectors → select "list_subsectors". NEVER select sites_by_filter or list_sectors for sub-sector questions.
             11c. If the user asks for a PIE CHART or DONUT CHART or DISTRIBUTION CHART of sites or schools by AQI category (e.g. "create a pie chart of schools by their current AQI category", "show me a pie chart of AQI distribution", "AQI category breakdown as a pie chart", "show me the AQI categories in pie chart", "AQI pie chart", "pie chart of AQI", "show AQI distribution", "AQI category breakdown for Al Ain in pie chart", "AQI category breakdown for Al Ain region in pie chart", "give the AQI category breakdown for Al Ain region in pie chart") → select "schools_aqi_pie". If the user mentions "schools" or "school sites", extract sectorName="Public & Govt-School". If a region is mentioned (Abu Dhabi / Al Ain / Al Dhafra), extract regionName. If NO sector or region is mentioned, select "schools_aqi_pie" with NO parameters — this returns the AQI category distribution for ALL sites. NEVER ask for clarification — always pick this template. NEVER select faq_answer for any question containing "pie chart" and "AQI" together. NEVER select site_aqi_by_category or site_aqi_all for pie/donut/distribution chart questions.
-            11c-ii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each REGION (e.g. "pie chart of sites by region", "how many sites per region as a chart", "show number of sites in each region") → select "sites_by_filter_chart". No parameters needed.
-            11c-iii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each SECTOR (e.g. "pie chart of sites by sector", "how many sites per sector as a chart", "show number of sites in each sector") → select "sites_by_filter_chart". No parameters needed.
+            11c-ii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each REGION (e.g. "pie chart of sites by region", "how many sites per region as a chart", "show number of sites in each region") → select "sites_by_region_chart". No parameters needed.
+            11c-iii. If the user asks for a PIE CHART or BAR CHART showing the NUMBER or COUNT of sites in each SECTOR (e.g. "pie chart of sites by sector", "how many sites per sector as a chart", "show number of sites in each sector") → select "sites_by_sector_chart". No parameters needed.
             11c-iv. If the user asks for a chart of AVERAGE AQI by REGION (e.g. "bar chart of AQI by region", "average AQI per region chart", "AQI comparison across regions") → select "aqi_by_region_chart". No parameters needed.
             CRITICAL disambiguation — "AQI category breakdown" vs "AQI by region":
               - "AQI category breakdown for Al Ain in pie chart", "AQI category breakdown for Al Ain region", "give the AQI category breakdown for Al Ain region in pie chart", "pie chart of AQI categories in Al Ain" → these ask HOW MANY SITES fall into each AQI category (Good/Moderate/Unhealthy etc.) within a region → select "schools_aqi_pie" with regionName="Al Ain". NEVER select aqi_by_region_chart for these.
@@ -1926,7 +1964,7 @@ public sealed class AzureAIService : IAzureAIService
             11c-v. If the user asks for a chart of SITE STATUS (Active vs Offline/Inactive) (e.g. "pie chart of site status", "active vs offline sites chart", "site availability breakdown") → select "sites_by_status_chart". No parameters needed.
             11c-vi. If the user asks for a chart of a POLLUTANT or AQI by SECTOR (e.g. "bar chart of PM2.5 by sector", "average AQI by sector", "pollutant levels per sector") → select "pollutant_by_sector_chart". Extract parameterName (e.g. "PM2.5", "PM10", "AQI Index"). Default to "AQI Index" if not specified.
             11c-vii. If the user asks for a pie or bar chart of devices grouped by model/type (e.g. "show me the distribution of devices by model", "pie chart of device models", "how many devices of each model") → select "devices_by_model_chart". No parameters needed. NEVER select site_device_summary or list_devices for this.
-            11c-viii. If the user asks for a pie or bar chart based on school sub-sectors or type of school (private/public/government) (e.g. "plot a pie chart based on school subsectors", "pie chart of type of school", "private vs public school chart") → select "sites_by_subsector_chart". No parameters needed. NEVER select sites_by_filter_chart (that groups by main sector, not sub-sector).
+            11c-viii. If the user asks for a pie or bar chart based on school sub-sectors or type of school (private/public/government) (e.g. "plot a pie chart based on school subsectors", "pie chart of type of school", "private vs public school chart") → select "sites_by_subsector_chart". No parameters needed. NEVER select sites_by_sector_chart (that groups by main sector, not sub-sector).
             11c-ix. If the user asks for a pie or bar chart of sites based on AQI levels/categories (e.g. "sites based on AQI levels", "AQI level distribution chart", "pie chart of sites by AQI category") → select "sites_aqi_level_chart". No parameters needed. NEVER select schools_aqi_pie (that is school-sector only) or site_aqi_by_category (that returns a filtered table, not a chart) for this.
             11d. If the user asks about TOTAL DEVICES or DEVICES PER SITE across ALL sites (e.g. "total number of devices per site in the application", "how many devices does each site have", "device count per site", "total devices across all sites") — even without naming a specific site — select "site_device_summary". No parameters needed. NEVER select site_aqi_single for this type of question.
             11d-i. If the user asks about DEVICES PER SITE — including:
@@ -1947,6 +1985,30 @@ public sealed class AzureAIService : IAzureAIService
               - "which commercial sites have no devices" → minDeviceCount=0, maxDeviceCount=0, sectorName="Commercial"
               - "devices not yet installed in Al Dhafra" → minDeviceCount=0, maxDeviceCount=0, regionName="Al Dhafra"
               NEVER select active_device_count or devices_by_filter for device-per-site questions.
+
+            FAQ RULE — select "faq_answer" for general knowledge questions about how HAWAQM works. These questions do NOT need database data:
+            - How often / how frequently do devices record data, send data, or transmit readings
+            - Recording frequency, data interval, capture frequency, sensor reading frequency
+            - When is a device considered offline or inactive
+            - When is a site shown as inactive
+            - How is the site AQI calculated (with multiple devices)
+            - What parameters or pollutants does HAWAQM monitor
+            - Does HAWAQM monitor/measure/track temperature, humidity, noise
+            - What are the AQI categories, levels, ranges, or classification (Good/Moderate/Unhealthy/Very Unhealthy/Hazardous)
+            - What is AQI, IAQ-I, or Indoor Air Quality Index
+            - What is MOCCAE
+            - Which regions are covered by HAWAQM (Abu Dhabi / Al Ain / Al Dhafra)
+            - What data can I see / what is my access
+            - Can I export data, map show indoor and outdoor, site without coordinates
+            - What is the Data Success Rate definition or meaning (NOT the current live value)
+            - Weather forecasts, pollen counts, radon levels (out of scope)
+            - Exceedance report limits, statistical report limits
+            - Can mold tests be combined with AQI
+            - Which devices should be checked first (advisory)
+            - Can you prove what caused a spike (causation questions)
+            - Leave requests or non-HAWAQM tasks (out of scope)
+            CRITICAL: "how frequently is data recorded", "how often does the device send data", "how often are readings taken", "sensor reading frequency", "data transmission frequency", "at what intervals do HAWAQM devices" — these are ALL FAQ questions. NEVER select a SQL or API template for these.
+            NEVER select faq_answer when: the user asks for the CURRENT/LIVE data success rate value, a live AQI reading, a device reading, a site list, or any real-time or historical data.
 
             Return ONLY valid JSON in this exact format:
             {

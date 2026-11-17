@@ -311,6 +311,8 @@ public sealed class ChatController : ControllerBase
             "aqi value for moderate", "aqi value for unhealthy", "aqi value for very unhealthy",
             "hazardous aqi value", "very unhealthy aqi value", "good aqi value",
             "moderate aqi value", "unhealthy aqi value",
+            "very unhealthy aqi range",
+            "aqi range falls under the unhealthy",
             "aqi for sensitive groups", "unhealthy for sensitive groups", "aqi for sensitive groups",
             "classified as unhealthy", "classified as good", "classified as moderate",
             "classified as hazardous", "classified as very unhealthy",
@@ -361,24 +363,44 @@ public sealed class ChatController : ControllerBase
             "offline devices should be checked",
             "which devices should be checked first",
             "should be checked first",
+            "offline devices need attention",
+            "priority check",
             "how should i compare pollutant exceedances",
             "compare pollutant exceedances across",
             "averaging periods",
+            "different averaging times",
+            "pollutant exceedance",
             "can i use a 1-hour threshold for pm10",
             "1-hour threshold for pm10",
+            "1-hour pm10 threshold",
+            "1-hour limit suitable for pm10",
             "can i compare a 5-minute",
             "5-minute pm2.5 reading directly",
+            "5-minute pm2.5 value",
+            "24-hour threshold",
             "mold test results be combined with aqi",
+            "mold test results and aqi",
+            "include mold results in the aqi",
             "mold-only site",
+            "mold test site",
             "site has no device but has a mold",
+            "device statistics",
             "data success rate is below 75",
+            "data success rate is under 75",
             "dsr is below 75",
+            "aqi results with dsr",
             "can i still use the aqi results",
             "estimate the missing aqi",
             "missing aqi values",
             "can you show me radon",
             "radon levels",
             "pollen count",
+            "pollen level",
+            "pollen levels",
+            "tell me the pollen",
+            "show me the pollen",
+            "what is the pollen",
+            "pollen at",
             "how often do hawaqm devices record",
             "data recording frequency",
             "recording frequency",
@@ -393,12 +415,41 @@ public sealed class ChatController : ControllerBase
             "data interval",
             "how frequently do",
             "how frequently does hawaqm",
+            "how frequently is data",
+            "how frequently are readings",
+            "how frequently is data recorded",
             "frequency of data recording",
             "frequency of recording",
             "how often is data recorded",
+            "how often is data sent",
+            "how often does the device send",
+            "how often are readings taken",
+            "data transmission frequency",
+            "sensor reading frequency",
+            // device offline/inactive status variants
             "when is a device considered offline",
+            "device marked as offline",
+            "device marked as inactive",
+            "determine whether a device",
+            "how long with no data",
+            "how long without data",
+            "long without data does it take",
+            "classified as offline",
+            "classified as inactive",
+            "take for a device to be classified",
+            "device to be classified as offline",
+            "device to be classified as inactive",
+            "conditions is a device marked",
+            "criteria determine whether a device",
+            // site inactive status variants
             "when is a site shown as inactive",
+            "classify a site as inactive",
+            "why would a site be inactive",
+            "when does the system classify a site",
+            // site-level AQI calculation variants
             "how is the site aqi calculated",
+            "site-level aqi",
+            "several devices are present",
             "which air-quality parameters are monitored",
             "what parameters are monitored",
             "does hawaqm monitor temperature",
@@ -426,6 +477,10 @@ public sealed class ChatController : ControllerBase
             "site with multiple devices",
             "overall aqi for a site with",
             "calculate the overall aqi",
+            "aqi calculated if a site has two devices",
+            "site has two devices",
+            "how is aqi determined for a site",
+            "aqi determined for a site with",
             "can i export hawaqm data",
             "can i view both indoor and ambient",
             "can i see indoor and ambient",
@@ -569,6 +624,10 @@ public sealed class ChatController : ControllerBase
             "device readings last 24 hours",
             "device readings — last 24",
             "device readings - last 24",
+            "readings were recorded by a device",
+            "readings recorded by a device",
+            "recorded by a device over the past",
+            "recorded by a device over the last",
             "can i use the statistical report",
             "can i use the exceedance report",
             "which averaging intervals should be used",
@@ -581,8 +640,19 @@ public sealed class ChatController : ControllerBase
             "six months of exceedance analysis",
             "6 months of exceedance analysis",
             "i need six months of exceedance",
+            "exceedance report for the last six months",
+            "exceedance report for the past six months",
+            "exceedance report covering the last six months",
+            "exceedance report — last 6 months",
+            "exceedance report - last 6 months",
+            "exceedance report last 6 months",
+            "give me the exceedance report for the last",
+            "exceedance report for the last 6",
+            "exceedance report for the past 6",
             "why can the site aqi look acceptable",
             "site average be hiding a problem",
+            "can the site average",
+            "site average vs",
             "how can one device have a high reading",
             "one device have a high reading",
             "one device high reading while",
@@ -614,6 +684,51 @@ public sealed class ChatController : ControllerBase
             "site aqi looks fine but device",
             "overall site aqi looks okay",
             "overall site looks okay but device",
+            // inactive site but device still sending — FAQ, not a live data query
+            "site is marked inactive",
+            "inactive site — device still sending",
+            "inactive site - device still sending",
+            "inactive site device still sending",
+            "site marked inactive but",
+            "why is the site inactive if a device",
+            "site inactive if a device is still",
+            "site inactive but device is still sending",
+            "site inactive when device is sending",
+            "site shown as inactive but device",
+            "site still inactive even though device",
+            "can a site be inactive while its device",
+            "site be inactive while its device",
+            "site inactive while its device",
+            "inactive while its device is sending",
+            "site inactive while device is sending",
+            "site inactive if device is sending",
+            "site inactive if device is active",
+            // compare two sites — FAQ clarification (no site names specified)
+            "differences between the two sites",
+            "differences between the two",
+            "compare the two sites",
+            "compare two sites",
+            "show me the differences",
+            "weather condition caused a pollutant",
+            "weather condition caused the pollutant",
+            "weather caused a pollutant",
+            "weather caused the pollutant",
+            "weather led to the rise in pollution",
+            "weather linked to pollutant spike",
+            "weather linked to pollutant",
+            "which weather condition caused",
+            "what weather caused",
+            "what weather led to",
+            "will deleting a site remove",
+            "deleting a site remove it from",
+            "delete a site",
+            "deleted site",
+            "site disappeared from dashboard",
+            "site disappeared after",
+            "what happens when a site is deleted",
+            "what happens to a deleted site",
+            "does deleting a site",
+            "site removed from dashboard",
             "can you prepare a one-year raw-data export",
             "can mold test results be combined",
             "can you tell me tomorrow",
@@ -642,10 +757,22 @@ public sealed class ChatController : ControllerBase
             "reason for the aqi",
             "nearest ambient station and indoor site have different update",
             "if the nearest ambient station",
+            "compare an indoor site with the nearest ambient station if their update",
+            "compare them directly",
+            "different update times",
+            "two sites have different update times",
+            "indoor vs ambient",
+            "indoor site have different update",
+            "ambient station if their update times",
             // General AQI information/level questions
             "what is aqi", "tell me about aqi", "about aqi", "aqi information",
             "aqi overview", "aqi basics", "aqi guide", "aqi intro",
             "what is the aqi", "what does aqi stand for", "aqi stands for",
+            "definition of aqi", "define aqi", "what does aqi mean", "what aqi means",
+            "what is the meaning of aqi", "meaning of aqi", "aqi meaning",
+            "what is air quality", "what is air quality index", "air quality index meaning",
+            "air quality index definition", "define air quality index",
+            "what does air quality index mean", "explain air quality index",
             "what does an aqi", "what does an aqi value", "what does an aqi of",
             "what does aqi of", "aqi of 50", "aqi of 100", "aqi of 150", "aqi of 200", "aqi of 300",
             "what is a good aqi level", "what is a bad aqi level", "what is a safe aqi level",
@@ -861,6 +988,23 @@ public sealed class ChatController : ControllerBase
             "schools in very unhealthy", "schools in sensitive"
         };
         bool isSiteListAqiQuestion = siteListIndicators.Any(k => lowerMsg.Contains(k));
+        // Exception: "unhealthy for sensitive groups" is in siteListIndicators to catch data queries
+        // ("schools with unhealthy for sensitive groups AQI"), but it must NOT block definition
+        // questions that ask what the category range IS ("What AQI range is Unhealthy for Sensitive Groups?").
+        // A definition question has no site-listing words alongside it.
+        var sensitiveGroupsDefinitionPhrases = new[] {
+            "what aqi range is unhealthy for sensitive",
+            "aqi range is unhealthy for sensitive",
+            "aqi range falls under the unhealthy for sensitive",
+            "which aqi values fall under the unhealthy for sensitive",
+            "what aqi range corresponds to unhealthy for sensitive",
+            "what range of aqi is classified as unhealthy for sensitive",
+            "what range of aqi is unhealthy for sensitive",
+            "aqi is unhealthy for sensitive groups",
+            "range for unhealthy for sensitive"
+        };
+        bool isSensitiveGroupsDefinition = sensitiveGroupsDefinitionPhrases.Any(p => lowerMsg.Contains(p));
+        if (isSensitiveGroupsDefinition) isSiteListAqiQuestion = false;
         // Never send chart/pie/breakdown questions to FAQ — they need data, not definitions.
         bool isFaqChartBypass = lowerMsg.Contains("pie chart") || lowerMsg.Contains("pie graph")
             || lowerMsg.Contains("bar chart") || lowerMsg.Contains("bar graph") || lowerMsg.Contains("in pie");
@@ -1296,7 +1440,14 @@ public sealed class ChatController : ControllerBase
         bool isAqiCategoryPieChart = userAskedForChart
             && (aqiCategoryWords.Any(k => lowerMsg.Contains(k))
                 || (lowerMsg.Contains("aqi") && (lowerMsg.Contains("breakdown") || lowerMsg.Contains("distribution") || lowerMsg.Contains("categor"))));
-        bool isSchoolsAqiPie = isSchoolsAqiPieCase1 || isAqiCategoryPieChart;
+        // Never fire schools_aqi_pie when the question is about site counts by sector or region —
+        // those have dedicated pre-checks that use SQL, not the AQI API.
+        // isSitesBySectorChart / isSitesByRegionChart are computed below; guard using keyword detection here.
+        bool msgIsSectorOrRegionCountChart =
+            lowerMsg.Contains("by sector") || lowerMsg.Contains("by region")
+            || lowerMsg.Contains("per sector") || lowerMsg.Contains("per region")
+            || lowerMsg.Contains("sites by sector") || lowerMsg.Contains("sites by region");
+        bool isSchoolsAqiPie = !msgIsSectorOrRegionCountChart && (isSchoolsAqiPieCase1 || isAqiCategoryPieChart);
         // Exclude device-count / device-summary questions — "total number of devices per site" is NOT a parameter reading lookup
         var deviceCountKeywords = new[] { "devices per site", "device per site", "devices at each site", "number of devices", "device count", "total devices", "devices in the application", "devices in the system" };
         bool isDeviceCountQuestion = deviceCountKeywords.Any(k => lowerMsg.Contains(k));
@@ -2124,6 +2275,9 @@ public sealed class ChatController : ControllerBase
 
         bool isIndoorAmbientCompareQuery =
             isNearestAmbientIdentityQuery
+            // "Is the AQI at X higher or lower than the nearest ambient station?"
+            || (hasAtSiteRef && (lowerMsg.Contains("higher or lower") || lowerMsg.Contains("lower or higher"))
+                && (lowerMsg.Contains("ambient") || lowerMsg.Contains("outdoor")))
             || ((lowerMsg.Contains("compare") || lowerMsg.Contains("comparison") || lowerMsg.Contains("vs") || lowerMsg.Contains("versus"))
                 && (lowerMsg.Contains("ambient") || lowerMsg.Contains("outdoor"))
                 && (lowerMsg.Contains("indoor") || lowerMsg.Contains("nearest ambient") || lowerMsg.Contains("nearest outdoor")
@@ -2143,16 +2297,24 @@ public sealed class ChatController : ControllerBase
         bool isSiteReadingsQuestion = hasAtSiteRef && !msgHasPastDate
             && (lowerMsg.Contains("site reading") || lowerMsg.Contains("site readings")
                 || lowerMsg.Contains("reading of") || lowerMsg.Contains("readings of")
+                || lowerMsg.Contains("readings for") || lowerMsg.Contains("reading for")
                 || lowerMsg.Contains("all readings") || lowerMsg.Contains("all parameters")
                 || lowerMsg.Contains("all pollutants") || lowerMsg.Contains("complete readings")
                 || lowerMsg.Contains("full readings") || lowerMsg.Contains("show readings")
-                || lowerMsg.Contains("show me readings") || lowerMsg.Contains("current readings")
+                || lowerMsg.Contains("show me readings") || lowerMsg.Contains("show me the readings")
+                || lowerMsg.Contains("show the readings") || lowerMsg.Contains("get the readings")
+                || lowerMsg.Contains("get readings") || lowerMsg.Contains("current readings")
                 || lowerMsg.Contains("latest readings") || lowerMsg.Contains("live readings")
                 || lowerMsg.Contains("live data") || lowerMsg.Contains("show data")
                 || lowerMsg.Contains("pollutant reading") || lowerMsg.Contains("pollutant readings")
                 || lowerMsg.Contains("pollutants reading") || lowerMsg.Contains("pollutants readings")
                 || lowerMsg.Contains("parameter reading") || lowerMsg.Contains("parameter readings")
-                || lowerMsg.Contains("parameters reading") || lowerMsg.Contains("parameters readings"));
+                || lowerMsg.Contains("parameters reading") || lowerMsg.Contains("parameters readings")
+                || lowerMsg.Contains("sensors are currently reporting")
+                || lowerMsg.Contains("sensors are reporting")
+                || lowerMsg.Contains("check the latest readings")
+                || lowerMsg.Contains("check the readings")
+                || lowerMsg.Contains("what are the readings"));
 
         if (isSiteReadingsQuestion)
         {
@@ -2162,11 +2324,14 @@ public sealed class ChatController : ControllerBase
             {
                 var readingsBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
                 var readingsFillResult = await _azureAI.FillParametersAsync(request.Message, readingsTemplate, history, scope, ct);
+                // Inject parameterNames from the question directly (LLM won't extract it without a description field)
+                ApplySiteReadingsParamFilter(lowerMsg, readingsFillResult.Parameters);
                 var readingsApiResult = await _externalApi.CallAsync(readingsTemplate.ApiCall, readingsFillResult.Parameters, scope, readingsBearerToken, user, readingsTemplate.Id, ct);
                 if (readingsApiResult.Success)
                 {
+                    var readingsRows = FilterSiteReadingsRows(readingsApiResult.Rows, readingsFillResult.Parameters.GetValueOrDefault("parameterNames"));
                     var readingsMsgId = Guid.NewGuid();
-                    var readingsSummary = await _azureAI.SummarizeResultsAsync(request.Message, readingsTemplate, readingsApiResult.Rows, scope, ct);
+                    var readingsSummary = await _azureAI.SummarizeResultsAsync(request.Message, readingsTemplate, readingsRows, scope, ct);
                     await _sessionService.SaveBothMessagesAsync(
                         sessionId: session.SessionId,
                         userContent: request.Message,
@@ -2175,7 +2340,7 @@ public sealed class ChatController : ControllerBase
                         sql: null,
                         responseType: readingsTemplate.ResponseType,
                         chartType: null,
-                        chartDataJson: SerializeRowsForHistory(readingsTemplate.ResponseType, readingsApiResult.Rows),
+                        chartDataJson: SerializeRowsForHistory(readingsTemplate.ResponseType, readingsRows),
                         dataSource: readingsTemplate.TableUsed,
                         dateRange: null,
                         modelUsed: readingsFillResult.ModelUsed,
@@ -2189,14 +2354,38 @@ public sealed class ChatController : ControllerBase
                         messageId: readingsMsgId,
                         template: readingsTemplate,
                         llmSummary: readingsSummary,
-                        rows: readingsApiResult.Rows,
-                        rowCount: readingsApiResult.Rows.Count,
+                        rows: readingsRows,
+                        rowCount: readingsRows.Count,
                         executionTimeMs: (int)readingsApiResult.ExecutionTimeMs,
                         scope: scope,
                         modelUsed: readingsFillResult.ModelUsed,
                         tokenCount: readingsFillResult.TokensUsed));
                 }
-                _log.Warning("ChatController: site-readings pre-check API failed, falling through to routing");
+                // API failed — extract site name from LLM params and return a friendly not-found message
+                // instead of falling through to routing (which would misroute to device_live_reading).
+                var failedSiteName = readingsFillResult.Parameters.GetValueOrDefault("stationName");
+                var displaySiteName = string.IsNullOrWhiteSpace(failedSiteName) ? "The requested site" : failedSiteName;
+                var siteNotFoundMsg = $"{displaySiteName} does not appear among the sites available to your account. This can happen if the name is slightly different, or if the site is outside your current access. Kindly check the site name or the region, and ask again with the correct site name or region. For access-related queries, you may contact the AQMS support team at aqmssupport@adphc.gov.ae.";
+                _log.Warning("ChatController: site-readings pre-check API failed for site '{Site}', returning not-found", failedSiteName);
+                var siteNotFoundMsgId = Guid.NewGuid();
+                await _sessionService.SaveBothMessagesAsync(
+                    sessionId: session.SessionId,
+                    userContent: request.Message,
+                    assistantMessageId: siteNotFoundMsgId,
+                    assistantContent: siteNotFoundMsg,
+                    sql: null,
+                    responseType: "text",
+                    chartType: null,
+                    chartDataJson: null,
+                    dataSource: null,
+                    dateRange: null,
+                    modelUsed: null,
+                    executionTimeMs: 0,
+                    tokenCount: 0,
+                    ct: ct);
+                if (session.MessageCount <= 1)
+                    _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                return Ok(_formatter.FormatError(session.SessionId, siteNotFoundMsg, "NOT_FOUND"));
             }
         }
 
@@ -2384,52 +2573,122 @@ public sealed class ChatController : ControllerBase
         // "number of sites in each region" scores 1.0 on count_sites_in_region which requires regionName.
         // Detect explicit chart request about sites grouped by region, with no AQI/category content.
         var chartByRegionKeywords = new[] { "sites in each region", "sites per region", "sites by region", "number of sites in each region", "count of sites per region", "site count by region", "sites across regions", "breakdown of sites by region", "distribution of sites by region", "region bar graph", "region bar chart", "by region bar", "region pie chart", "region pie graph" };
-        bool isSitesByRegionChart = isChartDistribution && chartByRegionKeywords.Any(k => lowerMsg.Contains(k));
+        // Strong region keywords that imply a CHART even without an explicit "pie chart"/"bar chart" keyword.
+        // Keep this list tight — only phrases that unambiguously mean "visualise as a chart".
+        // Ambiguous phrases ("sites by region") and count questions ("how many sites in each region")
+        // fall through to LLM routing or isSitesByRegionCount respectively.
+        var regionChartStrongKeywords = new[] {
+            "sites by region in pie", "sites by region in bar",
+            "show sites by region", "show me sites by region",
+            "stations by region in pie", "stations by region in bar",
+            "show me stations by region", "show stations by region",
+            "chart showing number of sites in each region",
+            "plot sites by region", "plot a chart of sites by region"
+        };
+        // When user asks for BOTH sector and region, skip region pre-check — sector pre-check handles it,
+        // and the response will include sector breakdown (the more granular of the two).
+        bool msgHasBothSectorAndRegion = (lowerMsg.Contains("sector") && lowerMsg.Contains("region"))
+            && (lowerMsg.Contains(" and ") || lowerMsg.Contains("&"));
+        // Detect whether the message names a specific region
+        string? msgNamedRegion = null;
+        if (lowerMsg.Contains("abu dhabi") || lowerMsg.Contains("abudhabi")) msgNamedRegion = "Abu Dhabi";
+        else if (lowerMsg.Contains("al ain") || lowerMsg.Contains("alain"))  msgNamedRegion = "Al Ain";
+        else if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra")) msgNamedRegion = "Al Dhafra";
+
+        // Suppress chart pre-checks when the user clearly wants a listing/table, not a chart.
+        // Phrases like "list of sites by region", "show list of sites by region", "table of sites by region"
+        // should fall through to LLM routing (which picks sites_by_filter or similar text/table template).
+        bool msgWantsListing = lowerMsg.Contains("list of sites") || lowerMsg.Contains("list of stations")
+            || lowerMsg.Contains("show list") || lowerMsg.Contains("show me list")
+            || lowerMsg.Contains("table of sites") || lowerMsg.Contains("table of stations");
+
+        // "region" anywhere + chart keyword = region chart, as long as "sector" is not also present
+        // Covers: "by region", "Abudhabi region", "region bar chart", "bar chart of sites Abudhabi region"
+        bool msgHasByRegionWithChart = isChartDistribution && lowerMsg.Contains("region")
+            && !lowerMsg.Contains("sector");
+        // When a SPECIFIC region is named (e.g. "sites of Abudhabi region"), route to SECTOR chart
+        // filtered by that region — showing how that region's sites break down by sector is more useful
+        // than showing a single-slice "region" chart.
+        bool msgHasSpecificRegionChart = isChartDistribution && msgNamedRegion != null
+            && lowerMsg.Contains("region") && !lowerMsg.Contains("sector");
+        bool isSitesByRegionChart = !msgWantsListing && !msgHasBothSectorAndRegion && !msgHasSpecificRegionChart
+            && ((isChartDistribution && chartByRegionKeywords.Any(k => lowerMsg.Contains(k)))
+                || regionChartStrongKeywords.Any(k => lowerMsg.Contains(k))
+                || msgHasByRegionWithChart);
 
         if (isSitesByRegionChart)
         {
             var effectiveChartType = userWantsBar ? "bar" : "pie";
             _log.Debug("ChatController: sites-by-region chart pre-check fired → forcing sites_by_region_chart (chartType={Type})", effectiveChartType);
             var regionChartTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_region_chart");
-            if (regionChartTemplate is not null && regionChartTemplate.ApiCall is not null)
+            if (regionChartTemplate is not null)
             {
                 regionChartTemplate.ChartType = effectiveChartType;
-                var regionBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
-                var regionApiResult = await _externalApi.CallAsync(regionChartTemplate.ApiCall, new Dictionary<string, string>(), scope, regionBearerToken, user, regionChartTemplate.Id, ct);
-                if (regionApiResult.Success)
+                // Detect active/inactive filter — override SQL to use 24h device communication window
+                bool regionWantsActive   = lowerMsg.Contains("active") && !lowerMsg.Contains("inactive");
+                bool regionWantsInactive = lowerMsg.Contains("inactive");
+                if (regionWantsActive || regionWantsInactive)
                 {
-                    var regionMsgId = Guid.NewGuid();
-                    var regionSummary = await _azureAI.SummarizeResultsAsync(request.Message, regionChartTemplate, regionApiResult.Rows, scope, ct);
-                    await _sessionService.SaveBothMessagesAsync(
-                        sessionId: session.SessionId,
-                        userContent: request.Message,
-                        assistantMessageId: regionMsgId,
-                        assistantContent: regionSummary,
-                        sql: null,
-                        responseType: regionChartTemplate.ResponseType,
-                        chartType: effectiveChartType,
-                        chartDataJson: SerializeRowsForHistory(regionChartTemplate.ResponseType, regionApiResult.Rows),
-                        dataSource: regionChartTemplate.TableUsed,
-                        dateRange: null,
-                        modelUsed: null,
-                        executionTimeMs: (int)regionApiResult.ExecutionTimeMs,
-                        tokenCount: 0,
-                        ct: ct);
-                    if (session.MessageCount <= 1)
-                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
-                    return Ok(_formatter.Format(
-                        sessionId: session.SessionId,
-                        messageId: regionMsgId,
-                        template: regionChartTemplate,
-                        llmSummary: regionSummary,
-                        rows: regionApiResult.Rows,
-                        rowCount: regionApiResult.Rows.Count,
-                        executionTimeMs: (int)regionApiResult.ExecutionTimeMs,
-                        scope: scope,
-                        modelUsed: null,
-                        tokenCount: 0));
+                    var regionActiveClause = regionWantsActive
+                        ? "AND EXISTS (SELECT 1 FROM DMN_Devices d JOIN (SELECT DeviceID, MAX(LastCommunicationTime) AS LastCommunicationTime FROM DMN_Parameters GROUP BY DeviceID) p ON p.DeviceID = d.DeviceId WHERE d.StationID = s.ID AND ISNULL(d.IsDeleted,0)=0 AND p.LastCommunicationTime >= DATEADD(MINUTE,-1440,GETDATE()))"
+                        : "AND NOT EXISTS (SELECT 1 FROM DMN_Devices d JOIN (SELECT DeviceID, MAX(LastCommunicationTime) AS LastCommunicationTime FROM DMN_Parameters GROUP BY DeviceID) p ON p.DeviceID = d.DeviceId WHERE d.StationID = s.ID AND ISNULL(d.IsDeleted,0)=0 AND p.LastCommunicationTime >= DATEADD(MINUTE,-1440,GETDATE()))";
+                    // Keep @sectorName param so BuildSafeQuery can bind sector filter from regionChartLlmParams
+                    regionChartTemplate.Sql = $"SELECT r.RegionName AS Region, COUNT(*) AS Count FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id WHERE ISNULL(s.IsDeleted, 0) = 0 {regionActiveClause} AND (@sectorName IS NULL OR EXISTS (SELECT 1 FROM Sectors sec WHERE sec.Id = s.SectorID AND LOWER(sec.SectorName) LIKE '%' + LOWER(@sectorName) + '%')) GROUP BY r.RegionName ORDER BY Count DESC";
                 }
-                _log.Warning("ChatController: sites_by_region_chart API call failed, falling through to routing");
+                // Extract sector name from message to filter region chart by sector if mentioned
+                var regionChartLlmParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (lowerMsg.Contains("school") || lowerMsg.Contains("public") || lowerMsg.Contains("govt"))
+                    regionChartLlmParams["sectorName"] = "Public & Govt-School";
+                else if (lowerMsg.Contains("residential") || lowerMsg.Contains("residence"))
+                    regionChartLlmParams["sectorName"] = "Residential";
+                else if (lowerMsg.Contains("commercial"))
+                    regionChartLlmParams["sectorName"] = "Commercial";
+                var (regionSql, regionSqlParams) = _rbac.BuildSafeQuery(regionChartTemplate, regionChartLlmParams, user, scope);
+                var (regionSqlValid, regionSqlError) = SqlValidator.Validate(regionSql);
+                if (regionSqlValid)
+                {
+                    var regionResult = await _sqlExecutor.ExecuteAsync(regionSql, regionSqlParams, ct);
+                    if (regionResult.Success)
+                    {
+                        var regionMsgId = Guid.NewGuid();
+                        var regionTotal = regionResult.Rows.Sum(r => r.TryGetValue("Count", out var cv) && cv is int ci ? ci : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
+                        var regionStatusLabel = regionWantsActive ? "active " : regionWantsInactive ? "inactive " : "";
+                        var regionSummary = $"Here is the breakdown of {regionTotal} {regionStatusLabel}site(s) across {regionResult.Rows.Count} region(s). The chart below shows the count per region.";
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: regionMsgId,
+                            assistantContent: regionSummary,
+                            sql: regionSql,
+                            responseType: regionChartTemplate.ResponseType,
+                            chartType: effectiveChartType,
+                            chartDataJson: SerializeRowsForHistory(regionChartTemplate.ResponseType, regionResult.Rows),
+                            dataSource: regionChartTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: null,
+                            executionTimeMs: (int)regionResult.ExecutionTimeMs,
+                            tokenCount: 0,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: regionMsgId,
+                            template: regionChartTemplate,
+                            llmSummary: regionSummary,
+                            rows: regionResult.Rows,
+                            rowCount: regionResult.Rows.Count,
+                            executionTimeMs: (int)regionResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: null,
+                            tokenCount: 0));
+                    }
+                    _log.Warning("ChatController: sites_by_region_chart SQL execution failed (chartType={Type}), falling through to routing", effectiveChartType);
+                }
+                else
+                {
+                    _log.Warning("ChatController: sites_by_region_chart SQL validation failed ({Error}, chartType={Type}), falling through to routing", regionSqlError, effectiveChartType);
+                }
             }
         }
 
@@ -2530,52 +2789,195 @@ public sealed class ChatController : ControllerBase
             }
         }
 
-        // ── 2e-pre3. Hard pre-check: "pie/bar chart of sites by sector" → force sites_by_filter_chart ──
-        var chartBySectorKeywords = new[] { "sites in each sector", "sites per sector", "sites by sector", "number of sites in each sector", "count of sites per sector", "site count by sector", "breakdown of sites by sector", "distribution of sites by sector", "sector bar graph", "sector bar chart", "by sector bar", "sector pie chart", "sector pie graph" };
-        bool isSitesBySectorChart = isChartDistribution && chartBySectorKeywords.Any(k => lowerMsg.Contains(k));
+        // ── 2e-pre2z2. Hard pre-check: "which/list residential/commercial sites in [region]" → force sites_by_filter ──
+        // Questions like "Which residential sites are in Al Dhafra?" must route to sites_by_filter
+        // with sectorName and regionName injected — LLM often misroutes these.
+        var residentialCommercialListKeywords = new[]
+        {
+            "which residential sites", "which commercial sites", "which institutional sites",
+            "list residential sites", "list commercial sites", "list institutional sites",
+            "show residential sites", "show commercial sites", "show institutional sites",
+            "residential sites in", "commercial sites in", "institutional sites in",
+            "residential sites are in", "commercial sites are in", "institutional sites are in",
+            "residential sector in al dhafra", "residential sector in abu dhabi", "residential sector in al ain",
+            "commercial sector in al dhafra", "commercial sector in abu dhabi", "commercial sector in al ain",
+            "sites under residential in", "sites under commercial in",
+            "give me residential sites", "give me commercial sites",
+            "show me residential sites", "show me commercial sites",
+        };
+        bool isResComListingQuestion = residentialCommercialListKeywords.Any(k => lowerMsg.Contains(k))
+            && !hasParameterKeyword
+            && !isChartDistribution;
+
+        if (isResComListingQuestion)
+        {
+            _log.Debug("ChatController: residential/commercial listing pre-check fired → forcing sites_by_filter");
+            var resComListTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_filter");
+            if (resComListTemplate is not null)
+            {
+                var resComListParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                // Inject sectorName
+                if (lowerMsg.Contains("residential"))       resComListParams["sectorName"] = "Residential";
+                else if (lowerMsg.Contains("commercial"))   resComListParams["sectorName"] = "Commercial";
+                else if (lowerMsg.Contains("institutional")) resComListParams["sectorName"] = "Institutional";
+                // Inject regionName
+                if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                                                            resComListParams["regionName"] = "Al Dhafra";
+                else if (lowerMsg.Contains("al ain"))       resComListParams["regionName"] = "Al Ain";
+                else if (lowerMsg.Contains("abu dhabi"))    resComListParams["regionName"] = "Abu Dhabi";
+
+                var (resComSql, resComSqlParams) = _rbac.BuildSafeQuery(resComListTemplate, resComListParams, user, scope);
+                var (resComValid, _) = SqlValidator.Validate(resComSql);
+                if (resComValid)
+                {
+                    var resComResult = await _sqlExecutor.ExecuteAsync(resComSql, resComSqlParams, ct);
+                    if (resComResult.Success)
+                    {
+                        var resComMsgId = Guid.NewGuid();
+                        var sectorLabel  = resComListParams.GetValueOrDefault("sectorName") ?? "Residential";
+                        var regionLabel  = resComListParams.GetValueOrDefault("regionName");
+                        string resComSummary;
+                        if (resComResult.Rows.Count == 0)
+                        {
+                            resComSummary = string.IsNullOrWhiteSpace(regionLabel)
+                                ? $"No {sectorLabel} sites were found."
+                                : $"No {sectorLabel} sites were found in the {regionLabel} region.";
+                            resComListTemplate.ResponseType = "text";
+                        }
+                        else
+                        {
+                            resComSummary = string.IsNullOrWhiteSpace(regionLabel)
+                                ? $"Found {resComResult.Rows.Count} {sectorLabel} site(s)."
+                                : $"Found {resComResult.Rows.Count} {sectorLabel} site(s) in {regionLabel}.";
+                        }
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: resComMsgId,
+                            assistantContent: resComSummary,
+                            sql: resComSql,
+                            responseType: resComListTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: SerializeRowsForHistory(resComListTemplate.ResponseType, resComResult.Rows),
+                            dataSource: resComListTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: null,
+                            executionTimeMs: (int)resComResult.ExecutionTimeMs,
+                            tokenCount: 0,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: resComMsgId,
+                            template: resComListTemplate,
+                            llmSummary: resComSummary,
+                            rows: resComResult.Rows,
+                            rowCount: resComResult.Rows.Count,
+                            executionTimeMs: (int)resComResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: null,
+                            tokenCount: 0));
+                    }
+                }
+                _log.Warning("ChatController: residential/commercial listing pre-check SQL failed, falling through to routing");
+            }
+        }
+
+        // ── 2e-pre3. Hard pre-check: "pie/bar chart of sites by sector" → force sites_by_sector_chart ──
+        var chartBySectorKeywords = new[] { "sites in each sector", "sites per sector", "sites by sector", "active sites by sector", "number of sites in each sector", "count of sites per sector", "site count by sector", "breakdown of sites by sector", "distribution of sites by sector", "sector bar graph", "sector bar chart", "by sector bar", "sector pie chart", "sector pie graph", "break down active sites by sector", "break down sites by sector", "breakdown active sites by sector" };
+        // Strong sector keywords that imply a CHART even without an explicit "pie chart"/"bar chart" keyword.
+        // Keep this list tight — ambiguous phrases like "sites by sector" fall through to LLM/isSitesBySectorCount.
+        var sectorChartStrongKeywords = new[] {
+            "sites by sector in pie", "sites by sector in bar",
+            "show sites by sector", "show me sites by sector",
+            "stations by sector in pie", "stations by sector in bar",
+            "show me stations by sector", "show stations by sector",
+            "plot sites by sector", "plot a chart of sites by sector"
+        };
+        // "sector" anywhere + chart keyword = sector chart, as long as "region" is not also present
+        // Covers: "by sector", "sector pie chart", "bar chart of sites by sector", "Abu Dhabi sector chart"
+        bool msgHasBySectorWithChart = isChartDistribution && lowerMsg.Contains("sector")
+            && !lowerMsg.Contains("region");
+        bool isSitesBySectorChart = !msgWantsListing
+            && (msgHasBothSectorAndRegion  // "sector and region" → always show sector chart
+            || msgHasSpecificRegionChart        // "sites of Abudhabi region" → sector chart filtered by region
+            || msgHasBySectorWithChart
+            || (isChartDistribution && chartBySectorKeywords.Any(k => lowerMsg.Contains(k)))
+            || sectorChartStrongKeywords.Any(k => lowerMsg.Contains(k)));
 
         if (isSitesBySectorChart)
         {
-            _log.Debug("ChatController: sites-by-sector chart pre-check fired → forcing sites_by_filter_chart");
-            var sectorChartTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_filter_chart");
-            if (sectorChartTemplate is not null && sectorChartTemplate.ApiCall is not null)
+            var effectiveSectorChartType = userWantsBar ? "bar" : "pie";
+            _log.Debug("ChatController: sites-by-sector chart pre-check fired → forcing sites_by_sector_chart (chartType={Type})", effectiveSectorChartType);
+            var sectorChartTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "sites_by_sector_chart");
+            if (sectorChartTemplate is not null)
             {
-                var sectorBearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
-                var sectorApiResult = await _externalApi.CallAsync(sectorChartTemplate.ApiCall, new Dictionary<string, string>(), scope, sectorBearerToken, user, sectorChartTemplate.Id, ct);
-                if (sectorApiResult.Success)
+                sectorChartTemplate.ChartType = effectiveSectorChartType;
+                // Detect active/inactive filter — override SQL to use 24h device communication window
+                bool sectorWantsActive   = lowerMsg.Contains("active") && !lowerMsg.Contains("inactive");
+                bool sectorWantsInactive = lowerMsg.Contains("inactive");
+                if (sectorWantsActive || sectorWantsInactive)
                 {
-                    var sectorMsgId = Guid.NewGuid();
-                    var sectorSummary = await _azureAI.SummarizeResultsAsync(request.Message, sectorChartTemplate, sectorApiResult.Rows, scope, ct);
-                    await _sessionService.SaveBothMessagesAsync(
-                        sessionId: session.SessionId,
-                        userContent: request.Message,
-                        assistantMessageId: sectorMsgId,
-                        assistantContent: sectorSummary,
-                        sql: null,
-                        responseType: sectorChartTemplate.ResponseType,
-                        chartType: sectorChartTemplate.ChartType,
-                        chartDataJson: SerializeRowsForHistory(sectorChartTemplate.ResponseType, sectorApiResult.Rows),
-                        dataSource: sectorChartTemplate.TableUsed,
-                        dateRange: null,
-                        modelUsed: null,
-                        executionTimeMs: (int)sectorApiResult.ExecutionTimeMs,
-                        tokenCount: 0,
-                        ct: ct);
-                    if (session.MessageCount <= 1)
-                        _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
-                    return Ok(_formatter.Format(
-                        sessionId: session.SessionId,
-                        messageId: sectorMsgId,
-                        template: sectorChartTemplate,
-                        llmSummary: sectorSummary,
-                        rows: sectorApiResult.Rows,
-                        rowCount: sectorApiResult.Rows.Count,
-                        executionTimeMs: (int)sectorApiResult.ExecutionTimeMs,
-                        scope: scope,
-                        modelUsed: null,
-                        tokenCount: 0));
+                    var sectorActiveClause = sectorWantsActive
+                        ? "AND EXISTS (SELECT 1 FROM DMN_Devices d JOIN (SELECT DeviceID, MAX(LastCommunicationTime) AS LastCommunicationTime FROM DMN_Parameters GROUP BY DeviceID) p ON p.DeviceID = d.DeviceId WHERE d.StationID = s.ID AND ISNULL(d.IsDeleted,0)=0 AND p.LastCommunicationTime >= DATEADD(MINUTE,-1440,GETDATE()))"
+                        : "AND NOT EXISTS (SELECT 1 FROM DMN_Devices d JOIN (SELECT DeviceID, MAX(LastCommunicationTime) AS LastCommunicationTime FROM DMN_Parameters GROUP BY DeviceID) p ON p.DeviceID = d.DeviceId WHERE d.StationID = s.ID AND ISNULL(d.IsDeleted,0)=0 AND p.LastCommunicationTime >= DATEADD(MINUTE,-1440,GETDATE()))";
+                    // Keep @regionName param so BuildSafeQuery can bind region filter from sectorChartLlmParams
+                    sectorChartTemplate.Sql = $"SELECT sec.SectorName AS Sector, COUNT(*) AS Count FROM DMN_Stations s JOIN Regions r ON s.RegionID = r.Id LEFT JOIN Sectors sec ON s.SectorID = sec.Id WHERE ISNULL(s.IsDeleted, 0) = 0 {sectorActiveClause} AND (@regionName IS NULL OR REPLACE(LOWER(r.RegionName),' ','') = REPLACE(LOWER(@regionName),' ','')) GROUP BY sec.SectorName ORDER BY Count DESC";
                 }
-                _log.Warning("ChatController: sites_by_filter_chart API call failed, falling through to routing");
+                // Extract region name from message to filter sector chart by region if mentioned
+                var sectorChartLlmParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (msgNamedRegion != null)
+                    sectorChartLlmParams["regionName"] = msgNamedRegion;
+                var (sectorSql, sectorSqlParams) = _rbac.BuildSafeQuery(sectorChartTemplate, sectorChartLlmParams, user, scope);
+                var (sectorSqlValid, sectorSqlError) = SqlValidator.Validate(sectorSql);
+                if (sectorSqlValid)
+                {
+                    var sectorResult = await _sqlExecutor.ExecuteAsync(sectorSql, sectorSqlParams, ct);
+                    if (sectorResult.Success)
+                    {
+                        var sectorMsgId = Guid.NewGuid();
+                        var sectorTotal = sectorResult.Rows.Sum(r => r.TryGetValue("Count", out var cv) && cv is int ci ? ci : (int.TryParse(cv?.ToString(), out var cp) ? cp : 0));
+                        var sectorRegionLabel = sectorChartLlmParams.GetValueOrDefault("regionName") ?? (!string.IsNullOrWhiteSpace(scope.Region) ? scope.Region : null);
+                        var sectorStatusLabel = sectorWantsActive ? "active " : sectorWantsInactive ? "inactive " : "";
+                        var sectorSummary = string.IsNullOrWhiteSpace(sectorRegionLabel)
+                            ? $"Here is the breakdown of {sectorTotal} {sectorStatusLabel}site(s) across {sectorResult.Rows.Count} sector(s). The chart below shows the count per sector."
+                            : $"Here is the breakdown of {sectorTotal} {sectorStatusLabel}site(s) in {sectorRegionLabel} across {sectorResult.Rows.Count} sector(s). The chart below shows the count per sector.";
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: sectorMsgId,
+                            assistantContent: sectorSummary,
+                            sql: sectorSql,
+                            responseType: sectorChartTemplate.ResponseType,
+                            chartType: effectiveSectorChartType,
+                            chartDataJson: SerializeRowsForHistory(sectorChartTemplate.ResponseType, sectorResult.Rows),
+                            dataSource: sectorChartTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: null,
+                            executionTimeMs: (int)sectorResult.ExecutionTimeMs,
+                            tokenCount: 0,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: sectorMsgId,
+                            template: sectorChartTemplate,
+                            llmSummary: sectorSummary,
+                            rows: sectorResult.Rows,
+                            rowCount: sectorResult.Rows.Count,
+                            executionTimeMs: (int)sectorResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: null,
+                            tokenCount: 0));
+                    }
+                    _log.Warning("ChatController: sites_by_sector_chart SQL execution failed (chartType={Type}), falling through to routing", effectiveSectorChartType);
+                }
+                else
+                {
+                    _log.Warning("ChatController: sites_by_sector_chart SQL validation failed ({Error}, chartType={Type}), falling through to routing", sectorSqlError, effectiveSectorChartType);
+                }
             }
         }
 
@@ -2592,7 +2994,7 @@ public sealed class ChatController : ControllerBase
             "number of sites per sector", "number of sites in each sector",
             "count of sites per sector", "count of sites by sector"
         };
-        bool isSitesBySectorCount = !isChartDistribution && sectorCountKeywords.Any(k => lowerMsg.Contains(k));
+        bool isSitesBySectorCount = !isChartDistribution && !msgWantsListing && sectorCountKeywords.Any(k => lowerMsg.Contains(k));
 
         if (isSitesBySectorCount)
         {
@@ -2657,6 +3059,81 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 2e-pre3c. Hard pre-check: "sites per region" (non-chart) → force site_count with groupBy=region ──
+        // Mirrors isSitesBySectorCount: count questions without a chart keyword return a text summary,
+        // NOT a chart. Only fires when user has NOT asked for a pie/bar chart.
+        var regionCountKeywords = new[] {
+            "sites in each region", "sites per region", "number of sites in each region",
+            "how many sites in each region", "count of sites per region", "site count by region",
+            "sites across regions", "number of sites per region",
+            "how many sites per region", "total sites per region", "site count per region",
+            "sites registered in each region", "sites under each region",
+            "total sites in each region", "breakdown of sites by region",
+            "distribution of sites by region"
+        };
+        bool isSitesByRegionCount = !isChartDistribution && !msgWantsListing && regionCountKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isSitesByRegionCount)
+        {
+            _log.Debug("ChatController: sites-by-region count pre-check fired → forcing site_count with groupBy=region");
+            var regionCountTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "site_count");
+            if (regionCountTemplate is not null)
+            {
+                var regionCountParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["groupBy"] = "region"
+                };
+                var (regionCountSql, regionCountSqlParams) = _rbac.BuildSafeQuery(regionCountTemplate, regionCountParams, user, scope);
+                var (regionCountValid, _) = SqlValidator.Validate(regionCountSql);
+                if (regionCountValid)
+                {
+                    var regionCountResult = await _sqlExecutor.ExecuteAsync(regionCountSql, regionCountSqlParams, ct);
+                    if (regionCountResult.Success && regionCountResult.Rows.Count > 0)
+                    {
+                        // Build region distribution sentence: group rows by RegionName and sum TotalSites
+                        var regionTotals = regionCountResult.Rows
+                            .GroupBy(r => r.GetValueOrDefault("RegionName")?.ToString() ?? "")
+                            .ToDictionary(g => g.Key, g => g.Sum(r => int.TryParse(r.GetValueOrDefault("TotalSites")?.ToString(), out var n) ? n : 0));
+                        var regionParts = regionTotals
+                            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key))
+                            .Select(kv => $"{kv.Key}: {kv.Value}");
+                        var regionCountSummary = $"The current region distribution is {string.Join(", ", regionParts)}.";
+                        var regionCountMsgId = Guid.NewGuid();
+                        regionCountTemplate.ResponseType = "text";
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: regionCountMsgId,
+                            assistantContent: regionCountSummary,
+                            sql: regionCountSql,
+                            responseType: "text",
+                            chartType: null,
+                            chartDataJson: null,
+                            dataSource: regionCountTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: null,
+                            executionTimeMs: (int)regionCountResult.ExecutionTimeMs,
+                            tokenCount: 0,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: regionCountMsgId,
+                            template: regionCountTemplate,
+                            llmSummary: regionCountSummary,
+                            rows: regionCountResult.Rows,
+                            rowCount: regionCountResult.Rows.Count,
+                            executionTimeMs: (int)regionCountResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: null,
+                            tokenCount: 0));
+                    }
+                }
+                _log.Warning("ChatController: site_count region pre-check SQL failed or returned no rows, falling through to routing");
+            }
+        }
+
         // ── 2e-pre4. Hard pre-check: "AQI by region chart" → force aqi_by_region_chart ──
         var aqiByRegionKeywords = new[] {
             "aqi by region", "aqi per region", "average aqi by region", "average aqi per region",
@@ -2708,9 +3185,21 @@ public sealed class ChatController : ControllerBase
             "sites by status", "site status chart", "site status pie", "site status bar",
             "active vs offline", "active vs inactive sites", "online vs offline sites",
             "site availability chart", "breakdown of sites by status",
-            "distribution of site status", "active and inactive sites chart"
+            "distribution of site status", "active and inactive sites chart",
+            "sites by active", "sites by inactive", "sites active or inactive",
+            "sites active and inactive", "active or inactive sites", "active inactive sites",
+            "active vs inactive", "show sites active", "pie chart of active",
+            "how many sites are active", "how many active sites", "how many inactive sites"
         };
-        bool isSitesByStatusChart = isChartDistribution && siteStatusKeywords.Any(k => lowerMsg.Contains(k));
+        // Status chart fires on explicit chart keywords OR on status-specific phrases that don't need "chart"
+        var siteStatusStrongKeywords = new[] {
+            "sites by active", "sites by inactive", "sites active or inactive",
+            "active or inactive sites", "active vs inactive",
+            "sites by status", "site by status", "stations by status",
+            "show sites by status", "show me sites by status"
+        };
+        bool isSitesByStatusChart = (isChartDistribution && siteStatusKeywords.Any(k => lowerMsg.Contains(k)))
+            || siteStatusStrongKeywords.Any(k => lowerMsg.Contains(k));
 
         if (isSitesByStatusChart)
         {
@@ -3057,6 +3546,113 @@ public sealed class ChatController : ControllerBase
             }
         }
 
+        // ── 2e-pre-longest. Hard pre-check: "longest inactive/offline/silent device" → force device_longest_silent ──
+        // Must fire BEFORE the offline pre-check because "inactive device" in the question
+        // would otherwise match offlineKeywords and route to offline_devices (all devices).
+        var longestInactiveKeywords = new[]
+        {
+            "longest inactive device", "longest inactive", "longest offline device", "longest offline",
+            "longest silent device", "longest silent", "been inactive the longest", "been offline the longest",
+            "been silent the longest", "inactive the longest", "offline the longest", "silent the longest",
+            "without data the longest", "without data longest", "longest without data",
+            "longest time without data", "longest time inactive", "longest time offline",
+            "which device has been inactive", "which device has been offline", "which device has been silent",
+            "device inactive longest", "device offline longest", "device silent longest",
+            "gone the longest without", "longest without sending",
+        };
+        bool isLongestInactiveQuestion = longestInactiveKeywords.Any(k => lowerMsg.Contains(k));
+
+        if (isLongestInactiveQuestion)
+        {
+            _log.Debug("ChatController: longest-inactive pre-check fired → forcing device_longest_silent");
+            var longestTemplate = (await _queryRouter.GetPermittedTemplatesAsync(user, ct)).FirstOrDefault(t => t.Id == "device_longest_silent");
+            if (longestTemplate is not null)
+            {
+                var longestParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["topN"] = "1"
+                };
+                // Inject region if mentioned
+                if (lowerMsg.Contains("al dhafra") || lowerMsg.Contains("dhafra"))
+                    longestParams["regionName"] = "Al Dhafra";
+                else if (lowerMsg.Contains("al ain"))
+                    longestParams["regionName"] = "Al Ain";
+                else if (lowerMsg.Contains("abu dhabi"))
+                    longestParams["regionName"] = "Abu Dhabi";
+                // Inject sector if mentioned
+                if (lowerMsg.Contains("school") || lowerMsg.Contains("schools"))
+                    longestParams["sectorName"] = "Public & Govt-School";
+                else if (lowerMsg.Contains("commercial"))
+                    longestParams["sectorName"] = "Commercial";
+                else if (lowerMsg.Contains("residential"))
+                    longestParams["sectorName"] = "Residential";
+                // Inject station name if mentioned (quoted or proper-cased site name)
+                var longestFill = await _azureAI.FillParametersAsync(request.Message, longestTemplate, history, scope, ct);
+                if (!string.IsNullOrWhiteSpace(longestFill.Parameters.GetValueOrDefault("stationName")))
+                    longestParams["stationName"] = longestFill.Parameters["stationName"];
+
+                var (longestSql, longestSqlParams) = _rbac.BuildSafeQuery(longestTemplate, longestParams, user, scope);
+                var (longestValid, _) = SqlValidator.Validate(longestSql);
+                if (longestValid)
+                {
+                    var longestResult = await _sqlExecutor.ExecuteAsync(longestSql, longestSqlParams, ct);
+                    if (longestResult.Success)
+                    {
+                        var longestMsgId = Guid.NewGuid();
+                        string longestSummary;
+                        if (longestResult.Rows.Count == 0)
+                        {
+                            var filterParts = new List<string>();
+                            if (longestParams.TryGetValue("sectorName", out var ls) && !string.IsNullOrWhiteSpace(ls)) filterParts.Add(ls);
+                            if (longestParams.TryGetValue("regionName", out var lr) && !string.IsNullOrWhiteSpace(lr)) filterParts.Add(lr);
+                            var filterCtx = filterParts.Count > 0 ? $" in {string.Join(", ", filterParts)}" : "";
+                            longestSummary = $"No inactive devices found{filterCtx}.";
+                            longestTemplate.ResponseType = "text";
+                        }
+                        else
+                        {
+                            var row = longestResult.Rows[0];
+                            var devName  = row.GetValueOrDefault("DeviceName")?.ToString() ?? "Unknown device";
+                            var siteName = row.GetValueOrDefault("StationName")?.ToString() ?? "";
+                            var days     = row.GetValueOrDefault("DaysSinceLastReading")?.ToString() ?? "unknown";
+                            longestSummary = string.IsNullOrWhiteSpace(siteName)
+                                ? $"{devName} has been inactive the longest — {days} day(s) without data."
+                                : $"{devName} at {siteName} has been inactive the longest — {days} day(s) without data.";
+                        }
+                        await _sessionService.SaveBothMessagesAsync(
+                            sessionId: session.SessionId,
+                            userContent: request.Message,
+                            assistantMessageId: longestMsgId,
+                            assistantContent: longestSummary,
+                            sql: longestSql,
+                            responseType: longestTemplate.ResponseType,
+                            chartType: null,
+                            chartDataJson: SerializeRowsForHistory(longestTemplate.ResponseType, longestResult.Rows),
+                            dataSource: longestTemplate.TableUsed,
+                            dateRange: null,
+                            modelUsed: null,
+                            executionTimeMs: (int)longestResult.ExecutionTimeMs,
+                            tokenCount: 0,
+                            ct: ct);
+                        if (session.MessageCount <= 1)
+                            _ = _sessionService.UpdateSessionTitleAsync(session.SessionId, request.Message, CancellationToken.None);
+                        return Ok(_formatter.Format(
+                            sessionId: session.SessionId,
+                            messageId: longestMsgId,
+                            template: longestTemplate,
+                            llmSummary: longestSummary,
+                            rows: longestResult.Rows,
+                            rowCount: longestResult.Rows.Count,
+                            executionTimeMs: (int)longestResult.ExecutionTimeMs,
+                            scope: scope,
+                            modelUsed: null,
+                            tokenCount: 0));
+                    }
+                }
+                _log.Warning("ChatController: longest-inactive pre-check SQL failed, falling through to routing");
+            }
+        }
+
         // ── 2e. Hard pre-check: offline/inactive device questions → force offline_devices ──
         // Scope-bar enrichment appends "in Abudhabi" to the message, causing these questions to
         // match devices_by_filter (which requires BOTH regionName AND sectorName → returns nothing).
@@ -3088,6 +3684,7 @@ public sealed class ChatController : ControllerBase
         bool isOfflineDeviceQuestion = offlineKeywords.Any(k => lowerMsg.Contains(k))
             && !msgHasSpecificDeviceCode   // single-device status queries must NOT be treated as list queries
             && !msgIsDeviceCountIntent     // count questions must route to active_device_count, not list
+            && !isLongestInactiveQuestion  // longest-inactive questions handled by dedicated pre-check above
             && !lowerMsg.Contains("should be checked first")   // FAQ advisory → already handled above
             && !lowerMsg.Contains("when is a device considered");  // FAQ definition → already handled above
 
@@ -4103,7 +4700,39 @@ public sealed class ChatController : ControllerBase
                         modelUsed: iacFill.ModelUsed,
                         tokenCount: iacFill.TokensUsed));
                 }
-                _log.Warning("ChatController: indoor_ambient_compare pre-check API failed, falling through to routing");
+                // Site not found or access denied — return friendly message
+                var askedIacSite = iacFill.Parameters.GetValueOrDefault("stationName")
+                                ?? iacFill.Parameters.GetValueOrDefault("siteName")
+                                ?? "The requested site";
+                var iacErrMsg = $"{askedIacSite} does not appear among the sites available to your account. This can happen if the name is slightly different, or if the site is outside your current access. Kindly check the site name or the region, and ask again with the correct site name or region. For access-related queries, you may contact the AQMS support team at aqmssupport@adphc.gov.ae.";
+                var iacErrMsgId = Guid.NewGuid();
+                await _sessionService.SaveBothMessagesAsync(
+                    sessionId: session.SessionId,
+                    userContent: request.Message,
+                    assistantMessageId: iacErrMsgId,
+                    assistantContent: iacErrMsg,
+                    sql: null,
+                    responseType: "text",
+                    chartType: null,
+                    chartDataJson: null,
+                    dataSource: iacTemplate.TableUsed,
+                    dateRange: null,
+                    modelUsed: iacFill.ModelUsed,
+                    executionTimeMs: (int)iacApiResult.ExecutionTimeMs,
+                    tokenCount: iacFill.TokensUsed,
+                    ct: ct);
+                _log.Warning("ChatController: indoor_ambient_compare pre-check API failed — site not found: {Site}", askedIacSite);
+                return Ok(_formatter.Format(
+                    sessionId: session.SessionId,
+                    messageId: iacErrMsgId,
+                    template: iacTemplate,
+                    llmSummary: iacErrMsg,
+                    rows: [],
+                    rowCount: 0,
+                    executionTimeMs: (int)iacApiResult.ExecutionTimeMs,
+                    scope: scope,
+                    modelUsed: iacFill.ModelUsed,
+                    tokenCount: iacFill.TokensUsed));
             }
         }
 
@@ -4525,6 +5154,28 @@ public sealed class ChatController : ControllerBase
                 session.SessionId,
                 clarifyMsg,
                 "CLARIFY"));
+        }
+
+        // ── 3a-chart. Hard override: sector/region/status chart request mis-routed by LLM ──
+        // If a sector-by-count or region-by-count chart was requested but the LLM selected an AQI
+        // or category template (e.g. schools_aqi_pie, site_aqi_by_category), force the correct template.
+        if (isSitesBySectorChart && routeResult.Template?.Id is "schools_aqi_pie" or "site_aqi_by_category" or null)
+        {
+            var sectorOverrideTemplate = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "sites_by_sector_chart");
+            if (sectorOverrideTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → sites_by_sector_chart (sector chart mis-routed)", routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult { Template = sectorOverrideTemplate, Score = 1.0, PreviousTemplateId = routeResult.PreviousTemplateId };
+            }
+        }
+        if (isSitesByRegionChart && routeResult.Template?.Id is "schools_aqi_pie" or "site_aqi_by_category" or null)
+        {
+            var regionOverrideTemplate = _queryRouter.GetPermittedTemplates(user).FirstOrDefault(t => t.Id == "sites_by_region_chart");
+            if (regionOverrideTemplate is not null)
+            {
+                _log.Information("ChatController: overriding '{From}' → sites_by_region_chart (region chart mis-routed)", routeResult.Template?.Id ?? "candidates");
+                routeResult = new QueryRouterResult { Template = regionOverrideTemplate, Score = 1.0, PreviousTemplateId = routeResult.PreviousTemplateId };
+            }
         }
 
         // ── 3b. Hard override: device name + date/time reference → device_reading_history ──
@@ -5014,6 +5665,58 @@ public sealed class ChatController : ControllerBase
                 llmParams["sectorName"] = "Residential";
         }
 
+        // ── site_readings_all: extract parameterNames from question (always override LLM) ──
+        // The LLM cannot reliably extract parameterNames because QueryParam has no description field.
+        // We detect known parameter tokens directly from the user's message and always override.
+        if (template.Id == "site_readings_all")
+        {
+            _log.Information("ChatController: site_readings_all block entered, lowerMsg='{Msg}'", lowerMsg[..Math.Min(120, lowerMsg.Length)]);
+            var paramTokenMap = new (string[] Tokens, string Canonical)[]
+            {
+                (["no2", "nitrogen dioxide"], "NO2"),
+                (["o3", "ozone"], "O3"),
+                (["co2", "carbon dioxide"], "CO2"),
+                (["carbon monoxide"], "CO"),
+                (["pm2.5", "pm 2.5", "pm25", "fine particles"], "PM2.5"),
+                (["pm10", "pm 10", "coarse particles"], "PM10"),
+                (["so2", "sulfur dioxide", "sulphur dioxide"], "SO2"),
+                (["ch2o", "formaldehyde"], "CH2O"),
+                (["temperature"], "Temperature"),
+                (["humidity"], "Humidity"),
+                (["noise"], "Noise"),
+                (["aqi index", "iaq-i", "iaqi"], "AQI Index"),
+            };
+
+            var detected = new List<string>();
+            // Short tokens that need word-boundary checks to avoid false positives
+            if (System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\bco\b") && !lowerMsg.Contains("co2"))
+                detected.Add("CO");
+            if (System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\btvoc\b") || System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\bvoc\b"))
+                detected.Add("TVOC");
+            if (System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\btemp\b"))
+                detected.Add("Temperature");
+
+            foreach (var (tokens, canonical) in paramTokenMap)
+            {
+                if (tokens.Any(t => lowerMsg.Contains(t)))
+                    detected.Add(canonical);
+            }
+
+            // Always overwrite parameterNames: inject detected list, or remove key so filter is skipped
+            _log.Information("ChatController: site_readings_all detected params = [{Detected}]", string.Join(", ", detected));
+            if (detected.Count > 0)
+            {
+                llmParams["parameterNames"] = string.Join(",", detected);
+                _log.Information("ChatController: site_readings_all parameterNames overridden → '{Params}'",
+                    llmParams["parameterNames"]);
+            }
+            else
+            {
+                llmParams.Remove("parameterNames");
+                _log.Debug("ChatController: site_readings_all — no specific parameters detected, returning all");
+            }
+        }
+
         // Inject pre-extracted year from 3c-year override (year was detected before llmParams existed)
         if (preExtractedYear is not null && template.Id == "site_yearly_averages" && !llmParams.ContainsKey("year"))
             llmParams["year"] = preExtractedYear;
@@ -5232,6 +5935,17 @@ public sealed class ChatController : ControllerBase
                 tokenCount: tokensUsed));
         }
 
+        // ── Apply template param defaults for any optional param the LLM didn't extract ──
+        foreach (var p in template.Params)
+        {
+            if (p.Optional && !string.IsNullOrWhiteSpace(p.Default)
+                && string.IsNullOrWhiteSpace(llmParams.GetValueOrDefault(p.Name)))
+            {
+                llmParams[p.Name] = p.Default;
+                _log.Debug("ChatController: applied default {Param}={Default} for template {Template}", p.Name, p.Default, template.Id);
+            }
+        }
+
         // ── 7. Execute: API call OR SQL ─────────────────────────────────────
         List<Dictionary<string, object?>> resultRows;
         long executionTimeMs;
@@ -5239,6 +5953,15 @@ public sealed class ChatController : ControllerBase
 
         // Extract bearer token once — used by both API paths (template.ApiCall and device_reading_history)
         var bearerToken = Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase);
+
+        // Guard: device_live_reading requires a device name — return friendly guidance if missing
+        if (template.Id == "device_live_reading"
+            && string.IsNullOrWhiteSpace(llmParams.GetValueOrDefault("deviceName")))
+        {
+            return Ok(_formatter.FormatError(session.SessionId,
+                "To get readings for a specific device, please include the device name (e.g. 'BA 0010', 'SEI100M 0014'). If you don't know the device name, you can ask \"Which devices are at [site name]?\" to find it.",
+                "MISSING_PARAM"));
+        }
 
         if (template.ApiCall is not null)
         {
@@ -5266,13 +5989,16 @@ public sealed class ChatController : ControllerBase
                 else if (!string.IsNullOrWhiteSpace(apiResult.Error)
                     && apiResult.Error.Contains("doesn't match any known site", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Site genuinely not found in the system
                     var askedSite = llmParams.GetValueOrDefault("stationName")
                                 ?? llmParams.GetValueOrDefault("siteName")
                                 ?? llmParams.GetValueOrDefault("station");
-                    friendlyMsg = string.IsNullOrWhiteSpace(askedSite)
-                        ? apiResult.Error
-                        : $"There is no site called \"{askedSite}\" in the system. Please check the name and try again. You can ask \"Show me all sites\" to see the full list.";
+                    // indoor_ambient_compare: use the specific not-found message
+                    if (template.Id == "indoor_ambient_compare" && !string.IsNullOrWhiteSpace(askedSite))
+                        friendlyMsg = $"{askedSite} does not appear among the sites available to your account. This can happen if the name is slightly different, or if the site is outside your current access. Kindly check the site name or the region, and ask again with the correct site name or region. For access-related queries, you may contact the AQMS support team at aqmssupport@adphc.gov.ae.";
+                    else
+                        friendlyMsg = string.IsNullOrWhiteSpace(askedSite)
+                            ? apiResult.Error
+                            : $"There is no site called \"{askedSite}\" in the system. Please check the name and try again. You can ask \"Show me all sites\" to see the full list.";
                 }
                 else
                 {
@@ -5313,6 +6039,64 @@ public sealed class ChatController : ControllerBase
             resultRows = apiResult.Rows;
             executionTimeMs = apiResult.ExecutionTimeMs;
             dataSourceLabel = template.TableUsed; // descriptive label e.g. "AirQuality API"
+
+            // ── site_readings_all: filter result rows to only the parameters the user asked for ──
+            if (template.Id == "site_readings_all")
+            {
+                var requestedRaw = llmParams.GetValueOrDefault("parameterNames") ?? "";
+                if (!string.IsNullOrWhiteSpace(requestedRaw))
+                {
+                    // Canonical + subscript alias map so "NO2" matches both "NO2" and "NO₂"
+                    var aliasMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["no2"] = "NO2",        ["nitrogen dioxide"] = "NO2",
+                        ["o3"]  = "O3",         ["ozone"] = "O3",
+                        ["co2"] = "CO2",        ["carbon dioxide"] = "CO2",
+                        ["co"]  = "CO",         ["carbon monoxide"] = "CO",
+                        ["pm2.5"] = "PM2.5",    ["pm25"] = "PM2.5",
+                        ["pm10"]  = "PM10",
+                        ["so2"]   = "SO2",      ["sulfur dioxide"] = "SO2",
+                        ["tvoc"]  = "TVOC",     ["voc"] = "TVOC",
+                        ["ch2o"]  = "CH2O",     ["formaldehyde"] = "CH2O",
+                        ["temperature"] = "Temperature",
+                        ["humidity"] = "Humidity",
+                        ["noise"] = "Noise",
+                        ["aqi index"] = "AQI Index", ["aqi"] = "AQI Index", ["iaq-i"] = "AQI Index",
+                    };
+                    // Subscript variants that the API may return for the same parameter
+                    var subscripts = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["NO2"]  = ["NO2",  "NO\u2082"],
+                        ["O3"]   = ["O3",   "O\u2083"],
+                        ["CO2"]  = ["CO2",  "CO\u2082"],
+                        ["SO2"]  = ["SO2",  "SO\u2082"],
+                        ["CH2O"] = ["CH2O", "CH\u2082O"],
+                    };
+
+                    var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var token in requestedRaw.Split([',', ';', '|'], StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var t = token.Trim();
+                        var canonical = aliasMap.TryGetValue(t, out var c) ? c : t;
+                        wanted.Add(canonical);
+                        if (subscripts.TryGetValue(canonical, out var variants))
+                            foreach (var v in variants) wanted.Add(v);
+                    }
+
+                    var filtered = resultRows.Where(r => wanted.Contains(r.GetValueOrDefault("Parameter")?.ToString() ?? "")).ToList();
+                    if (filtered.Count > 0)
+                    {
+                        resultRows = filtered;
+                        _log.Information("ChatController: site_readings_all filtered to {Count} params from {Total} (wanted: {Wanted})",
+                            resultRows.Count, apiResult.Rows.Count, requestedRaw);
+                    }
+                    else
+                    {
+                        _log.Warning("ChatController: site_readings_all param filter '{Wanted}' matched nothing in [{Actual}] — returning all",
+                            requestedRaw, string.Join(", ", apiResult.Rows.Select(r => r.GetValueOrDefault("Parameter")?.ToString() ?? "")));
+                    }
+                }
+            }
 
             // Apply topN: if user asked "top N" sort by Value descending and take N rows.
             // schools_pollutant and sector_pollutant rows use "Value" column for the parameter reading.
@@ -7113,6 +7897,71 @@ public sealed class ChatController : ControllerBase
     }
 
     /// <summary>
+    /// Detects parameter names in the user message and injects parameterNames into llmParams.
+    /// </summary>
+    private static void ApplySiteReadingsParamFilter(string lowerMsg, Dictionary<string, string> llmParams)
+    {
+        var detected = new List<string>();
+        if (System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\bco\b") && !lowerMsg.Contains("co2"))
+            detected.Add("CO");
+        if (System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\btvoc\b") || System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\bvoc\b"))
+            detected.Add("TVOC");
+        if (System.Text.RegularExpressions.Regex.IsMatch(lowerMsg, @"\btemp\b"))
+            detected.Add("Temperature");
+
+        var tokenMap = new (string[] Tokens, string Canonical)[]
+        {
+            (["no2", "nitrogen dioxide"], "NO2"),
+            (["o3", "ozone"], "O3"),
+            (["co2", "carbon dioxide"], "CO2"),
+            (["carbon monoxide"], "CO"),
+            (["pm2.5", "pm 2.5", "pm25", "fine particles"], "PM2.5"),
+            (["pm10", "pm 10", "coarse particles"], "PM10"),
+            (["so2", "sulfur dioxide", "sulphur dioxide"], "SO2"),
+            (["ch2o", "formaldehyde"], "CH2O"),
+            (["temperature"], "Temperature"),
+            (["humidity"], "Humidity"),
+            (["noise"], "Noise"),
+            (["aqi index", "iaq-i", "iaqi"], "AQI Index"),
+        };
+        foreach (var (tokens, canonical) in tokenMap)
+            if (tokens.Any(t => lowerMsg.Contains(t)) && !detected.Contains(canonical))
+                detected.Add(canonical);
+
+        if (detected.Count > 0)
+            llmParams["parameterNames"] = string.Join(",", detected);
+        else
+            llmParams.Remove("parameterNames");
+    }
+
+    /// <summary>
+    /// Filters site_readings_all rows to only the requested parameters.
+    /// Returns all rows unchanged when parameterNames is empty or nothing matches.
+    /// </summary>
+    private static List<Dictionary<string, object?>> FilterSiteReadingsRows(
+        List<Dictionary<string, object?>> rows, string? parameterNames)
+    {
+        if (string.IsNullOrWhiteSpace(parameterNames)) return rows;
+
+        var subscripts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["NO2"] = "NO\u2082", ["O3"] = "O\u2083", ["CO2"] = "CO\u2082",
+            ["SO2"] = "SO\u2082", ["CH2O"] = "CH\u2082O",
+        };
+
+        var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var token in parameterNames.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var t = token.Trim();
+            wanted.Add(t);
+            if (subscripts.TryGetValue(t, out var sub)) wanted.Add(sub);
+        }
+
+        var filtered = rows.Where(r => wanted.Contains(r.GetValueOrDefault("Parameter")?.ToString() ?? "")).ToList();
+        return filtered.Count > 0 ? filtered : rows;
+    }
+
+    /// <summary>
     /// Returns the out-of-scope message when the user asks about a site they cannot access.
     /// </summary>
     private static string BuildAccessDeniedMessage(string askedSiteName, UserContext? user, ResolvedScope scope)
@@ -7131,13 +7980,28 @@ public sealed class ChatController : ControllerBase
             @"\b([A-Za-z]+[0-9A-Za-z]*\s+\d{4}|\b[A-Za-z]+\d{4,}\b)",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         var deviceName = deviceMatch.Success ? deviceMatch.Value.Trim() : "the device";
+        answer = answer.Replace("{{DEVICE_NAME}}", deviceName);
         answer = answer.Replace("{DEVICE_NAME}", deviceName);
 
-        // {FROM_TIME} / {TO_TIME} — last 24 hours window
+        // {FROM_TIME} / {TO_TIME} — rolling last-24-hours window
         var toTime   = DateTime.Now;
         var fromTime = toTime.AddHours(-24);
+        answer = answer.Replace("{{FROM_TIME}}", fromTime.ToString("dd MMM yyyy HH:mm"));
+        answer = answer.Replace("{{TO_TIME}}",   toTime.ToString("dd MMM yyyy HH:mm"));
         answer = answer.Replace("{FROM_TIME}", fromTime.ToString("dd MMM yyyy HH:mm"));
         answer = answer.Replace("{TO_TIME}",   toTime.ToString("dd MMM yyyy HH:mm"));
+
+        // {SCHOOL_NAME} / {SITE_NAME} — extract site/school name after "at" keyword
+        // Pattern: "at <Name Words>" where Name Words are title-cased or follow "at"
+        var siteNameMatch = System.Text.RegularExpressions.Regex.Match(
+            userMessage,
+            @"\bat\s+([A-Z][A-Za-z0-9\s\-']{2,50}?)(?:\?|$|,|\.|;)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var siteName = siteNameMatch.Success ? siteNameMatch.Groups[1].Value.Trim() : "that site";
+        answer = answer.Replace("{{SCHOOL_NAME}}", siteName);
+        answer = answer.Replace("{SCHOOL_NAME}", siteName);
+        answer = answer.Replace("{{SITE_NAME}}", siteName);
+        answer = answer.Replace("{SITE_NAME}", siteName);
 
         return answer;
     }

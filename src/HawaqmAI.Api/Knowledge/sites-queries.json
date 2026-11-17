@@ -1784,7 +1784,7 @@
     },
     {
       "id": "site_readings_all",
-      "description": "Get ALL current parameter readings for a specific named site as a table. Use when user asks for 'all readings', 'all parameters', 'current readings', 'show me readings', 'show data', 'what are the readings at', or 'can I get the last 24 hours of readings'. Returns a full table of every parameter with its value, unit, and last updated time.",
+      "description": "Get current parameter readings for a specific named site as a table. Use when user asks for readings at a named site. If the user names specific parameters (e.g. 'NO2, O3 and CO'), extract them as a comma-separated list in parameterNames (e.g. 'NO2,O3,CO'). If no specific parameters are mentioned, leave parameterNames empty to return all parameters.",
       "patterns": [
         "all readings at",
         "current readings for",
@@ -1854,6 +1854,13 @@
           "type": "string",
           "source": "question",
           "optional": false
+        },
+        {
+          "name": "parameterNames",
+          "type": "string",
+          "source": "question",
+          "optional": true,
+          "description": "Comma-separated list of requested parameters e.g. 'NO2,O3,CO'. Leave empty if user asked for all readings."
         }
       ],
       "responseType": "table",
