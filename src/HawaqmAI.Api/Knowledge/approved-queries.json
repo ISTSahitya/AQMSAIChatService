@@ -3575,7 +3575,7 @@
       ],
       "category": "air_quality",
       "requiredRole": "viewer",
-      "sql": "SELECT ISNULL(SUM(IsActive), 0) AS ActiveDeviceCount, COUNT(*) AS TotalDeviceCount FROM ( SELECT d.DeviceId, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, @now) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -1440, @now)) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 GROUP BY d.DeviceId ) AS t",
+      "sql": "SELECT ISNULL(SUM(IsActive), 0) AS ActiveDeviceCount, COUNT(*) AS TotalDeviceCount FROM ( SELECT d.DeviceId, CASE WHEN (MAX(CASE WHEN p.DriverID = 4 THEN p.ParameterReadingUpdateTime END) >= DATEADD(MINUTE, -1440, @now) OR MAX(CASE WHEN p.DriverID = 4 THEN p.LastCommunicationTime END) >= DATEADD(MINUTE, -1440, @now)) THEN 1 ELSE 0 END AS IsActive FROM DMN_Devices d LEFT JOIN DMN_Parameters p ON p.DeviceID = d.DeviceId JOIN DMN_Stations s ON d.StationID = s.ID WHERE ISNULL(d.IsDeleted, 0) = 0 AND ISNULL(s.IsDeleted, 0) = 0 AND s.ID IN @siteIds GROUP BY d.DeviceId ) AS t",
       "params": [],
       "responseType": "text",
       "tableUsed": "DMN_Parameters",
